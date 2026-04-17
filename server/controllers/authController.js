@@ -1,34 +1,61 @@
 // controllers/authController.js
 const axios = require("axios");
 const crypto = require("crypto");
-const { saveShop } = require("../models/shopModel");
+const { saveShop, getShop } = require("../models/shopModel");
 
 
 
 // ================= INSTALL =================
-exports.installApp = (req, res) => {
+exports.installApp = async (req, res) => {
   const { shop } = req.query;
 
   if (!shop) return res.send("Missing shop");
+
+  try {
+    const existingShop = await getShop(shop);
+    if (existingShop && existingShop.status === 1) {
+      console.log("✅ Shop already installed during install flow, redirecting to dashboard");
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <script>
+              window.top.location.href = "/?shop=${shop}&host=${existingShop.host}";
+            </script>
+          </head>
+          <body></body>
+        </html>
+      `);
+    }
+  } catch (dbErr) {
+    console.error("⚠️ Error checking existing shop during install:", dbErr.message);
+  }
 
   const redirectUri = `${process.env.HOST}/api/auth/callback`;
 
   // 🔐 Generate state for security
   const state = crypto.randomBytes(16).toString("hex");
 
-  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=read_products&redirect_uri=${redirectUri}&state=${state}`;
+ const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=read_products,write_content,read_content,write_online_store_pages&grant_options[]=offline_access&redirect_uri=${redirectUri}`;
 
-  console.log("🔁 Redirecting to:", installUrl);
+console.log("🟡 INSTALL URL:", installUrl);
+console.log("🟡 SHOP:", shop);
+console.log("🟡 SCOPES SENT: read_products,write_content,read_content,write_online_store_pages");
 
   res.redirect(installUrl);
 };
 
 // ================= CALLBACK =================
+
 exports.callback = async (req, res) => {
-  const { shop, hmac, code } = req.query;
-
+  const { shop, hmac, code,host } = req.query;
+if (!shop || !code) {
+  return res.status(400).send("Missing required parameters");
+}
   console.log("📥 Received Query:", req.query);
-
+console.log("📥 CALLBACK HIT");
+console.log("📥 SHOP:", shop);
+console.log("📥 CODE:", code);
   try {
     // 🔐 HMAC Verification
     const map = { ...req.query };
@@ -59,16 +86,18 @@ exports.callback = async (req, res) => {
         client_id: process.env.SHOPIFY_API_KEY,
         client_secret: process.env.SHOPIFY_API_SECRET,
         code,
+        expiring: 1,
       }
     );
 
     const accessToken = tokenRes.data.access_token;
-    console.log("🔑 Access Token:", accessToken);
+  console.log("🔑 TOKEN GENERATED:", accessToken);
+console.log("🔑 TOKEN LENGTH:", accessToken.length);
 
     // 🔔 Register Webhook (app/uninstalled)
     try {
       await axios.post(
-        `https://${shop}/admin/api/2026-01/webhooks.json`,
+        `https://${shop}/admin/api/2025-01/webhooks.json`,
         {
           webhook: {
             topic: "app/uninstalled",
@@ -91,7 +120,7 @@ exports.callback = async (req, res) => {
 
     // 🧠 Fetch shop details
     const shopRes = await axios.get(
-      `https://${shop}/admin/api/2024-01/shop.json`,
+      `https://${shop}/admin/api/2025-01/shop.json`,
       {
         headers: {
           "X-Shopify-Access-Token": accessToken,
@@ -110,7 +139,7 @@ exports.callback = async (req, res) => {
     await saveShop({
       shop_name: shop,
       access_token: accessToken,
-
+      host:host,
       shopify_id: data.id,
       name: data.name,
       email: data.email,
@@ -142,7 +171,18 @@ exports.callback = async (req, res) => {
 
     console.log("✅ Data saved successfully");
 
-    res.send("Backend setup done ✅");
+    // 🚀 Redirect to dashboard
+    res.send(`
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <script>
+        window.top.location.href = "/?shop=${shop}&host=${host}";
+      </script>
+    </head>
+    <body></body>
+  </html>
+`);
 
   } catch (err) {
     console.error("❌ ERROR:", err.response?.data || err.message);

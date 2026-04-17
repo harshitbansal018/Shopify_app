@@ -4,7 +4,7 @@ const saveShop = (shopData) => {
   return new Promise((resolve, reject) => {
     const query = `
       INSERT INTO shops (
-        shop_name, access_token, shopify_id, name, email, domain,
+        shop_name, access_token,host, shopify_id, name, email, domain,
         country, country_code, country_name,
         currency, money_format,
         timezone, iana_timezone,
@@ -12,9 +12,11 @@ const saveShop = (shopData) => {
         address1, address2, city, zip, phone,
         created_at, updated_at,status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         access_token = VALUES(access_token),
+        host = VALUES(host),
+
         email = VALUES(email),
         currency = VALUES(currency),
         updated_at = VALUES(updated_at),
@@ -26,6 +28,7 @@ const saveShop = (shopData) => {
       [
         shopData.shop_name,
         shopData.access_token,
+        shopData.host,
         shopData.shopify_id,
         shopData.name,
         shopData.email,
@@ -69,5 +72,30 @@ const saveShop = (shopData) => {
     );
   });
 };
+const getShop = (shop) => {
+  return new Promise((resolve, reject) => {
 
-module.exports = { saveShop };
+    const sql = `
+      SELECT * FROM shops 
+      WHERE TRIM(LOWER(shop_name)) = TRIM(LOWER(?)) 
+      LIMIT 1
+    `;
+
+    db.query(sql, [shop], (err, results) => {
+      if (err) return reject(err);
+
+      if (results.length === 0) {
+        console.log("❌ Shop not found in DB:", shop);
+        return resolve(null);
+      }
+
+      console.log("✅ Shop found:", results[0].shop_name);
+      resolve(results[0]);
+    });
+
+  });
+};
+module.exports = {
+  saveShop,
+  getShop
+};

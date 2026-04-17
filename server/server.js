@@ -1,28 +1,40 @@
-// server/server.js
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 
 const authRoutes = require("./routes/authRoute");
-const webhookRoutes = require("./routes/webhookRoute");
+const dashboardRoutes = require("./routes/dashboardRoute");
+const pagesRoute = require("./routes/pageRoute");
+const pageEditRoute = require("./routes/pageEditRoute");
 
 const app = express();
 
-// Middleware
+// 🔥 MIDDLEWARE
 app.use(cors());
-app.use("/webhooks", express.raw({ type: "application/json" }));
+
+// ✅ REQUIRED for form data
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Routes
+// 🔥 VIEW ENGINE
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+
+// 🔥 STATIC FILES (CSS/JS)
+app.use(express.static(path.join(__dirname, "public")));
+
+// 🔥 SERVE UPLOADED IMAGES (VERY IMPORTANT)
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// 🔥 ROUTES
 app.use("/api/auth", authRoutes);
-app.use("/webhooks", webhookRoutes);
+app.use("/", dashboardRoutes);
+app.use("/pages", pagesRoute);
+app.use("/webhooks", require("./routes/webhookRoute"));
+app.use("/", pageEditRoute);
 
-// Test route
-app.get("/", (req, res) => {
-  res.send("Shopify Backend Running 🚀");
-});
-
-// Start server
+// 🔥 START SERVER
 app.listen(process.env.PORT || 3000, () => {
   console.log(`Server running on port ${process.env.PORT || 3000}`);
 });

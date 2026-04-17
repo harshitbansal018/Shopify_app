@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edit Page</title>
+  <link rel="stylesheet" href="/css/pageEditor.css">
+</head>
+<body>
+
+<div class="editor-page">
+  <div class="editor-header">
+    <div>
+      <p class="editor-eyebrow">Page editor</p>
+      <h1>Edit Page: <%= page.title %></h1>
+      <p class="editor-copy">
+        Manage blocks, add new sections, and keep the Shopify page synced with your saved content.
+      </p>
+    </div>
+
+    <div class="editor-actions">
+      <button class="primary-btn" type="button" onclick="openAddBlockModal()">
+        Add Block
+      </button>
+
+      <button class="editor-back" type="button"
+        onclick="window.location.href='/pages/create?shop=<%= page.shop_domain %>'">
+        Back
+      </button>
+    </div>
+  </div>
+
+  <div id="editorGrid" class="editor-grid">
+    <% if (!blocks.length) { %>
+      <div class="editor-empty">
+        <h2>No blocks found</h2>
+        <p>Add your first block to get started.</p>
+      </div>
+    <% } %>
+
+    <% blocks.forEach((block, i) => { %>
+      <div class="block-card">
+        <span class="block-card__index">Block <%= i + 1 %></span>
+        <h2><%= block.type.toUpperCase() %></h2>
+
+        <button class="delete-btn" type="button" onclick="deleteBlock(<%= i %>)">
+          X
+        </button>
+
+        <% if (block.type === "hero") { %>
+          <p><strong>Title:</strong> <%= block.title || "Untitled hero" %></p>
+          <p><strong>Subtitle:</strong> <%= block.subtitle || "No subtitle" %></p>
+        <% } %>
+
+        <% if (block.type === "card") { %>
+          <p><strong>Title:</strong> <%= block.title || "Untitled card" %></p>
+          <p><strong>Description:</strong> <%= block.desc || "No description" %></p>
+        <% } %>
+
+        <% if (block.type === "footer") { %>
+          <p><strong>Text:</strong> <%= block.text || "No footer text" %></p>
+        <% } %>
+
+        <span class="block-card__cta" onclick="editBlock(<%= i %>)">
+          Edit block ->
+        </span>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<div id="addBlockModal" class="editor-modal" hidden>
+  <div class="editor-modal__dialog">
+    <div class="editor-modal__header">
+      <div>
+        <p class="editor-eyebrow">Add block</p>
+        <h2>Create a new section</h2>
+      </div>
+      <button class="modal-close" type="button" onclick="closeAddBlockModal()">X</button>
+    </div>
+
+    <div class="editor-modal__body">
+      <label for="blockType">Block type</label>
+      <select id="blockType" onchange="renderBlockFields()">
+        <option value="">Select Block</option>
+        <option value="hero">Hero</option>
+        <option value="card">Card</option>
+        <option value="footer">Footer</option>
+      </select>
+
+      <div id="blockFields" class="block-fields"></div>
+    </div>
+
+    <div class="editor-modal__footer">
+      <button class="secondary-btn" type="button" onclick="closeAddBlockModal()">Cancel</button>
+      <button class="primary-btn" type="button" onclick="saveNewBlock()">Save block</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const pageId = <%= page.id %>;
+  let blocks = <%- JSON.stringify(blocks) %>;
+
+  function openAddBlockModal() {
+    document.getElementById("addBlockModal").hidden = false;
+  }
+
+  function closeAddBlockModal() {
+    document.getElementById("addBlockModal").hidden = true;
+    document.getElementById("blockType").value = "";
+    document.getElementById("blockFields").innerHTML = "";
+  }
+
+  function renderBlockFields() {
+    const type = document.getElementById("blockType").value;
+    const fields = document.getElementById("blockFields");
+
+    if (type === "hero") {
+      fields.innerHTML = `
+        <label for="heroTitle">Title</label>
+        <input id="heroTitle" placeholder="Hero title">
+
+        <label for="heroSubtitle">Subtitle</label>
+        <textarea id="heroSubtitle" rows="4" placeholder="Hero subtitle"></textarea>
+
+        <label for="heroImageFile">Upload Image</label>
+        <input id="heroImageFile" type="file" accept="image/*">
+        <img id="heroImagePreview" class="block-image-preview" alt="Hero preview" hidden>
+      `;
+      return;
+    }
+
+    if (type === "card") {
+      fields.innerHTML = `
+        <label for="cardTitle">Title</label>
+        <input id="cardTitle" placeholder="Card title">
+
+        <label for="cardDesc">Description</label>
+        <textarea id="cardDesc" rows="5" placeholder="Card description"></textarea>
+      `;
+      return;
+    }
+
+    if (type === "footer") {
+      fields.innerHTML = `
+        <label for="footerText">Footer text</label>
+        <textarea id="footerText" rows="4" placeholder="Footer text"></textarea>
+      `;
+      return;
+    }
+
+    fields.innerHTML = "";
+  }
+
+  function saveNewBlock() {
+    const type = document.getElementById("blockType").value;
+
+    if (!type) {
+      alert("Select a block type first");
+      return;
+    }
+
+    const nextBlock = { type };
+
+    if (type === "hero") {
+      const heroImageFile = document.getElementById("heroImageFile");
+      nextBlock.title = document.getElementById("heroTitle").value.trim();
+      nextBlock.subtitle = document.getElementById("heroSubtitle").value.trim();
+      nextBlock.image = heroImageFile && heroImageFile.files[0] ? "__UPLOAD_PENDING__" : "";
+    }
+
+    if (type === "card") {
+      nextBlock.title = document.getElementById("cardTitle").value.trim();
+      nextBlock.desc = document.getElementById("cardDesc").value.trim();
+    }
+
+    if (type === "footer") {
+      nextBlock.text = document.getElementById("footerText").value.trim();
+    }
+
+    blocks.push(nextBlock);
+    persistBlocks("Block added successfully");
+  }
+
+  function deleteBlock(index) {
+    if (!confirm("Delete this block?")) return;
+
+    blocks.splice(index, 1);
+    persistBlocks("Block deleted successfully");
+  }
+
+  function persistBlocks(successMessage) {
+    const heroImageFile = document.getElementById("heroImageFile");
+    const formData = new FormData();
+    formData.append("blocks", JSON.stringify(blocks));
+
+    if (heroImageFile && heroImageFile.files[0]) {
+      formData.append("heroImage", heroImageFile.files[0]);
+    }
+
+    fetch(`/pages/${pageId}`, {
+      method: "PUT",
+      body: formData,
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to update page");
+        }
+
+        alert(successMessage);
+        window.location.reload();
+      })
+      .catch((error) => {
+        console.error(error);
+        alert(error.message || "Error updating page");
+      });
+  }
+
+  function editBlock(index) {
+    window.location.href = window.location.pathname + "/block/" + index;
+  }
+
+  document.addEventListener("change", (event) => {
+    if (event.target.id !== "heroImageFile") {
+      return;
+    }
+
+    const preview = document.getElementById("heroImagePreview");
+    const file = event.target.files[0];
+
+    if (!preview) {
+      return;
+    }
+
+    if (!file) {
+      preview.hidden = true;
+      preview.removeAttribute("src");
+      return;
+    }
+
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+  });
+</script>
+
+</body>
+</html>

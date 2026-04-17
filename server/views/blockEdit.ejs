@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edit Block</title>
+  <link rel="stylesheet" href="/css/blockEdit.css">
+</head>
+
+<body>
+  <div class="block-editor-page">
+    <div class="block-editor-header">
+      <div>
+        <p class="block-editor-eyebrow">Block editor</p>
+        <h1>
+          <%= block.type.toUpperCase() %> Block
+        </h1>
+        <p class="block-editor-copy">Update this block and save to sync the page settings, generated HTML, and Shopify
+          theme page.</p>
+      </div>
+      <button class="block-editor-back" onclick="window.location.href='/pages/editor/<%= pageId %>'">Back to
+        blocks</button>
+    </div>
+
+    <div class="block-editor-layout">
+      <section class="block-editor-panel">
+        <div class="block-editor-meta">
+          <span>Page: <strong>
+              <%= page.title %>
+            </strong></span>
+          <span>Block <strong>
+              <%= index + 1 %>
+            </strong> of <strong>
+              <%= blocks.length %>
+            </strong></span>
+        </div>
+
+        <form id="blockForm" class="block-form">
+          <% if (block.type==="hero" ) { %>
+            <label for="hero-title">Title</label>
+            <input id="hero-title" value="<%= block.title || "" %>">
+
+            <label for="hero-subtitle">Subtitle</label>
+            <textarea id="hero-subtitle" rows="4"><%= block.subtitle || "" %></textarea>
+
+            <label for="hero-image">Image URL</label>
+            <input id="hero-image" value="<%= block.image || "" %>">
+            <% } %>
+
+              <% if (block.type==="card" ) { %>
+                <label for="card-title">Title</label>
+                <input id="card-title" value="<%= block.title || "" %>">
+
+                <label for="card-desc">Description</label>
+                <textarea id="card-desc" rows="5"><%= block.desc || "" %></textarea>
+                <% } %>
+
+                  <% if (block.type==="footer" ) { %>
+                    <label for="footer-text">Footer text</label>
+                    <textarea id="footer-text" rows="4"><%= block.text || "" %></textarea>
+                    <% } %>
+        </form>
+
+        <div class="block-editor-actions">
+          <button type="button" class="block-editor-back" onclick="saveBlock()">Save changes</button>
+        </div>
+      </section>
+
+      <aside class="block-editor-sidebar">
+        <h2>Other blocks</h2>
+        <div class="sidebar-list">
+          <% blocks.forEach((item, itemIndex)=> { %>
+            <a class="sidebar-item <%= itemIndex === index ? " is-active" : "" %>" href="/pages/editor/<%= pageId %>
+                /block/<%= itemIndex %>">
+                  <span class="sidebar-item__index">Block <%= itemIndex + 1 %></span>
+                  <strong>
+                    <%= item.type.toUpperCase() %>
+                  </strong>
+            </a>
+            <% }) %>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    let blocks = <% - JSON.stringify(blocks) %>;
+    const index = <%= index %>;
+    const pageId = <%= pageId %>;
+
+    function saveBlock() {
+      const current = { ...blocks[index] };
+
+      if (current.type === "hero") {
+        current.title = document.getElementById("hero-title").value.trim();
+        current.subtitle = document.getElementById("hero-subtitle").value.trim();
+        current.image = document.getElementById("hero-image").value.trim();
+      }
+
+      if (current.type === "card") {
+        current.title = document.getElementById("card-title").value.trim();
+        current.desc = document.getElementById("card-desc").value.trim();
+      }
+
+      //   if (current.type === "navbar") {
+      //     current.links = document.getElementById("navbar-links").value
+      //       .split("\n")
+      //       .map((link) => link.trim())
+      //       .filter(Boolean);
+      //   }
+
+      if (current.type === "footer") {
+        current.text = document.getElementById("footer-text").value.trim();
+      }
+
+      blocks[index] = current;
+
+      fetch(`/pages/${pageId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks }),
+      })
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(data.error || "Failed to save page");
+          }
+
+          alert("Saved successfully");
+          window.location.href = `/pages/editor/${pageId}`;
+        })
+        .catch((error) => {
+          console.error(error);
+          alert(error.message || "Error saving page");
+        });
+    }
+  </script>
+
+</body>
+
+</html>

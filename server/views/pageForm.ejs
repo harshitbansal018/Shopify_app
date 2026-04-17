@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pageform</title>
+    <link rel="stylesheet" href="/css/page.css">
+</head>
+<body>
+    
+    <!-- 🔥 MODAL -->
+<div id="formContainer" class="modal">
+  <div class="modal-content">
+
+    <!-- CLOSE -->
+    <span class="close-btn" onclick="toggleForm()">✖</span>
+
+    <!-- HEADER -->
+    <div class="editor-header">
+      <h3><%= mode || "Create Page" %></h3>
+    </div>
+
+    <!-- BODY -->
+    <div class="editor-body">
+
+      <!-- LEFT -->
+      <div class="editor-sidebar">
+
+        <% if (mode !== "edit") { %>
+          <input id="pageTitle" placeholder="Page Title" required>
+        <% } %>
+
+        <select id="blockType">
+          <option value="">Select Block</option>
+          <option value="hero">Hero</option>
+          <option value="cards">Cards</option>
+          <option value="footer">Footer</option>
+        </select>
+
+        <button class="add-block-btn" onclick="showBlockInputs()">➕ Add Block</button>
+
+        <div id="blockInputs"></div>
+
+        <h4>Blocks</h4>
+        <div id="blocksPreview"></div>
+
+      </div>
+
+      <!-- RIGHT -->
+      <div class="editor-preview">
+        <h3>Live Preview</h3>
+        <div id="previewBox"></div>
+      </div>
+
+    </div>
+
+    <!-- FOOTER -->
+    <div class="editor-footer">
+      <button type="submit" form="pageForm">💾 Save</button>
+    </div>
+
+    <!-- FORM -->
+    <form id="pageForm"
+      method="POST"
+      action="<%= formAction %>"
+      enctype="multipart/form-data">
+
+      <input type="hidden" name="blocks" id="blocksData">
+      <input type="hidden" name="title" id="hiddenTitle">
+
+      <input type="file" name="heroImage" id="realImageInput" style="display:none;">
+    </form>
+
+  </div>
+</div>
+
+<script>
+
+/* 🔥 MODAL */
+function toggleForm() {
+  const modal = document.getElementById("formContainer");
+  modal.style.display = modal.style.display === "flex" ? "none" : "flex";
+}
+
+/* 🔥 BLOCK STORAGE */
+let blocks = window.initialBlocks || [];
+
+/* 🔥 SHOW INPUTS */
+function showBlockInputs() {
+  const type = blockType.value;
+
+  if (type === "hero") {
+    blockInputs.innerHTML = `
+      <input id="heroTitle" placeholder="Hero Title">
+      <input id="heroSubtitle" placeholder="Hero Subtitle">
+      <input type="file" id="heroImageFile" accept="image/*">
+      <img id="heroPreview" style="max-width:100%; display:none; margin-top:10px; border-radius:10px;" />
+      <button class="add-block-btn" onclick="saveHero()">Save</button>
+    `;
+  }
+
+  if (type === "cards") {
+    blockInputs.innerHTML = `
+      <input id="cardTitle" placeholder="Card Title">
+      <input id="cardDesc" placeholder="Description">
+      <button class="add-block-btn" onclick="saveCard()">Add</button>
+    `;
+  }
+
+  if (type === "footer") {
+    blockInputs.innerHTML = `
+      <input id="footerText" placeholder="Footer Text">
+      <button onclick="saveFooter()">Save</button>
+    `;
+  }
+}
+
+/* 🔥 IMAGE PREVIEW */
+document.addEventListener("change", function (e) {
+  if (e.target.id === "heroImageFile") {
+    const file = e.target.files[0];
+    if (file) {
+      heroPreview.src = URL.createObjectURL(file);
+      heroPreview.style.display = "block";
+      document.getElementById("realImageInput").files = e.target.files;
+    }
+  }
+});
+
+/* 🔥 SAVE BLOCKS */
+function saveHero() {
+  blocks.push({
+    type: "hero",
+    title: heroTitle.value,
+    subtitle: heroSubtitle.value,
+    image: ""
+  });
+  updateBlocks();
+}
+
+function saveCard() {
+  blocks.push({
+    type: "card",
+    title: cardTitle.value,
+    desc: cardDesc.value
+  });
+  updateBlocks();
+}
+
+function saveFooter() {
+  blocks.push({
+    type: "footer",
+    text: footerText.value
+  });
+  updateBlocks();
+}
+
+/* 🔥 UPDATE */
+function updateBlocks() {
+  blocksData.value = JSON.stringify(blocks);
+
+  blocksPreview.innerHTML = blocks.map((b, i) => `
+    <div class="block-item">
+      ${b.type} → ${b.title || b.text}
+      <button onclick="removeBlock(${i})">❌</button>
+    </div>
+  `).join("");
+
+  renderPreview();
+}
+
+function removeBlock(i) {
+  blocks.splice(i, 1);
+  updateBlocks();
+}
+
+/* 🔥 PREVIEW */
+function renderPreview() {
+  previewBox.innerHTML = blocks.map(b => {
+
+    if (b.type === "hero") {
+      return `
+        <div class="hero block">
+          <h1>${b.title}</h1>
+          <p>${b.subtitle}</p>
+        </div>
+      `;
+    }
+
+    if (b.type === "card") {
+      return `
+        <div class="card block">
+          <h3>${b.title}</h3>
+          <p>${b.desc}</p>
+        </div>
+      `;
+    }
+
+    if (b.type === "footer") {
+      return `<footer>${b.text}</footer>`;
+    }
+
+  }).join("");
+}
+
+/* 🔥 SUBMIT */
+pageForm.addEventListener("submit", function () {
+  if (document.getElementById("pageTitle")) {
+    hiddenTitle.value = pageTitle.value;
+  }
+});
+
+</script>
+</body>
+</html>

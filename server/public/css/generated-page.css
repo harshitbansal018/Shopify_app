@@ -1,0 +1,190 @@
+/* 🔥 RESET */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* 🔥 SHOPIFY FIX */
+.section {
+  display: block !important;
+}
+
+.page-width,
+.page-width-content,
+.section-wrapper,
+.section-content-wrapper,
+#MainContent {
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+:root {
+  --page-margin: 0px !important;
+}
+
+.rte,
+.rte-formatter,
+.shopify-block {
+  max-width: 100% !important;
+}
+
+/* 🔥 BODY */
+body {
+  font-family: "Inter", Arial, sans-serif;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+/* 🔥 WRAPPER */
+.custom-page-builder {
+  width: 100%;
+}
+
+/* ===================================================== */
+/* 🔥 HERO (PRO IMPROVED) */
+/* ===================================================== */
+
+.custom-page-builder__hero {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* IMAGE */
+.custom-page-builder__hero-image {
+  width: 100%;
+  height: 420px;
+  object-fit: cover;
+  display: block;
+
+
+}
+
+/* OVERLAY */
+.custom-page-builder__hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* TEXT */
+.custom-page-builder__hero-content {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  z-index: 2;
+  color: white;
+  text-align: center;
+  width: 100%;
+  max-width: 800px;
+  padding: 0 20px;
+}
+
+/* TITLE */
+.custom-page-builder__hero-title {
+  font-size: 48px;
+  font-weight: 800;
+  text-align: left;
+  margin-bottom: 12px;
+  letter-spacing: -0.5px;
+
+  text-shadow: 0 6px 30px rgba(0,0,0,0.8);
+}
+
+/* SUBTITLE */
+.custom-page-builder__hero-subtitle {
+  font-size: 20px;
+  opacity: 0.9;
+  text-align: left;
+
+  text-shadow: 0 4px 20px rgba(0,0,0,0.7);
+}
+
+/* ===================================================== */
+/* 🔥 CARDS (IMPROVED UI) */
+/* ===================================================== */
+
+.custom-page-builder__cards {
+  padding: 50px 40px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.custom-page-builder__card {
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+
+  transition: all 0.3s ease;
+}
+
+.custom-page-builder__card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 15px 30px rgba(0,0,0,0.08);
+}
+
+.custom-page-builder__card-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.custom-page-builder__card-desc {
+  color: #64748b;
+  line-height: 1.6;
+}
+
+/* ===================================================== */
+/* 🔥 FOOTER */
+/* ===================================================== */
+
+.custom-page-builder__footer {
+  padding: 24px;
+  background: #0f172a;
+  color: white;
+  text-align: center;
+}
+
+/* ===================================================== */
+/* 🔥 RESPONSIVE */
+/* ===================================================== */
+
+@media (max-width: 768px) {
+
+  .custom-page-builder__hero-image {
+    height: auto;
+  }
+
+  .custom-page-builder__hero-title {
+    font-size: 30px;
+  }
+
+  .custom-page-builder__hero-subtitle {
+    font-size: 16px;
+  }
+
+  .custom-page-builder__cards {
+    padding: 20px;
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 🔥 REMOVE SHOPIFY TITLE */
+.page-title,
+.main-page-title,
+h1 {
+  display: none;
+}
+.custom-page-builder__hero-title {
+  display: block !important;
+  color: white !important;
+  position: relative;
+  z-index: 3;
+}
