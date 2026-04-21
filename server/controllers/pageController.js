@@ -2,7 +2,8 @@ const { createShopifyPage } = require("../services/pageService");
 const { 
   getAllPages, 
   getPageById, 
-  deletePage 
+  deletePage,
+    togglePageStatus,
 } = require("../models/pageModel");
 const {getShop}= require("../models/shopModel");
 const { getPageSettings } = require("../models/pagesettingModel");
@@ -246,10 +247,29 @@ const handleDeletePage = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+async function toggleStatus(req, res) {
+  try {
+    const { id } = req.params;
+
+    const data = await togglePageStatus(id);
+
+    res.json({
+      success: true,
+      status: data.status
+    });
+  } catch (err) {
+    console.error("Toggle Status Error:", err);
+    res.json({ success: false });
+  }
+};
+
+
 /* ===================================================== */
 module.exports = {
   showCreatePage,
   handleCreatePage,
   getSinglePage,
   handleDeletePage,
+  toggleStatus,
+
 };

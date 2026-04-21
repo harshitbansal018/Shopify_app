@@ -2,9 +2,7 @@
 const axios = require("axios");
 const crypto = require("crypto");
 const { saveShop, getShop } = require("../models/shopModel");
-
-
-
+const membershipModel = require("../models/membershipModel");
 // ================= INSTALL =================
 exports.installApp = async (req, res) => {
   const { shop } = req.query;
@@ -38,9 +36,9 @@ exports.installApp = async (req, res) => {
 
  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=read_products,write_content,read_content,write_online_store_pages&grant_options[]=offline_access&redirect_uri=${redirectUri}`;
 
-console.log("🟡 INSTALL URL:", installUrl);
-console.log("🟡 SHOP:", shop);
-console.log("🟡 SCOPES SENT: read_products,write_content,read_content,write_online_store_pages");
+// console.log("🟡 INSTALL URL:", installUrl);
+// console.log("🟡 SHOP:", shop);
+// console.log("🟡 SCOPES SENT: read_products,write_content,read_content,write_online_store_pages");
 
   res.redirect(installUrl);
 };
@@ -52,10 +50,10 @@ exports.callback = async (req, res) => {
 if (!shop || !code) {
   return res.status(400).send("Missing required parameters");
 }
-  console.log("📥 Received Query:", req.query);
-console.log("📥 CALLBACK HIT");
-console.log("📥 SHOP:", shop);
-console.log("📥 CODE:", code);
+//   console.log("📥 Received Query:", req.query);
+// console.log("📥 CALLBACK HIT");
+// console.log("📥 SHOP:", shop);
+// console.log("📥 CODE:", code);
   try {
     // 🔐 HMAC Verification
     const map = { ...req.query };
@@ -134,40 +132,51 @@ console.log("🔑 TOKEN LENGTH:", accessToken.length);
     // 📅 Convert dates for MySQL
     const createdAt = new Date(data.created_at);
     const updatedAt = new Date(data.updated_at);
+   // 💾 Save shop data (single table)
+const shopId = await saveShop({
+  shop_name: shop,
+  access_token: accessToken,
+  host: host,
+  shopify_id: data.id,
+  name: data.name,
+  email: data.email,
+  domain: data.domain,
 
-    // 💾 Save shop data (single table)
-    await saveShop({
-      shop_name: shop,
-      access_token: accessToken,
-      host:host,
-      shopify_id: data.id,
-      name: data.name,
-      email: data.email,
-      domain: data.domain,
+  country: data.country,
+  country_code: data.country_code,
+  country_name: data.country_name,
 
-      country: data.country,
-      country_code: data.country_code,
-      country_name: data.country_name,
+  currency: data.currency,
+  money_format: data.money_format,
 
-      currency: data.currency,
-      money_format: data.money_format,
+  timezone: data.timezone,
+  iana_timezone: data.iana_timezone,
 
-      timezone: data.timezone,
-      iana_timezone: data.iana_timezone,
+  shop_owner: data.shop_owner,
 
-      shop_owner: data.shop_owner,
+  address1: data.address1,
+  address2: data.address2,
+  city: data.city,
+  zip: data.zip,
+  phone: data.phone,
 
-      address1: data.address1,
-      address2: data.address2,
-      city: data.city,
-      zip: data.zip,
-      phone: data.phone,
+  created_at: createdAt,
+  updated_at: updatedAt,
 
-      created_at: createdAt,
-      updated_at: updatedAt,
+  status: 1,
+});
 
-      status: 1, // ✅ Active on install
-    });
+console.log("✅ Shop saved with ID:", shopId);
+
+// 🔥 SAFE FREE PLAN LOGIC
+const existingPlan = await membershipModel.getActiveMembership(shopId);
+
+if (!existingPlan) {
+  await membershipModel.assignFreePlan(shopId, 1);
+  console.log("✅ Free plan assigned");
+} else {
+  console.log("ℹ️ Plan already exists");
+}
 
     console.log("✅ Data saved successfully");
 

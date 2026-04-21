@@ -95,7 +95,22 @@ const getShop = (shop) => {
 
   });
 };
+// ✅ Get shop by domain
+function getShopByDomain(shopDomain) {
+  return new Promise((resolve, reject) => {
+    const sql = "SELECT * FROM shops WHERE domain = ?";
+
+    db.query(sql, [shopDomain], (err, results) => {
+      if (err) {
+        console.error("Shop Fetch Error:", err);
+        return reject(err);
+      }
+      resolve(results[0]);
+    });
+  });
+}
 module.exports = {
   saveShop,
-  getShop
+  getShop,
+  getShopByDomain
 };

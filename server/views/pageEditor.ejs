@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Edit Page</title>
   <link rel="stylesheet" href="/css/pageEditor.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
 <body>
 
@@ -44,7 +45,7 @@
         <h2><%= block.type.toUpperCase() %></h2>
 
         <button class="delete-btn" type="button" onclick="deleteBlock(<%= i %>)">
-          X
+          <i class="fas fa-trash"></i>
         </button>
 
         <% if (block.type === "hero") { %>
@@ -76,7 +77,9 @@
         <p class="editor-eyebrow">Add block</p>
         <h2>Create a new section</h2>
       </div>
-      <button class="modal-close" type="button" onclick="closeAddBlockModal()">X</button>
+     <button class="modal-close" type="button" onclick="closeAddBlockModal()">
+  <i class="fas fa-trash"></i>
+</button>
     </div>
 
     <div class="editor-modal__body">

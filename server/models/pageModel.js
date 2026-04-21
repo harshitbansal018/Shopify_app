@@ -5,13 +5,13 @@ function createPage(title, content, shopifyId, shop, handle, blocks) {
   return new Promise((resolve, reject) => {
     const sql = `
       INSERT INTO pages 
-      (title, content, shopify_id, shop_domain, handle)
-      VALUES (?, ?, ?, ?, ?)
+      (title, content, shopify_id, shop_domain, handle,status)
+      VALUES (?, ?, ?, ?, ?, ?)
     `;
 
     db.query(
       sql,
-      [title, content, shopifyId, shop, handle],
+      [title, content, shopifyId, shop, handle, "active"],
       (err, result) => {
         if (err) {
           console.error("Database Insert Error:", err);
@@ -113,6 +113,56 @@ function deletePage(id) {
     });
   });
 }
+function togglePageStatus(id) {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      UPDATE pages
+      SET status = CASE 
+        WHEN status = 'active' THEN 'inactive'
+        ELSE 'active'
+      END
+      WHERE id = ?
+    `;
+
+    db.query(sql, [id], (err, result) => {
+      if (err) {
+        console.error("Status Toggle Error:", err);
+        return reject(err);
+      }
+
+      // Get updated status
+      db.query(
+        "SELECT status FROM pages WHERE id = ?",
+        [id],
+        (err2, res2) => {
+          if (err2) return reject(err2);
+          resolve(res2[0]);
+        }
+      );
+    });
+  });
+}
+
+// ✅ Get dashboard stats
+function getPageStats(shopDomain) {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      SELECT 
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) AS inactive
+      FROM pages
+      WHERE shop_domain = ?
+    `;
+
+    db.query(sql, [shopDomain], (err, result) => {
+      if (err) return reject(err);
+      resolve(result[0]);
+    });
+  });
+}
+
+
 
 module.exports = {
   createPage,
@@ -121,4 +171,6 @@ module.exports = {
   getPageById,
   updatePageContent,
   deletePage,
+  togglePageStatus,
+  getPageStats
 };

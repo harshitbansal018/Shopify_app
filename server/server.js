@@ -7,6 +7,7 @@ const authRoutes = require("./routes/authRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
 const pagesRoute = require("./routes/pageRoute");
 const pageEditRoute = require("./routes/pageEditRoute");
+const planRoutes = require("./routes/planRoute");
 
 const app = express();
 
@@ -33,6 +34,7 @@ app.use("/", dashboardRoutes);
 app.use("/pages", pagesRoute);
 app.use("/webhooks", require("./routes/webhookRoute"));
 app.use("/", pageEditRoute);
+app.use("/",planRoutes);
 
 // 🔥 START SERVER
 app.listen(process.env.PORT || 3000, () => {

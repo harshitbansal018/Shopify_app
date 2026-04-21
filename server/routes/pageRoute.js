@@ -8,6 +8,7 @@ const {
   handleCreatePage,
   getSinglePage,
   handleDeletePage,
+  toggleStatus,
 } = require("../controllers/pageController");
 
 // 👉 SHOW UI
@@ -19,6 +20,8 @@ router.post(
   upload.single("heroImage"), // 🔥 THIS FIXES YOUR ISSUE
   handleCreatePage
 );
+
+router.put("/toggle-status/:id", toggleStatus);
 
 // 👉 GET SINGLE PAGE
 router.get("/:id", getSinglePage);
