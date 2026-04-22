@@ -17,6 +17,34 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function applyUploadedBlockImages(req, blocks) {
+  const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+  const publicBaseUrl = getPublicBaseUrl(req);
+
+  files.forEach((file) => {
+    const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+
+    if (file.fieldname === "heroImage") {
+      const hero = blocks.find((block) => block.type === "hero");
+      if (hero) hero.image = imageUrl;
+      return;
+    }
+
+    const match = file.fieldname.match(/^gridImage_([^_]+)_(\d+)$/);
+    if (!match) return;
+
+    const [, gridId, itemIndexValue] = match;
+    const itemIndex = Number.parseInt(itemIndexValue, 10);
+    const grid = blocks.find((block) => block.type === "grid" && String(block.gridId) === gridId);
+
+    if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
+      grid.items[itemIndex].image = imageUrl;
+    }
+  });
+
+  return blocks;
+}
+
 /* ===================================================== */
 /* 👉 SHOW PAGE */
 /* ===================================================== */
@@ -63,20 +91,7 @@ const handleCreatePage = async (req, res) => {
       parsedBlocks = [];
     }
 
-    /* 🔥 IMAGE HANDLING */
-    if (req.file) {
-      const imageUrl = `${getPublicBaseUrl(req)}/uploads/${req.file.filename}`;
-
-      let heroAssigned = false;
-
-      parsedBlocks = parsedBlocks.map(block => {
-        if (block.type === "hero" && !heroAssigned) {
-          heroAssigned = true;
-          return { ...block, image: imageUrl };
-        }
-        return block;
-      });
-    }
+    parsedBlocks = applyUploadedBlockImages(req, parsedBlocks);
 
     /* 🔥 REMOVE DUPLICATE HERO */
     parsedBlocks = parsedBlocks.filter(
@@ -137,6 +152,24 @@ function convertSettingsToBlocks(settings) {
           blocks.push({ ...card, type: "card" });
         } catch {
           blocks.push({ type: "card", value: i.value });
+        }
+      });
+    }
+
+    if (group === "grid") {
+      items.forEach(i => {
+        try {
+          const grid = JSON.parse(i.value);
+          blocks.push({
+            type: "grid",
+            gridId: grid.gridId || `grid-${i.id}`,
+            heading: grid.heading || "",
+            subheading: grid.subheading || "",
+            columns: grid.columns || 3,
+            items: Array.isArray(grid.items) ? grid.items : [],
+          });
+        } catch {
+          blocks.push({ type: "grid", heading: i.setting_key || "", items: [] });
         }
       });
     }

@@ -19,6 +19,8 @@ function generateHTML(blocks) {
 
   let heroHtml = "";
   let cardsHtml = "";
+  let gridsHtml = "";
+  let richTextHtml = "";
   let footerHtml = "";
 
   blocks.forEach((block) => {
@@ -51,6 +53,53 @@ function generateHTML(blocks) {
       `;
     }
 
+    if (block.type === "grid") {
+      const columns = Math.min(Math.max(Number(block.columns) || 3, 1), 6);
+      const items = Array.isArray(block.items) ? block.items : [];
+      const itemsHtml = items
+        .map((item) => `
+          <article class="custom-page-builder__grid-item">
+            ${
+              item.image
+                ? `<img class="custom-page-builder__grid-image" src="${item.image}" />`
+                : ""
+            }
+            <div class="custom-page-builder__grid-content">
+              <h3 class="custom-page-builder__grid-title">${item.title || ""}</h3>
+              <p class="custom-page-builder__grid-desc">${item.desc || ""}</p>
+            </div>
+          </article>
+        `)
+        .join("");
+
+      gridsHtml += `
+        <section class="custom-page-builder__grid-section">
+          <div class="custom-page-builder__grid-header">
+            <h2 class="custom-page-builder__grid-heading">${block.heading || ""}</h2>
+            <p class="custom-page-builder__grid-subheading">${block.subheading || ""}</p>
+          </div>
+          <div class="custom-page-builder__grid" style="--grid-columns: ${columns}; grid-template-columns: repeat(${columns}, minmax(0, 1fr));">
+            ${itemsHtml}
+          </div>
+        </section>
+      `;
+    }
+
+    if (block.type === "richtext") {
+      richTextHtml += `
+        <section class="custom-page-builder__richtext">
+          ${
+            block.heading
+              ? `<h2 class="custom-page-builder__richtext-heading">${block.heading}</h2>`
+              : ""
+          }
+          <div class="custom-page-builder__richtext-content">
+            ${block.content || ""}
+          </div>
+        </section>
+      `;
+    }
+
     if (block.type === "footer" && !footerHtml) {
       footerHtml = `
         <footer class="custom-page-builder__footer">
@@ -69,6 +118,8 @@ function generateHTML(blocks) {
     <div class="custom-page-builder">
       ${heroHtml}
       ${cardsSection}
+      ${gridsHtml}
+      ${richTextHtml}
       ${footerHtml}
     </div>
   `;

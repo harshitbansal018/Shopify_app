@@ -24,6 +24,35 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function applyUploadedBlockImages(req, blocks) {
+  const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+  const publicBaseUrl = getPublicBaseUrl(req);
+
+  files.forEach((file) => {
+    const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+
+    if (file.fieldname === "heroImage") {
+      const uploadMarker = "__UPLOAD_PENDING__";
+      const hero = blocks.find((block) => block.type === "hero" && (!block.image || block.image === uploadMarker));
+      if (hero) hero.image = imageUrl;
+      return;
+    }
+
+    const match = file.fieldname.match(/^gridImage_([^_]+)_(\d+)$/);
+    if (!match) return;
+
+    const [, gridId, itemIndexValue] = match;
+    const itemIndex = Number.parseInt(itemIndexValue, 10);
+    const grid = blocks.find((block) => block.type === "grid" && String(block.gridId) === gridId);
+
+    if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
+      grid.items[itemIndex].image = imageUrl;
+    }
+  });
+
+  return blocks;
+}
+
 /* =========================
    🔥 SHOW EDITOR
 ========================= */
@@ -82,18 +111,7 @@ const updatePage = async (req, res) => {
       type: String(block.type || "").trim(),
     }));
 
-    if (req.file) {
-      const imageUrl = `${getPublicBaseUrl(req)}/uploads/${req.file.filename}`;
-      const uploadMarker = "__UPLOAD_PENDING__";
-      let imageAssigned = false;
-
-      for (const block of cleanedBlocks) {
-        if (block.type === "hero" && block.image === uploadMarker && !imageAssigned) {
-          block.image = imageUrl;
-          imageAssigned = true;
-        }
-      }
-    }
+    applyUploadedBlockImages(req, cleanedBlocks);
 
     const settings = convertBlocksToSettings(cleanedBlocks);
 
@@ -152,6 +170,14 @@ const addBlock = async (req, res) => {
         group: "footer",
         key: "text",
         value: block.text || ""
+      });
+    }
+
+    if (block.type === "grid") {
+      settings.push({
+        group: "grid",
+        key: block.heading || "grid",
+        value: JSON.stringify(block)
       });
     }
 

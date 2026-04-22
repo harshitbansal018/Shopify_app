@@ -60,6 +60,45 @@
                     <label for="footer-text">Footer text</label>
                     <textarea id="footer-text" rows="4"><%= block.text || "" %></textarea>
                     <% } %>
+
+                      <% if (block.type==="richtext" ) { %>
+                        <label for="richtext-heading">Heading</label>
+                        <input id="richtext-heading" value="<%= block.heading || "" %>">
+
+                        <label for="richtext-content">Content</label>
+                        <textarea id="richtext-content" rows="10"><%- block.content || "" %></textarea>
+                        <% } %>
+
+                      <% if (block.type==="grid" ) { %>
+                        <label for="grid-heading">Heading</label>
+                        <input id="grid-heading" value="<%= block.heading || "" %>">
+
+                        <label for="grid-subheading">Subheading</label>
+                        <textarea id="grid-subheading" rows="4"><%= block.subheading || "" %></textarea>
+
+                        <label for="grid-columns">Columns</label>
+                        <input id="grid-columns" type="number" min="1" max="6" value="<%= block.columns || 3 %>">
+
+                        <div class="grid-edit-list">
+                          <% (block.items || []).forEach((item, gridIndex) => { %>
+                            <div class="grid-edit-item">
+                              <h3>Grid Item <%= gridIndex + 1 %></h3>
+
+                              <label for="grid-title-<%= gridIndex %>">Title</label>
+                              <input id="grid-title-<%= gridIndex %>" value="<%= item.title || "" %>">
+
+                              <label for="grid-desc-<%= gridIndex %>">Description</label>
+                              <textarea id="grid-desc-<%= gridIndex %>" rows="3"><%= item.desc || "" %></textarea>
+
+                              <label for="grid-image-<%= gridIndex %>">Image URL</label>
+                              <input id="grid-image-<%= gridIndex %>" value="<%= item.image || "" %>">
+
+                              <label for="grid-file-<%= gridIndex %>">Replace image</label>
+                              <input id="grid-file-<%= gridIndex %>" type="file" accept="image/*">
+                            </div>
+                          <% }) %>
+                        </div>
+                        <% } %>
         </form>
 
         <div class="block-editor-actions">
@@ -84,10 +123,20 @@
     </div>
   </div>
 
+  <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
   <script>
-    let blocks = <% - JSON.stringify(blocks) %>;
+    let blocks = <%- JSON.stringify(blocks) %>;
     const index = <%= index %>;
     const pageId = <%= pageId %>;
+    let richTextEditor = null;
+
+    if (blocks[index] && blocks[index].type === "richtext" && window.ClassicEditor) {
+      ClassicEditor.create(document.querySelector("#richtext-content"))
+        .then((editor) => {
+          richTextEditor = editor;
+        })
+        .catch((error) => console.error(error));
+    }
 
     function saveBlock() {
       const current = { ...blocks[index] };
@@ -114,12 +163,50 @@
         current.text = document.getElementById("footer-text").value.trim();
       }
 
+      if (current.type === "richtext") {
+        current.heading = document.getElementById("richtext-heading").value.trim();
+        current.content = richTextEditor
+          ? richTextEditor.getData()
+          : document.getElementById("richtext-content").value;
+      }
+
+      if (current.type === "grid") {
+        current.heading = document.getElementById("grid-heading").value.trim();
+        current.subheading = document.getElementById("grid-subheading").value.trim();
+        current.columns = Number(document.getElementById("grid-columns").value || 3);
+        current.gridId = current.gridId || `grid${Date.now()}`;
+        current.items = (current.items || []).map((item, itemIndex) => {
+          const fileInput = document.getElementById(`grid-file-${itemIndex}`);
+
+          return {
+            ...item,
+            title: document.getElementById(`grid-title-${itemIndex}`).value.trim(),
+            desc: document.getElementById(`grid-desc-${itemIndex}`).value.trim(),
+            image: fileInput && fileInput.files[0]
+              ? ""
+              : document.getElementById(`grid-image-${itemIndex}`).value.trim(),
+          };
+        });
+      }
+
       blocks[index] = current;
+
+      const formData = new FormData();
+      formData.append("blocks", JSON.stringify(blocks));
+
+      if (current.type === "grid") {
+        (current.items || []).forEach((item, itemIndex) => {
+          const fileInput = document.getElementById(`grid-file-${itemIndex}`);
+
+          if (fileInput && fileInput.files[0]) {
+            formData.append(`gridImage_${current.gridId}_${itemIndex}`, fileInput.files[0]);
+          }
+        });
+      }
 
       fetch(`/pages/${pageId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blocks }),
+        body: formData,
       })
         .then(async (response) => {
           const data = await response.json().catch(() => ({}));

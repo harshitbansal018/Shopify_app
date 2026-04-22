@@ -20,7 +20,7 @@
       <!-- HEADER -->
       <div class="editor-header">
         <h3>
-          <%= mode || "Create Page" %>
+         Create New Page
         </h3>
       </div>
 
@@ -38,17 +38,15 @@
                 <option value="">Select Block</option>
                 <option value="hero">Hero</option>
                 <option value="cards">Cards</option>
+                <option value="grid">Grid</option>
+                <option value="richtext">Rich Text</option>
                 <option value="footer">Footer</option>
               </select>
 
               <button class="add-block-btn" onclick="showBlockInputs()">Add Block</button>
 
               <div id="blockInputs"></div>
-
-
-
         </div>
-
         <!-- RIGHT -->
         <div class="editor-preview">
 
@@ -67,11 +65,8 @@
           <div id="blocksSection" class="dropdown-content">
             <div id="blocksPreview"></div>
           </div>
-
         </div>
-
       </div>
-
       <!-- FOOTER -->
       <div class="editor-footer">
         <button type="submit" form="pageForm">Save</button>
@@ -89,6 +84,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
   <script>
 
     /* 🔥 MODAL */
@@ -99,9 +95,28 @@
 
     /* 🔥 BLOCK STORAGE */
     let blocks = window.initialBlocks || [];
+    let richTextEditor = null;
+
+    function destroyRichTextEditor() {
+      if (!richTextEditor) return;
+
+      richTextEditor.destroy().catch((error) => console.error(error));
+      richTextEditor = null;
+    }
+
+    function initRichTextEditor(selector) {
+      if (!window.ClassicEditor) return;
+
+      ClassicEditor.create(document.querySelector(selector))
+        .then((editor) => {
+          richTextEditor = editor;
+        })
+        .catch((error) => console.error(error));
+    }
 
     /* 🔥 SHOW INPUTS */
     function showBlockInputs() {
+      destroyRichTextEditor();
       const type = blockType.value;
 
       if (type === "hero") {
@@ -120,6 +135,28 @@
       <input id="cardDesc" placeholder="Description">
       <button class="add-block-btn" onclick="saveCard()">Add</button>
     `;
+      }
+
+      if (type === "grid") {
+        blockInputs.innerHTML = `
+      <input id="gridHeading" placeholder="Grid Heading">
+      <input id="gridSubheading" placeholder="Grid Subheading">
+      <input id="gridColumns" type="number" min="1" max="6" value="3" placeholder="Columns">
+      <input id="gridCount" type="number" min="1" max="12" value="3" placeholder="Number of grid items">
+      <button class="add-block-btn" type="button" onclick="renderGridInputs()">Create Grid Items</button>
+      <div id="gridItems"></div>
+      <button class="add-block-btn" type="button" onclick="saveGrid()">Save Grid</button>
+    `;
+        renderGridInputs();
+      }
+
+      if (type === "richtext") {
+        blockInputs.innerHTML = `
+      <input id="richTextHeading" placeholder="Rich Text Heading">
+      <textarea id="richTextContent" rows="8"></textarea>
+      <button class="add-block-btn" type="button" onclick="saveRichText()">Save Rich Text</button>
+    `;
+        initRichTextEditor("#richTextContent");
       }
 
       if (type === "footer") {
@@ -170,13 +207,71 @@
       updateBlocks();
     }
 
+    function saveRichText() {
+      blocks.push({
+        type: "richtext",
+        heading: richTextHeading.value,
+        content: richTextEditor ? richTextEditor.getData() : richTextContent.value,
+      });
+
+      updateBlocks();
+    }
+
+    function renderGridInputs() {
+      const count = Math.max(1, Math.min(Number(document.getElementById("gridCount").value || 1), 12));
+      const gridItems = document.getElementById("gridItems");
+
+      gridItems.innerHTML = Array.from({ length: count }, (_, i) => `
+        <div class="grid-form-item">
+          <h4>Grid Item ${i + 1}</h4>
+          <input id="gridItemTitle${i}" placeholder="Item Title">
+          <input id="gridItemDesc${i}" placeholder="Item Description">
+          <input id="gridItemImage${i}" type="file" accept="image/*">
+        </div>
+      `).join("");
+    }
+
+    function saveGrid() {
+      const count = Math.max(1, Math.min(Number(document.getElementById("gridCount").value || 1), 12));
+      const gridId = `grid${Date.now()}`;
+      const items = [];
+
+      for (let i = 0; i < count; i++) {
+        const imageInput = document.getElementById(`gridItemImage${i}`);
+
+        if (imageInput) {
+          imageInput.name = `gridImage_${gridId}_${i}`;
+          imageInput.setAttribute("form", "pageForm");
+          imageInput.style.display = "none";
+          pageForm.appendChild(imageInput);
+        }
+
+        items.push({
+          title: document.getElementById(`gridItemTitle${i}`).value,
+          desc: document.getElementById(`gridItemDesc${i}`).value,
+          image: "",
+        });
+      }
+
+      blocks.push({
+        type: "grid",
+        gridId,
+        heading: gridHeading.value,
+        subheading: gridSubheading.value,
+        columns: Number(gridColumns.value || 3),
+        items,
+      });
+
+      updateBlocks();
+    }
+
     /* 🔥 UPDATE */
     function updateBlocks() {
       blocksData.value = JSON.stringify(blocks);
 
       blocksPreview.innerHTML = blocks.map((b, i) => `
     <div class="block-item">
-      ${b.type} → ${b.title || b.text}
+      ${b.type} → ${b.title || b.text || b.heading || ""}
   <button type="button" onclick="removeBlock(event, ${i})">❌</button>
     </div>
   `).join("");
@@ -216,6 +311,32 @@
           return `<footer>${b.text}</footer>`;
         }
 
+        if (b.type === "grid") {
+          return `
+        <div class="grid-preview block">
+          <h2>${b.heading}</h2>
+          <p>${b.subheading}</p>
+          <div class="grid-preview-items" style="grid-template-columns: repeat(${Number(b.columns) || 3}, minmax(0, 1fr));">
+            ${(b.items || []).map(item => `
+              <div class="grid-preview-card">
+                <strong>${item.title}</strong>
+                <p>${item.desc}</p>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+        }
+
+        if (b.type === "richtext") {
+          return `
+        <div class="richtext-preview block">
+          <h2>${b.heading || ""}</h2>
+          <div>${b.content || ""}</div>
+        </div>
+      `;
+        }
+
       }).join("");
     }
 
@@ -239,7 +360,6 @@
         header.innerHTML = header.innerHTML.replace("▼", "▶");
       }
     }
-
   </script>
 </body>
 

@@ -58,6 +58,16 @@
           <p><strong>Description:</strong> <%= block.desc || "No description" %></p>
         <% } %>
 
+        <% if (block.type === "grid") { %>
+          <p><strong>Heading:</strong> <%= block.heading || "Untitled grid" %></p>
+          <p><strong>Items:</strong> <%= Array.isArray(block.items) ? block.items.length : 0 %></p>
+        <% } %>
+
+        <% if (block.type === "richtext") { %>
+          <p><strong>Heading:</strong> <%= block.heading || "Untitled rich text" %></p>
+          <p><strong>Content:</strong> Rich text content</p>
+        <% } %>
+
         <% if (block.type === "footer") { %>
           <p><strong>Text:</strong> <%= block.text || "No footer text" %></p>
         <% } %>
@@ -78,7 +88,7 @@
         <h2>Create a new section</h2>
       </div>
      <button class="modal-close" type="button" onclick="closeAddBlockModal()">
-  <i class="fas fa-trash"></i>
+X
 </button>
     </div>
 
@@ -88,6 +98,8 @@
         <option value="">Select Block</option>
         <option value="hero">Hero</option>
         <option value="card">Card</option>
+        <option value="grid">Grid</option>
+        <option value="richtext">Rich Text</option>
         <option value="footer">Footer</option>
       </select>
 
@@ -101,9 +113,29 @@
   </div>
 </div>
 
+<script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
 <script>
   const pageId = <%= page.id %>;
   let blocks = <%- JSON.stringify(blocks) %>;
+  let pendingGridUploadId = null;
+  let richTextEditor = null;
+
+  function destroyRichTextEditor() {
+    if (!richTextEditor) return;
+
+    richTextEditor.destroy().catch((error) => console.error(error));
+    richTextEditor = null;
+  }
+
+  function initRichTextEditor(selector) {
+    if (!window.ClassicEditor) return;
+
+    ClassicEditor.create(document.querySelector(selector))
+      .then((editor) => {
+        richTextEditor = editor;
+      })
+      .catch((error) => console.error(error));
+  }
 
   function openAddBlockModal() {
     document.getElementById("addBlockModal").hidden = false;
@@ -113,9 +145,11 @@
     document.getElementById("addBlockModal").hidden = true;
     document.getElementById("blockType").value = "";
     document.getElementById("blockFields").innerHTML = "";
+    destroyRichTextEditor();
   }
 
   function renderBlockFields() {
+    destroyRichTextEditor();
     const type = document.getElementById("blockType").value;
     const fields = document.getElementById("blockFields");
 
@@ -145,6 +179,39 @@
       return;
     }
 
+    if (type === "grid") {
+      fields.innerHTML = `
+        <label for="gridHeading">Heading</label>
+        <input id="gridHeading" placeholder="Grid heading">
+
+        <label for="gridSubheading">Subheading</label>
+        <textarea id="gridSubheading" rows="3" placeholder="Grid subheading"></textarea>
+
+        <label for="gridColumns">Columns</label>
+        <input id="gridColumns" type="number" min="1" max="6" value="3">
+
+        <label for="gridCount">Number of grid items</label>
+        <input id="gridCount" type="number" min="1" max="12" value="3">
+        <button class="secondary-btn" type="button" onclick="renderGridItemFields()">Create Grid Items</button>
+
+        <div id="gridItems" class="grid-item-fields"></div>
+      `;
+      renderGridItemFields();
+      return;
+    }
+
+    if (type === "richtext") {
+      fields.innerHTML = `
+        <label for="richTextHeading">Heading</label>
+        <input id="richTextHeading" placeholder="Rich text heading">
+
+        <label for="richTextContent">Content</label>
+        <textarea id="richTextContent" rows="8"></textarea>
+      `;
+      initRichTextEditor("#richTextContent");
+      return;
+    }
+
     if (type === "footer") {
       fields.innerHTML = `
         <label for="footerText">Footer text</label>
@@ -154,6 +221,30 @@
     }
 
     fields.innerHTML = "";
+  }
+
+  function renderGridItemFields() {
+    const countInput = document.getElementById("gridCount");
+    const gridItems = document.getElementById("gridItems");
+
+    if (!countInput || !gridItems) {
+      return;
+    }
+
+    const count = Math.max(1, Math.min(Number(countInput.value || 1), 12));
+    gridItems.innerHTML = Array.from({ length: count }, (_, i) => `
+      <div class="grid-field-card">
+        <h3>Grid Item ${i + 1}</h3>
+        <label for="gridItemTitle${i}">Title</label>
+        <input id="gridItemTitle${i}" placeholder="Item title">
+
+        <label for="gridItemDesc${i}">Description</label>
+        <textarea id="gridItemDesc${i}" rows="3" placeholder="Item description"></textarea>
+
+        <label for="gridItemImage${i}">Image</label>
+        <input id="gridItemImage${i}" type="file" accept="image/*">
+      </div>
+    `).join("");
   }
 
   function saveNewBlock() {
@@ -176,6 +267,27 @@
     if (type === "card") {
       nextBlock.title = document.getElementById("cardTitle").value.trim();
       nextBlock.desc = document.getElementById("cardDesc").value.trim();
+    }
+
+    if (type === "grid") {
+      const count = Math.max(1, Math.min(Number(document.getElementById("gridCount").value || 1), 12));
+      const gridId = `grid${Date.now()}`;
+
+      nextBlock.gridId = gridId;
+      pendingGridUploadId = gridId;
+      nextBlock.heading = document.getElementById("gridHeading").value.trim();
+      nextBlock.subheading = document.getElementById("gridSubheading").value.trim();
+      nextBlock.columns = Number(document.getElementById("gridColumns").value || 3);
+      nextBlock.items = Array.from({ length: count }, (_, i) => ({
+        title: document.getElementById(`gridItemTitle${i}`).value.trim(),
+        desc: document.getElementById(`gridItemDesc${i}`).value.trim(),
+        image: "",
+      }));
+    }
+
+    if (type === "richtext") {
+      nextBlock.heading = document.getElementById("richTextHeading").value.trim();
+      nextBlock.content = richTextEditor ? richTextEditor.getData() : document.getElementById("richTextContent").value;
     }
 
     if (type === "footer") {
@@ -201,6 +313,19 @@
     if (heroImageFile && heroImageFile.files[0]) {
       formData.append("heroImage", heroImageFile.files[0]);
     }
+
+    document.querySelectorAll('input[id^="gridItemImage"]').forEach((input) => {
+      if (!input.files[0]) {
+        return;
+      }
+
+      const index = Number(input.id.replace("gridItemImage", ""));
+      const gridBlock = blocks.find((block) => block.type === "grid" && block.gridId === pendingGridUploadId);
+
+      if (gridBlock) {
+        formData.append(`gridImage_${gridBlock.gridId}_${index}`, input.files[0]);
+      }
+    });
 
     fetch(`/pages/${pageId}`, {
       method: "PUT",

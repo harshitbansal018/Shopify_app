@@ -169,6 +169,27 @@ body {
   color: #ea580c;
 }
 
+.grid-edit-list {
+  display: grid;
+  gap: 18px;
+}
+
+.grid-edit-item {
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.grid-edit-item h3 {
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+
+.ck-editor__editable {
+  min-height: 260px;
+}
+
 @media (max-width: 860px) {
   .block-editor-header {
     flex-direction: column;

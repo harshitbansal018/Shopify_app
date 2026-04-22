@@ -17,7 +17,7 @@ router.get("/create", showCreatePage);
 // 👉 CREATE PAGE (FIXED)
 router.post(
   "/create",
-  upload.single("heroImage"), // 🔥 THIS FIXES YOUR ISSUE
+  upload.any(),
   handleCreatePage
 );
 

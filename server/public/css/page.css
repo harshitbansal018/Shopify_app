@@ -372,37 +372,67 @@ input:focus, textarea:focus {
     transition: 0.3s;
 }
 .menu-btn {
-  background: none;
+  background: #f1f5f9;
   border: none;
-  font-size: 20px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 18px;
   cursor: pointer;
+  transition: 0.2s;
+}
+
+.menu-btn:hover {
+  background: #e2e8f0;
 }
 
 .dropdown-menu {
-    display: none;
-    position: absolute;
-    right: 0;
-    top: 40px;
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    min-width: 76px;
-    z-index: 9999;
+  display: none;
+  position: absolute;
+  right: 10px;
+  top: 38px;
+  background: #ffffff;
+  border-radius: 10px;
+  min-width: 140px;
+  padding: 6px 0;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+  border: 1px solid #e5e7eb;
+  z-index: 9999;
+  animation: fadeIn 0.15s ease;
 }
 
+/* Items */
 .dropdown-menu button {
-  display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border: none;
   background: none;
   text-align: left;
+  font-size: 14px;
+  color: #374151;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
+/* Hover effect */
 .dropdown-menu button:hover {
-  background-color: #f3f4f6;
+  background: #070707;
+}
+
+/* Danger button */
+.dropdown-menu button:last-child {
+  color: #ffffff;
+}
+
+/* Optional animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .status-btn {
   padding: 6px 12px;
@@ -472,4 +502,57 @@ input:focus, textarea:focus {
   width: 100%;
   height: 80px;
   object-fit: cover;
+}
+
+.grid-form-item {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.grid-form-item h4 {
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.grid-preview {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.grid-preview h2 {
+  margin-bottom: 8px;
+}
+
+.grid-preview-items {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.grid-preview-card {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: white;
+}
+
+.richtext-preview {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
+.richtext-preview h2 {
+  margin-bottom: 10px;
+}
+
+.richtext-preview div {
+  color: #334155;
+  line-height: 1.7;
+}
+
+.ck-editor__editable {
+  min-height: 180px;
 }

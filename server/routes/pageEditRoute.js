@@ -25,7 +25,7 @@ router.get("/pages/delete-block/:id", deleteBlock);
 /* =========================
    👉 UPDATE FULL PAGE
 ========================= */
-router.put("/pages/:id", upload.single("heroImage"), updatePage);
+router.put("/pages/:id", upload.any(), updatePage);
 router.get("/pages/add-block-form/:id", (req, res) => {
   res.render("pageForm", {
     pageId: req.params.id

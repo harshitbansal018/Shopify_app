@@ -257,6 +257,28 @@ body {
   border: 1px solid #dbe4f0;
 }
 
+.grid-item-fields {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.grid-field-card {
+  padding: 16px;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.grid-field-card h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.ck-editor__editable {
+  min-height: 220px;
+}
+
 .secondary-btn,
 .modal-close {
   border: 1px solid #cbd5e1;

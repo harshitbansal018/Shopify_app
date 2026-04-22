@@ -53,6 +53,49 @@ function convertSettingsToBlocks(settings) {
     });
   }
 
+  if (grouped.grid) {
+    grouped.grid.forEach((item) => {
+      try {
+        const grid = JSON.parse(item.value);
+        blocks.push({
+          type: "grid",
+          gridId: grid.gridId || `grid-${item.id}`,
+          heading: grid.heading || "",
+          subheading: grid.subheading || "",
+          columns: grid.columns || 3,
+          items: Array.isArray(grid.items) ? grid.items : [],
+        });
+      } catch {
+        blocks.push({
+          type: "grid",
+          heading: item.setting_key || "",
+          subheading: "",
+          columns: 3,
+          items: [],
+        });
+      }
+    });
+  }
+
+  if (grouped.richtext) {
+    grouped.richtext.forEach((item) => {
+      try {
+        const richtext = JSON.parse(item.value);
+        blocks.push({
+          type: "richtext",
+          heading: richtext.heading || "",
+          content: richtext.content || "",
+        });
+      } catch {
+        blocks.push({
+          type: "richtext",
+          heading: item.setting_key || "",
+          content: item.value || "",
+        });
+      }
+    });
+  }
+
   if (grouped.footer) {
     const footer = { type: "footer" };
 
@@ -91,6 +134,33 @@ function convertBlocksToSettings(blocks) {
           type: "card",
           title: block.title || "",
           desc: block.desc || "",
+        }),
+      });
+    }
+
+    if (block.type === "grid") {
+      settings.push({
+        group: "grid",
+        key: block.heading || "grid",
+        value: JSON.stringify({
+          type: "grid",
+          gridId: block.gridId || `grid-${Date.now()}`,
+          heading: block.heading || "",
+          subheading: block.subheading || "",
+          columns: block.columns || 3,
+          items: Array.isArray(block.items) ? block.items : [],
+        }),
+      });
+    }
+
+    if (block.type === "richtext") {
+      settings.push({
+        group: "richtext",
+        key: block.heading || "richtext",
+        value: JSON.stringify({
+          type: "richtext",
+          heading: block.heading || "",
+          content: block.content || "",
         }),
       });
     }
