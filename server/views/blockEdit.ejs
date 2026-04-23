@@ -44,8 +44,11 @@
             <label for="hero-subtitle">Subtitle</label>
             <textarea id="hero-subtitle" rows="4"><%= block.subtitle || "" %></textarea>
 
-            <label for="hero-image">Image URL</label>
-            <input id="hero-image" value="<%= block.image || "" %>">
+            <label for="hero-images">Image URLs (one per line)</label>
+            <textarea id="hero-images" rows="6"><%= Array.isArray(block.images) ? block.images.join("\n") : (block.image || "") %></textarea>
+
+            <label for="hero-image-files">Replace with new slider images</label>
+            <input id="hero-image-files" type="file" accept="image/*" multiple>
             <% } %>
 
               <% if (block.type==="card" ) { %>
@@ -130,6 +133,24 @@
     const pageId = <%= pageId %>;
     let richTextEditor = null;
 
+    blocks = blocks.map((block) => {
+      if (block.type !== "hero") {
+        return block;
+      }
+
+      const images = Array.isArray(block.images)
+        ? block.images.filter(Boolean)
+        : block.image
+          ? [block.image]
+          : [];
+
+      return {
+        ...block,
+        heroId: block.heroId || `hero${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
+        images
+      };
+    });
+
     if (blocks[index] && blocks[index].type === "richtext" && window.ClassicEditor) {
       ClassicEditor.create(document.querySelector("#richtext-content"))
         .then((editor) => {
@@ -142,9 +163,18 @@
       const current = { ...blocks[index] };
 
       if (current.type === "hero") {
+        const heroImageFiles = document.getElementById("hero-image-files");
+        const heroImageUrls = document.getElementById("hero-images").value
+          .split("\n")
+          .map((item) => item.trim())
+          .filter(Boolean);
+
         current.title = document.getElementById("hero-title").value.trim();
         current.subtitle = document.getElementById("hero-subtitle").value.trim();
-        current.image = document.getElementById("hero-image").value.trim();
+        current.images = heroImageFiles && heroImageFiles.files.length
+          ? Array.from(heroImageFiles.files).map(() => "")
+          : heroImageUrls;
+        current.heroId = current.heroId || `hero${Date.now()}`;
       }
 
       if (current.type === "card") {
@@ -193,6 +223,16 @@
 
       const formData = new FormData();
       formData.append("blocks", JSON.stringify(blocks));
+
+      if (current.type === "hero") {
+        const heroImageFiles = document.getElementById("hero-image-files");
+
+        if (heroImageFiles && heroImageFiles.files.length) {
+          Array.from(heroImageFiles.files).forEach((file) => {
+            formData.append(`heroImage_${current.heroId}`, file);
+          });
+        }
+      }
 
       if (current.type === "grid") {
         (current.items || []).forEach((item, itemIndex) => {

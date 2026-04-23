@@ -1,16 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>pageform</title>
   <link rel="stylesheet" href="/css/page.css">
+  <script src="/javascript/pageForm.js"></script>
 </head>
-
 <body>
 
-  <!-- 🔥 MODAL -->
   <div id="formContainer" class="modal">
     <div class="modal-content">
 
@@ -37,7 +35,7 @@
               <select id="blockType">
                 <option value="">Select Block</option>
                 <option value="hero">Hero</option>
-                <option value="cards">Cards</option>
+                <option value="card">Cards</option>
                 <option value="grid">Grid</option>
                 <option value="richtext">Rich Text</option>
                 <option value="footer">Footer</option>
@@ -52,16 +50,16 @@
 
           <!-- 🔥 LIVE PREVIEW DROPDOWN -->
           <h3 onclick="toggleSection('previewSection')" class="dropdown-header">
-            Live Preview ▶
+            Live Preview 
           </h3>
           <div id="previewSection" class="dropdown-content">
             <div id="previewBox"></div>
           </div>
 
           <!-- 🔥 BLOCKS DROPDOWN -->
-          <h4 onclick="toggleSection('blocksSection')" class="dropdown-header">
-            Blocks ▶
-          </h4>
+          <h3 onclick="toggleSection('blocksSection')" class="dropdown-header">
+            Blocks 
+          </h3>
           <div id="blocksSection" class="dropdown-content">
             <div id="blocksPreview"></div>
           </div>
@@ -78,289 +76,14 @@
         <input type="hidden" name="blocks" id="blocksData">
         <input type="hidden" name="title" id="hiddenTitle">
 
-        <input type="file" name="heroImage" id="realImageInput" style="display:none;">
+       
       </form>
 
     </div>
   </div>
 
   <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
-  <script>
 
-    /* 🔥 MODAL */
-    function toggleForm() {
-      const modal = document.getElementById("formContainer");
-      modal.style.display = modal.style.display === "flex" ? "none" : "flex";
-    }
-
-    /* 🔥 BLOCK STORAGE */
-    let blocks = window.initialBlocks || [];
-    let richTextEditor = null;
-
-    function destroyRichTextEditor() {
-      if (!richTextEditor) return;
-
-      richTextEditor.destroy().catch((error) => console.error(error));
-      richTextEditor = null;
-    }
-
-    function initRichTextEditor(selector) {
-      if (!window.ClassicEditor) return;
-
-      ClassicEditor.create(document.querySelector(selector))
-        .then((editor) => {
-          richTextEditor = editor;
-        })
-        .catch((error) => console.error(error));
-    }
-
-    /* 🔥 SHOW INPUTS */
-    function showBlockInputs() {
-      destroyRichTextEditor();
-      const type = blockType.value;
-
-      if (type === "hero") {
-        blockInputs.innerHTML = `
-      <input id="heroTitle" placeholder="Hero Title">
-      <input id="heroSubtitle" placeholder="Hero Subtitle">
-      <input type="file" id="heroImageFile" accept="image/*">
-      <img id="heroPreview" style="max-width:100%; display:none; margin-top:10px; border-radius:10px;" />
-      <button class="add-block-btn" onclick="saveHero()">Save</button>
-    `;
-      }
-
-      if (type === "cards") {
-        blockInputs.innerHTML = `
-      <input id="cardTitle" placeholder="Card Title">
-      <input id="cardDesc" placeholder="Description">
-      <button class="add-block-btn" onclick="saveCard()">Add</button>
-    `;
-      }
-
-      if (type === "grid") {
-        blockInputs.innerHTML = `
-      <input id="gridHeading" placeholder="Grid Heading">
-      <input id="gridSubheading" placeholder="Grid Subheading">
-      <input id="gridColumns" type="number" min="1" max="6" value="3" placeholder="Columns">
-      <input id="gridCount" type="number" min="1" max="12" value="3" placeholder="Number of grid items">
-      <button class="add-block-btn" type="button" onclick="renderGridInputs()">Create Grid Items</button>
-      <div id="gridItems"></div>
-      <button class="add-block-btn" type="button" onclick="saveGrid()">Save Grid</button>
-    `;
-        renderGridInputs();
-      }
-
-      if (type === "richtext") {
-        blockInputs.innerHTML = `
-      <input id="richTextHeading" placeholder="Rich Text Heading">
-      <textarea id="richTextContent" rows="8"></textarea>
-      <button class="add-block-btn" type="button" onclick="saveRichText()">Save Rich Text</button>
-    `;
-        initRichTextEditor("#richTextContent");
-      }
-
-      if (type === "footer") {
-        blockInputs.innerHTML = `
-      <input id="footerText" placeholder="Footer Text">
-      <button onclick="saveFooter()">Save</button>
-    `;
-      }
-    }
-
-    /* 🔥 IMAGE PREVIEW */
-    document.addEventListener("change", function (e) {
-      if (e.target.id === "heroImageFile") {
-        const file = e.target.files[0];
-        if (file) {
-          heroPreview.src = URL.createObjectURL(file);
-          heroPreview.style.display = "block";
-          document.getElementById("realImageInput").files = e.target.files;
-        }
-      }
-    });
-
-    /* 🔥 SAVE BLOCKS */
-    function saveHero() {
-      blocks.push({
-        type: "hero",
-        title: heroTitle.value,
-        subtitle: heroSubtitle.value,
-        image: ""
-      });
-      updateBlocks();
-    }
-
-    function saveCard() {
-      blocks.push({
-        type: "card",
-        title: cardTitle.value,
-        desc: cardDesc.value
-      });
-      updateBlocks();
-    }
-
-    function saveFooter() {
-      blocks.push({
-        type: "footer",
-        text: footerText.value
-      });
-      updateBlocks();
-    }
-
-    function saveRichText() {
-      blocks.push({
-        type: "richtext",
-        heading: richTextHeading.value,
-        content: richTextEditor ? richTextEditor.getData() : richTextContent.value,
-      });
-
-      updateBlocks();
-    }
-
-    function renderGridInputs() {
-      const count = Math.max(1, Math.min(Number(document.getElementById("gridCount").value || 1), 12));
-      const gridItems = document.getElementById("gridItems");
-
-      gridItems.innerHTML = Array.from({ length: count }, (_, i) => `
-        <div class="grid-form-item">
-          <h4>Grid Item ${i + 1}</h4>
-          <input id="gridItemTitle${i}" placeholder="Item Title">
-          <input id="gridItemDesc${i}" placeholder="Item Description">
-          <input id="gridItemImage${i}" type="file" accept="image/*">
-        </div>
-      `).join("");
-    }
-
-    function saveGrid() {
-      const count = Math.max(1, Math.min(Number(document.getElementById("gridCount").value || 1), 12));
-      const gridId = `grid${Date.now()}`;
-      const items = [];
-
-      for (let i = 0; i < count; i++) {
-        const imageInput = document.getElementById(`gridItemImage${i}`);
-
-        if (imageInput) {
-          imageInput.name = `gridImage_${gridId}_${i}`;
-          imageInput.setAttribute("form", "pageForm");
-          imageInput.style.display = "none";
-          pageForm.appendChild(imageInput);
-        }
-
-        items.push({
-          title: document.getElementById(`gridItemTitle${i}`).value,
-          desc: document.getElementById(`gridItemDesc${i}`).value,
-          image: "",
-        });
-      }
-
-      blocks.push({
-        type: "grid",
-        gridId,
-        heading: gridHeading.value,
-        subheading: gridSubheading.value,
-        columns: Number(gridColumns.value || 3),
-        items,
-      });
-
-      updateBlocks();
-    }
-
-    /* 🔥 UPDATE */
-    function updateBlocks() {
-      blocksData.value = JSON.stringify(blocks);
-
-      blocksPreview.innerHTML = blocks.map((b, i) => `
-    <div class="block-item">
-      ${b.type} → ${b.title || b.text || b.heading || ""}
-  <button type="button" onclick="removeBlock(event, ${i})">❌</button>
-    </div>
-  `).join("");
-
-      renderPreview();
-    }
-
-    function removeBlock(e,i) {
-      e.stopPropagation();
-      blocks.splice(i, 1);
-      updateBlocks();
-    }
-
-    /* 🔥 PREVIEW */
-    function renderPreview() {
-      previewBox.innerHTML = blocks.map(b => {
-
-        if (b.type === "hero") {
-          return `
-        <div class="hero block">
-          <h1>${b.title}</h1>
-          <p>${b.subtitle}</p>
-        </div>
-      `;
-        }
-
-        if (b.type === "card") {
-          return `
-        <div class="card block">
-          <h3>${b.title}</h3>
-          <p>${b.desc}</p>
-        </div>
-      `;
-        }
-
-        if (b.type === "footer") {
-          return `<footer>${b.text}</footer>`;
-        }
-
-        if (b.type === "grid") {
-          return `
-        <div class="grid-preview block">
-          <h2>${b.heading}</h2>
-          <p>${b.subheading}</p>
-          <div class="grid-preview-items" style="grid-template-columns: repeat(${Number(b.columns) || 3}, minmax(0, 1fr));">
-            ${(b.items || []).map(item => `
-              <div class="grid-preview-card">
-                <strong>${item.title}</strong>
-                <p>${item.desc}</p>
-              </div>
-            `).join("")}
-          </div>
-        </div>
-      `;
-        }
-
-        if (b.type === "richtext") {
-          return `
-        <div class="richtext-preview block">
-          <h2>${b.heading || ""}</h2>
-          <div>${b.content || ""}</div>
-        </div>
-      `;
-        }
-
-      }).join("");
-    }
-
-    /* 🔥 SUBMIT */
-    pageForm.addEventListener("submit", function () {
-      if (document.getElementById("pageTitle")) {
-        hiddenTitle.value = pageTitle.value;
-      }
-    });
-
-    function toggleSection(id) {
-      const section = document.getElementById(id);
-
-      section.classList.toggle("open");
-
-      const header = section.previousElementSibling;
-
-      if (section.classList.contains("open")) {
-        header.innerHTML = header.innerHTML.replace("▶", "▼");
-      } else {
-        header.innerHTML = header.innerHTML.replace("▼", "▶");
-      }
-    }
-  </script>
 </body>
 
 </html>

@@ -28,13 +28,17 @@ function applyUploadedBlockImages(req, blocks) {
   const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
   const publicBaseUrl = getPublicBaseUrl(req);
 
+  const heroFilesById = new Map();
+
   files.forEach((file) => {
     const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+    const heroMatch = file.fieldname.match(/^heroImage_(.+)$/);
 
-    if (file.fieldname === "heroImage") {
-      const uploadMarker = "__UPLOAD_PENDING__";
-      const hero = blocks.find((block) => block.type === "hero" && (!block.image || block.image === uploadMarker));
-      if (hero) hero.image = imageUrl;
+    if (heroMatch) {
+      const heroId = heroMatch[1];
+      const current = heroFilesById.get(heroId) || [];
+      current.push(imageUrl);
+      heroFilesById.set(heroId, current);
       return;
     }
 
@@ -48,6 +52,26 @@ function applyUploadedBlockImages(req, blocks) {
     if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
       grid.items[itemIndex].image = imageUrl;
     }
+  });
+
+  blocks.forEach((block) => {
+    if (block.type !== "hero") {
+      return;
+    }
+
+    const nextImages = heroFilesById.get(String(block.heroId || ""));
+
+    if (nextImages && nextImages.length > 0) {
+      block.images = nextImages;
+    } else if (Array.isArray(block.images)) {
+      block.images = block.images.filter(Boolean);
+    } else if (block.image) {
+      block.images = [block.image];
+    } else {
+      block.images = [];
+    }
+
+    delete block.image;
   });
 
   return blocks;
@@ -150,10 +174,16 @@ const addBlock = async (req, res) => {
     let settings = [];
 
     if (block.type === "hero") {
+      const heroImages = Array.isArray(block.images)
+        ? block.images.filter(Boolean)
+        : block.image
+          ? [block.image]
+          : [];
+
       settings.push(
         { group: "hero", key: "title", value: block.title || "" },
         { group: "hero", key: "subtitle", value: block.subtitle || "" },
-        { group: "hero", key: "image", value: block.image || "" }
+        { group: "hero", key: "images", value: JSON.stringify(heroImages) }
       );
     }
 

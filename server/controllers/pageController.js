@@ -21,12 +21,17 @@ function applyUploadedBlockImages(req, blocks) {
   const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
   const publicBaseUrl = getPublicBaseUrl(req);
 
+  const heroFilesById = new Map();
+
   files.forEach((file) => {
     const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+    const heroMatch = file.fieldname.match(/^heroImage_(.+)$/);
 
-    if (file.fieldname === "heroImage") {
-      const hero = blocks.find((block) => block.type === "hero");
-      if (hero) hero.image = imageUrl;
+    if (heroMatch) {
+      const heroId = heroMatch[1];
+      const current = heroFilesById.get(heroId) || [];
+      current.push(imageUrl);
+      heroFilesById.set(heroId, current);
       return;
     }
 
@@ -40,6 +45,16 @@ function applyUploadedBlockImages(req, blocks) {
     if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
       grid.items[itemIndex].image = imageUrl;
     }
+  });
+
+  blocks.forEach((block) => {
+    if (block.type !== "hero") {
+      return;
+    }
+
+    const nextImages = heroFilesById.get(String(block.heroId || "")) || [];
+    block.images = nextImages;
+    delete block.image;
   });
 
   return blocks;
@@ -135,7 +150,22 @@ function convertSettingsToBlocks(settings) {
 
     if (group === "hero") {
       const hero = { type: "hero" };
-      items.forEach(i => hero[i.setting_key] = i.value);
+      items.forEach((i) => {
+        if (i.setting_key === "images") {
+          try {
+            hero.images = JSON.parse(i.value || "[]");
+          } catch {
+            hero.images = i.value ? [i.value] : [];
+          }
+          return;
+        }
+
+        hero[i.setting_key] = i.value;
+      });
+      if (!Array.isArray(hero.images)) {
+        hero.images = hero.image ? [hero.image] : [];
+      }
+      delete hero.image;
       blocks.push(hero);
     }
 
@@ -203,7 +233,6 @@ const getSinglePage = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 /* ===================================================== */
 /* 👉 DELETE PAGE (FINAL 🔥) */
 /* ===================================================== */

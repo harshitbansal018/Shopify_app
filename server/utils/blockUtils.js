@@ -28,8 +28,23 @@ function convertSettingsToBlocks(settings) {
     const hero = { type: "hero" };
 
     grouped.hero.forEach((item) => {
+      if (item.setting_key === "images") {
+        try {
+          hero.images = JSON.parse(item.value || "[]");
+        } catch {
+          hero.images = item.value ? [item.value] : [];
+        }
+        return;
+      }
+
       hero[item.setting_key] = item.value;
     });
+
+    if (!Array.isArray(hero.images)) {
+      hero.images = hero.image ? [hero.image] : [];
+    }
+
+    delete hero.image;
 
     blocks.push(hero);
   }
@@ -115,15 +130,29 @@ function convertBlocksToSettings(blocks) {
   (blocks || []).forEach((block) => {
 
     if (block.type === "hero") {
-      ["title", "subtitle", "image"].forEach((key) => {
-        if (block[key]) {
-          settings.push({
-            group: "hero",
-            key,
-            value: block[key],
-          });
-        }
-      });
+      if (block.title) {
+        settings.push({
+          group: "hero",
+          key: "title",
+          value: block.title,
+        });
+      }
+
+      if (block.subtitle) {
+        settings.push({
+          group: "hero",
+          key: "subtitle",
+          value: block.subtitle,
+        });
+      }
+
+      if (Array.isArray(block.images) && block.images.length > 0) {
+        settings.push({
+          group: "hero",
+          key: "images",
+          value: JSON.stringify(block.images.filter(Boolean)),
+        });
+      }
     }
 
     if (block.type === "card") {

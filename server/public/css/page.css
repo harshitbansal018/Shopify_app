@@ -268,7 +268,7 @@ footer {
 }
 
 .block-item button {
-  background: var(--danger);
+  background: linear-gradient(135deg, #6d84ab, #000000c9);
   color: white;
   padding: 4px 8px;
   border-radius: 6px;
@@ -392,7 +392,8 @@ input:focus, textarea:focus {
   top: 38px;
   background: #ffffff;
   border-radius: 10px;
-  min-width: 140px;
+  min-width: 116px;
+  width:0.25rem;
   padding: 6px 0;
   box-shadow: 0 8px 20px rgba(0,0,0,0.12);
   border: 1px solid #e5e7eb;
@@ -456,6 +457,24 @@ input:focus, textarea:focus {
   cursor: pointer;
   user-select: none;
   margin-top: 15px;
+
+  /* Box styling */
+  padding: 12px 16px;
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+
+  /* Text styling */
+  font-weight: 500;
+
+  /* Smooth effect */
+  transition: all 0.3s ease;
+}
+
+/* Hover effect */
+.dropdown-header:hover {
+  background-color: #eaeaea;
+  border-color: #ccc;
 }
 
 /* DROPDOWN CONTENT */
@@ -555,4 +574,52 @@ input:focus, textarea:focus {
 
 .ck-editor__editable {
   min-height: 180px;
+}
+/* 🔥 Pagination Container */
+#pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  margin-top: 25px;
+}
+
+/* 🔥 Buttons */
+#pagination button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6d84ab, #000000c9);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+/* Hover Effect */
+#pagination button:hover {
+  background: linear-gradient(135deg, #6d84ab, #000000c9);
+  transform: translateY(-1px);
+}
+
+/* Disabled Button */
+#pagination button:disabled {
+  background: #cbd5f5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Page Info */
+#pageInfo {
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  padding: 6px 12px;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+.search{
+  margin-right: 20px;
+  margin-left: 20px;
 }

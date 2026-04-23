@@ -1,5 +1,3 @@
-const fs = require("fs");
-const path = require("path");
 const shopifyRequest = require("../services/shopify");
 const { getShop } = require("../models/shopModel");
 const { createPage } = require("../models/pageModel");
@@ -8,14 +6,27 @@ const { convertBlocksToSettings } = require("../utils/blockUtils");
 
 const API_VERSION = "2025-01";
 
-const commonPageCss = fs.readFileSync(
-  path.join(__dirname, "..", "public", "css", "generated-page.css"),
-  "utf8",
-);
+function getHostedCssUrl() {
+  const host = String(process.env.HOST || "")
+    .trim()
+    .replace(/\/+$/, "");
 
+  if (!host) {
+    throw new Error(
+      "HOST is not set. A public app URL is required for hosted page CSS.",
+    );
+  }
+
+  // 🔥 AUTO VERSION USING TIMESTAMP
+  const version = Date.now();
+
+  return `${host}/css/generated-page.css?v=${version}`;
+}
 /* 🔥 GENERATE HTML */
 function generateHTML(blocks) {
   if (!Array.isArray(blocks)) return "";
+
+  const cssUrl = getHostedCssUrl();
 
   let heroHtml = "";
   let cardsHtml = "";
@@ -29,11 +40,17 @@ function generateHTML(blocks) {
       heroHtml = `
   <section class="custom-page-builder__hero">
 
-    ${
-      block.image
-        ? `<img class="custom-page-builder__hero-image" src="${block.image}" />`
-        : ""
-    }
+ ${(block.images || [])
+   .filter((img) => img) // 🔥 FIX
+   .map(
+     (img, i) => `
+      <img 
+        class="custom-page-builder__hero-image ${i === 0 ? "active" : ""}" 
+        src="${img}" 
+      />
+    `,
+   )
+   .join("")}
 
     <div class="custom-page-builder__hero-content">
       <h1 class="custom-page-builder__hero-title">${block.title || ""}</h1>
@@ -57,7 +74,8 @@ function generateHTML(blocks) {
       const columns = Math.min(Math.max(Number(block.columns) || 3, 1), 6);
       const items = Array.isArray(block.items) ? block.items : [];
       const itemsHtml = items
-        .map((item) => `
+        .map(
+          (item) => `
           <article class="custom-page-builder__grid-item">
             ${
               item.image
@@ -69,7 +87,8 @@ function generateHTML(blocks) {
               <p class="custom-page-builder__grid-desc">${item.desc || ""}</p>
             </div>
           </article>
-        `)
+        `,
+        )
         .join("");
 
       gridsHtml += `
@@ -114,15 +133,15 @@ function generateHTML(blocks) {
     : "";
 
   return `
-    <style>${commonPageCss}</style>
-    <div class="custom-page-builder">
-      ${heroHtml}
-      ${cardsSection}
-      ${gridsHtml}
-      ${richTextHtml}
-      ${footerHtml}
-    </div>
-  `;
+  <link rel="stylesheet" href="${cssUrl}">
+  <div class="custom-page-builder">
+    ${heroHtml}
+    ${cardsSection}
+    ${gridsHtml}
+    ${richTextHtml}
+    ${footerHtml}
+  </div>
+`;
 }
 
 /* 🔥 CREATE PAGE */
@@ -183,9 +202,7 @@ async function createShopifyPage(shop, title, blocks) {
     if (!result || result.userErrors?.length) {
       throw new Error(result.userErrors?.[0]?.message || "Shopify error");
     }
-
     const page = result.page;
-
     const pageId = await createPage(
       page.title,
       bodyHtml,

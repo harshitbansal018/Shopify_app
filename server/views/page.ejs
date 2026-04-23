@@ -4,6 +4,7 @@
 <head>
   <title>Pages</title>
   <link rel="stylesheet" href="/css/page.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
 
 <body>
@@ -12,11 +13,17 @@
     <h2>My Pages</h2>
     <button onclick="toggleForm()">Create Page</button>
   </div>
+  <div class="search">
+    <search>
+      <input type="text" placeholder="Search pages..." />
+    </search>
+  </div>
 
   <div class="table-container">
     <table class="pages-table">
       <thead>
         <tr>
+          <th>Sr no</th>
           <th>Title</th>
           <th>Created</th>
           <th>View</th>
@@ -27,8 +34,13 @@
       </thead>
 
       <tbody>
+
         <% pages.forEach(page=> { %>
+
           <tr>
+            <td>
+              <%= pages.indexOf(page) + 1 %>
+            </td>
             <td>
               <%= page.title %>
             </td>
@@ -46,7 +58,7 @@
                   </button>
                   <% } %>
             </td>
-               <td>
+            <td>
               <button class="status-btn <%= page.status === 'active' ? 'active' : 'inactive' %>"
                 onclick="toggleStatus('<%= page.id %>', this)">
                 <%= page.status==='active' ? 'Active' : 'Inactive' %>
@@ -56,15 +68,25 @@
               <button class="menu-btn" onclick="toggleMenu('<%= page.id %>')">⋮</button>
 
               <div id="menu-<%= page.id %>" class="dropdown-menu">
-                <button onclick="openEditor('<%= page.id %>')">Edit</button>
-                <button onclick="deletePage('<%= page.id %>')">Delete</button>
+                <button onclick="openEditor('<%= page.id %>')">
+                  <i class="fa-solid fa-pen"></i> Edit
+                </button>
+
+                <button onclick="deletePage('<%= page.id %>')">
+                  <i class="fa-solid fa-trash"></i> Delete
+                </button>
               </div>
             </td>
-         
+
           </tr>
           <% }) %>
       </tbody>
     </table>
+    <div id="pagination" style="margin-top:20px; text-align:center;">
+      <button onclick="prevPage()">Prev</button>
+      <span id="pageInfo"></span>
+      <button onclick="nextPage()">Next</button>
+    </div>
   </div>
 
   <%- include("pageForm", { formAction: `/pages/create?shop=${shop}`, mode: "create" , initialBlocks: [] }) %>
@@ -156,6 +178,54 @@
             alert("Failed to update status");
           });
       }
+      document.querySelector("input").addEventListener("input", function (e) {
+        const value = e.target.value.toLowerCase();
+
+        document.querySelectorAll(".pages-table tbody tr").forEach(row => {
+          const text = row.innerText.toLowerCase();
+
+          row.style.display = text.includes(value) ? "" : "none";
+        });
+      });
+
+      let currentPage = 1;
+      const rowsPerPage = 5;
+
+      function showPage(page) {
+        const rows = document.querySelectorAll(".pages-table tbody tr");
+        const totalPages = Math.ceil(rows.length / rowsPerPage);
+
+        currentPage = page;
+
+        rows.forEach((row, index) => {
+          const start = (page - 1) * rowsPerPage;
+          const end = start + rowsPerPage;
+
+          row.style.display = (index >= start && index < end) ? "" : "none";
+        });
+
+        document.getElementById("pageInfo").innerText = `Page ${page} of ${totalPages}`;
+      }
+
+      function nextPage() {
+        const rows = document.querySelectorAll(".pages-table tbody tr");
+        const totalPages = Math.ceil(rows.length / rowsPerPage);
+
+        if (currentPage < totalPages) {
+          showPage(currentPage + 1);
+        }
+      }
+
+      function prevPage() {
+        if (currentPage > 1) {
+          showPage(currentPage - 1);
+        }
+      }
+
+      // 🔥 INIT
+      document.addEventListener("DOMContentLoaded", () => {
+        showPage(1);
+      });
     </script>
 
 </body>
