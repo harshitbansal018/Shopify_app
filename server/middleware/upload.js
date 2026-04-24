@@ -8,6 +8,6 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage }); // ✅ ACCEPT ANY FILES, WE'LL HANDLE IN CONTROLLER
 
 module.exports = upload; // ✅ IMPORTANT

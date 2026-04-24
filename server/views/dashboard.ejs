@@ -14,17 +14,11 @@
 </head>
 
 <body>
-  <%
-    const totalPosts = Number(stats.total || 0);
-    const activePosts = Number(stats.active || 0);
-    const inactivePosts = Number(stats.inactive || 0);
-    const activeRate = totalPosts ? Math.round((activePosts / totalPosts) * 100) : 0;
-    const inactiveRate = totalPosts ? Math.round((inactivePosts / totalPosts) * 100) : 0;
-  %>
+
    <s-app-nav>
         <s-link href="/?" rel="home">Home</s-link>
         <s-link href="/pages/create">Pages</s-link>
-        <s-link href="/settings">Settings</s-link>
+        <s-link href="/plans">Plans</s-link>
       </s-app-nav>
 
   <main class="dashboard-shell">
@@ -32,24 +26,24 @@
   <h1>📊 Dashboard</h1>
 
   <div class="card-container">
-    <div class="card">
-      <span class="card__label">Total posts</span>
-      <span class="card__value"><%= totalPosts %></span>
-      <span class="card__meta">All content items currently tracked in your app.</span>
-    </div>
-
-    <div class="card">
-      <span class="card__label">Active posts</span>
-      <span class="card__value"><%= activePosts %></span>
-      <span class="card__meta"><%= activeRate %>% of your posts are visible and working as expected.</span>
-    </div>
-
-    <div class="card">
-      <span class="card__label">Inactive posts</span>
-      <span class="card__value"><%= inactivePosts %></span>
-      <span class="card__meta"><%= inactiveRate %>% may need review, updates, or republishing.</span>
-    </div>
+  <div class="card">
+    <span class="card__label">Total pages</span>
+    <span class="card__value"><%= totalPages %></span>
+    <span class="card__meta">All pages currently created in your store.</span>
   </div>
+
+  <div class="card">
+    <span class="card__label">Active pages</span>
+    <span class="card__value"><%= activePages %></span>
+    <span class="card__meta"><%= activeRate %>% of your pages are live.</span>
+  </div>
+
+  <div class="card">
+    <span class="card__label">Inactive pages</span>
+    <span class="card__value"><%= inactivePages %></span>
+    <span class="card__meta"><%= inactiveRate %>% may need attention.</span>
+  </div>
+</div>
 
 
 

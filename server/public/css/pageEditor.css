@@ -38,13 +38,46 @@ body {
   gap: 10px;
 }
 
+.editor-toolbar {
+  margin-bottom: 22px;
+}
+
+.editor-search {
+  max-width: 460px;
+}
+
+.editor-search__label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.editor-search__input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  font: inherit;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+}
+
+.editor-search__input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
 .editor-eyebrow {
   margin-bottom: 8px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #2563eb;
+  color: linear-gradient(135deg, #6d84ab, #000000c9);
 }
 
 .editor-header h1 {
@@ -117,7 +150,7 @@ body {
   margin-bottom: 10px;
   font-size: 12px;
   font-weight: 700;
-  color: #2563eb;
+  color: linear-gradient(135deg, #6d84ab, #000000c9);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -137,11 +170,14 @@ body {
 
 /* 🔥 CTA */
 .block-card__cta {
-  display: inline-block;
-  margin-top: 12px;
-  font-weight: 700;
-  color: #0f172a;
-  cursor: pointer;
+    background: linear-gradient(135deg, #6d84ab, #000000c9);
+    border: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.3s;
 }
 
 /* 🔥 DELETE BUTTON */
@@ -149,17 +185,15 @@ body {
   position: absolute;
   top: 10px;
   right: 10px;
-  background: #ef4444;
-  color: white;
+  color: rgb(7, 7, 7);
   border: none;
-  padding: 4px 8px;
   border-radius: 6px;
   cursor: pointer;
   transition: 0.2s;
 }
 
 .delete-btn:hover {
-  background: #dc2626;
+  background: #eeeaea;
   transform: scale(1.1);
 }
 
@@ -255,6 +289,28 @@ body {
   object-fit: cover;
   border-radius: 14px;
   border: 1px solid #dbe4f0;
+}
+
+.grid-item-fields {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.grid-field-card {
+  padding: 16px;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.grid-field-card h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.ck-editor__editable {
+  min-height: 220px;
 }
 
 .secondary-btn,

@@ -24,6 +24,59 @@ function getPublicBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function applyUploadedBlockImages(req, blocks) {
+  const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+  const publicBaseUrl = getPublicBaseUrl(req);
+
+  const heroFilesById = new Map();
+
+  files.forEach((file) => {
+    const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+    const heroMatch = file.fieldname.match(/^heroImage_(.+)$/);
+
+    if (heroMatch) {
+      const heroId = heroMatch[1];
+      const current = heroFilesById.get(heroId) || [];
+      current.push(imageUrl);
+      heroFilesById.set(heroId, current);
+      return;
+    }
+
+    const match = file.fieldname.match(/^gridImage_([^_]+)_(\d+)$/);
+    if (!match) return;
+
+    const [, gridId, itemIndexValue] = match;
+    const itemIndex = Number.parseInt(itemIndexValue, 10);
+    const grid = blocks.find((block) => block.type === "grid" && String(block.gridId) === gridId);
+
+    if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
+      grid.items[itemIndex].image = imageUrl;
+    }
+  });
+
+  blocks.forEach((block) => {
+    if (block.type !== "hero") {
+      return;
+    }
+
+    const nextImages = heroFilesById.get(String(block.heroId || ""));
+
+    if (nextImages && nextImages.length > 0) {
+      block.images = nextImages;
+    } else if (Array.isArray(block.images)) {
+      block.images = block.images.filter(Boolean);
+    } else if (block.image) {
+      block.images = [block.image];
+    } else {
+      block.images = [];
+    }
+
+    delete block.image;
+  });
+
+  return blocks;
+}
+
 /* =========================
    🔥 SHOW EDITOR
 ========================= */
@@ -82,18 +135,7 @@ const updatePage = async (req, res) => {
       type: String(block.type || "").trim(),
     }));
 
-    if (req.file) {
-      const imageUrl = `${getPublicBaseUrl(req)}/uploads/${req.file.filename}`;
-      const uploadMarker = "__UPLOAD_PENDING__";
-      let imageAssigned = false;
-
-      for (const block of cleanedBlocks) {
-        if (block.type === "hero" && block.image === uploadMarker && !imageAssigned) {
-          block.image = imageUrl;
-          imageAssigned = true;
-        }
-      }
-    }
+    applyUploadedBlockImages(req, cleanedBlocks);
 
     const settings = convertBlocksToSettings(cleanedBlocks);
 
@@ -132,10 +174,16 @@ const addBlock = async (req, res) => {
     let settings = [];
 
     if (block.type === "hero") {
+      const heroImages = Array.isArray(block.images)
+        ? block.images.filter(Boolean)
+        : block.image
+          ? [block.image]
+          : [];
+
       settings.push(
         { group: "hero", key: "title", value: block.title || "" },
         { group: "hero", key: "subtitle", value: block.subtitle || "" },
-        { group: "hero", key: "image", value: block.image || "" }
+        { group: "hero", key: "images", value: JSON.stringify(heroImages) }
       );
     }
 
@@ -152,6 +200,14 @@ const addBlock = async (req, res) => {
         group: "footer",
         key: "text",
         value: block.text || ""
+      });
+    }
+
+    if (block.type === "grid") {
+      settings.push({
+        group: "grid",
+        key: block.heading || "grid",
+        value: JSON.stringify(block)
       });
     }
 

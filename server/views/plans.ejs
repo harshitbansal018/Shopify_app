@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Plans</title>
+  <link rel="stylesheet" href="/css/plans.css">
+</head>
+
+<body>
+
+  <div class="topbar">
+    <h2>Choose Your Plan</h2>
+    <p>Shop: <%= shop %></p>
+  </div>
+
+  <div class="plans-container">
+
+    <% plans.forEach(plan => { %>
+
+      <div class="plan-card">
+
+        <div class="plan-title">
+          <%= plan.title %>
+        </div>
+
+        <div class="plan-price">
+          ₹ <%= plan.price %> / month
+        </div>
+
+        <div class="plan-features">
+          <%= plan.content %>
+        </div>
+
+        <% if (currentPlan && currentPlan.plan_id == plan.id && currentPlan.status === 'active') { %>
+          
+          <button class="plan-btn current" disabled>
+            Current Plan
+          </button>
+
+        <% } else if (plan.status === 'inactive') { %>
+
+          <button class="plan-btn disabled" disabled>
+            Not Available
+          </button>
+
+        <% } else { %>
+
+          <button class="plan-btn" onclick="buyPlan('<%= plan.id %>', this)">
+            Buy Plan
+          </button>
+
+        <% } %>
+
+      </div>
+
+    <% }) %>
+
+  </div>
+
+  <script>
+   
+  function buyPlan(planId, btn) {
+    btn.innerText = "Processing...";
+    btn.disabled = true;
+
+    fetch(`/plans/buy/${planId}?shop=<%= shop %>`, {
+      method: "POST"
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.confirmation_url) {
+        window.top.location.href = data.confirmation_url; // ✅ FIX
+      } else {
+        btn.innerText = "Buy Plan";
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      btn.innerText = "Buy Plan";
+      btn.disabled = false;
+    });
+  }
+
+  </script>
+
+</body>
+</html>

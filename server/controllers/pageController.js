@@ -2,7 +2,8 @@ const { createShopifyPage } = require("../services/pageService");
 const { 
   getAllPages, 
   getPageById, 
-  deletePage 
+  deletePage,
+    togglePageStatus,
 } = require("../models/pageModel");
 const {getShop}= require("../models/shopModel");
 const { getPageSettings } = require("../models/pagesettingModel");
@@ -14,6 +15,49 @@ function getPublicBaseUrl(req) {
   const envHost = String(process.env.HOST || "").trim().replace(/\/+$/, "");
   if (envHost) return envHost;
   return `${req.protocol}://${req.get("host")}`;
+}
+
+function applyUploadedBlockImages(req, blocks) {
+  const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+  const publicBaseUrl = getPublicBaseUrl(req);
+
+  const heroFilesById = new Map();
+
+  files.forEach((file) => {
+    const imageUrl = `${publicBaseUrl}/uploads/${file.filename}`;
+    const heroMatch = file.fieldname.match(/^heroImage_(.+)$/);
+
+    if (heroMatch) {
+      const heroId = heroMatch[1];
+      const current = heroFilesById.get(heroId) || [];
+      current.push(imageUrl);
+      heroFilesById.set(heroId, current);
+      return;
+    }
+
+    const match = file.fieldname.match(/^gridImage_([^_]+)_(\d+)$/);
+    if (!match) return;
+
+    const [, gridId, itemIndexValue] = match;
+    const itemIndex = Number.parseInt(itemIndexValue, 10);
+    const grid = blocks.find((block) => block.type === "grid" && String(block.gridId) === gridId);
+
+    if (grid && Array.isArray(grid.items) && grid.items[itemIndex]) {
+      grid.items[itemIndex].image = imageUrl;
+    }
+  });
+
+  blocks.forEach((block) => {
+    if (block.type !== "hero") {
+      return;
+    }
+
+    const nextImages = heroFilesById.get(String(block.heroId || "")) || [];
+    block.images = nextImages;
+    delete block.image;
+  });
+
+  return blocks;
 }
 
 /* ===================================================== */
@@ -62,20 +106,7 @@ const handleCreatePage = async (req, res) => {
       parsedBlocks = [];
     }
 
-    /* 🔥 IMAGE HANDLING */
-    if (req.file) {
-      const imageUrl = `${getPublicBaseUrl(req)}/uploads/${req.file.filename}`;
-
-      let heroAssigned = false;
-
-      parsedBlocks = parsedBlocks.map(block => {
-        if (block.type === "hero" && !heroAssigned) {
-          heroAssigned = true;
-          return { ...block, image: imageUrl };
-        }
-        return block;
-      });
-    }
+    parsedBlocks = applyUploadedBlockImages(req, parsedBlocks);
 
     /* 🔥 REMOVE DUPLICATE HERO */
     parsedBlocks = parsedBlocks.filter(
@@ -119,7 +150,22 @@ function convertSettingsToBlocks(settings) {
 
     if (group === "hero") {
       const hero = { type: "hero" };
-      items.forEach(i => hero[i.setting_key] = i.value);
+      items.forEach((i) => {
+        if (i.setting_key === "images") {
+          try {
+            hero.images = JSON.parse(i.value || "[]");
+          } catch {
+            hero.images = i.value ? [i.value] : [];
+          }
+          return;
+        }
+
+        hero[i.setting_key] = i.value;
+      });
+      if (!Array.isArray(hero.images)) {
+        hero.images = hero.image ? [hero.image] : [];
+      }
+      delete hero.image;
       blocks.push(hero);
     }
 
@@ -136,6 +182,24 @@ function convertSettingsToBlocks(settings) {
           blocks.push({ ...card, type: "card" });
         } catch {
           blocks.push({ type: "card", value: i.value });
+        }
+      });
+    }
+
+    if (group === "grid") {
+      items.forEach(i => {
+        try {
+          const grid = JSON.parse(i.value);
+          blocks.push({
+            type: "grid",
+            gridId: grid.gridId || `grid-${i.id}`,
+            heading: grid.heading || "",
+            subheading: grid.subheading || "",
+            columns: grid.columns || 3,
+            items: Array.isArray(grid.items) ? grid.items : [],
+          });
+        } catch {
+          blocks.push({ type: "grid", heading: i.setting_key || "", items: [] });
         }
       });
     }
@@ -169,7 +233,6 @@ const getSinglePage = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 /* ===================================================== */
 /* 👉 DELETE PAGE (FINAL 🔥) */
 /* ===================================================== */
@@ -246,10 +309,29 @@ const handleDeletePage = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+async function toggleStatus(req, res) {
+  try {
+    const { id } = req.params;
+
+    const data = await togglePageStatus(id);
+
+    res.json({
+      success: true,
+      status: data.status
+    });
+  } catch (err) {
+    console.error("Toggle Status Error:", err);
+    res.json({ success: false });
+  }
+};
+
+
 /* ===================================================== */
 module.exports = {
   showCreatePage,
   handleCreatePage,
   getSinglePage,
   handleDeletePage,
+  toggleStatus,
+
 };

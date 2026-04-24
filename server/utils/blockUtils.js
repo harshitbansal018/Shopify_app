@@ -28,8 +28,23 @@ function convertSettingsToBlocks(settings) {
     const hero = { type: "hero" };
 
     grouped.hero.forEach((item) => {
+      if (item.setting_key === "images") {
+        try {
+          hero.images = JSON.parse(item.value || "[]");
+        } catch {
+          hero.images = item.value ? [item.value] : [];
+        }
+        return;
+      }
+
       hero[item.setting_key] = item.value;
     });
+
+    if (!Array.isArray(hero.images)) {
+      hero.images = hero.image ? [hero.image] : [];
+    }
+
+    delete hero.image;
 
     blocks.push(hero);
   }
@@ -48,6 +63,49 @@ function convertSettingsToBlocks(settings) {
           type: "card",
           title: item.setting_key || "",
           desc: item.value || "",
+        });
+      }
+    });
+  }
+
+  if (grouped.grid) {
+    grouped.grid.forEach((item) => {
+      try {
+        const grid = JSON.parse(item.value);
+        blocks.push({
+          type: "grid",
+          gridId: grid.gridId || `grid-${item.id}`,
+          heading: grid.heading || "",
+          subheading: grid.subheading || "",
+          columns: grid.columns || 3,
+          items: Array.isArray(grid.items) ? grid.items : [],
+        });
+      } catch {
+        blocks.push({
+          type: "grid",
+          heading: item.setting_key || "",
+          subheading: "",
+          columns: 3,
+          items: [],
+        });
+      }
+    });
+  }
+
+  if (grouped.richtext) {
+    grouped.richtext.forEach((item) => {
+      try {
+        const richtext = JSON.parse(item.value);
+        blocks.push({
+          type: "richtext",
+          heading: richtext.heading || "",
+          content: richtext.content || "",
+        });
+      } catch {
+        blocks.push({
+          type: "richtext",
+          heading: item.setting_key || "",
+          content: item.value || "",
         });
       }
     });
@@ -72,15 +130,29 @@ function convertBlocksToSettings(blocks) {
   (blocks || []).forEach((block) => {
 
     if (block.type === "hero") {
-      ["title", "subtitle", "image"].forEach((key) => {
-        if (block[key]) {
-          settings.push({
-            group: "hero",
-            key,
-            value: block[key],
-          });
-        }
-      });
+      if (block.title) {
+        settings.push({
+          group: "hero",
+          key: "title",
+          value: block.title,
+        });
+      }
+
+      if (block.subtitle) {
+        settings.push({
+          group: "hero",
+          key: "subtitle",
+          value: block.subtitle,
+        });
+      }
+
+      if (Array.isArray(block.images) && block.images.length > 0) {
+        settings.push({
+          group: "hero",
+          key: "images",
+          value: JSON.stringify(block.images.filter(Boolean)),
+        });
+      }
     }
 
     if (block.type === "card") {
@@ -91,6 +163,33 @@ function convertBlocksToSettings(blocks) {
           type: "card",
           title: block.title || "",
           desc: block.desc || "",
+        }),
+      });
+    }
+
+    if (block.type === "grid") {
+      settings.push({
+        group: "grid",
+        key: block.heading || "grid",
+        value: JSON.stringify({
+          type: "grid",
+          gridId: block.gridId || `grid-${Date.now()}`,
+          heading: block.heading || "",
+          subheading: block.subheading || "",
+          columns: block.columns || 3,
+          items: Array.isArray(block.items) ? block.items : [],
+        }),
+      });
+    }
+
+    if (block.type === "richtext") {
+      settings.push({
+        group: "richtext",
+        key: block.heading || "richtext",
+        value: JSON.stringify({
+          type: "richtext",
+          heading: block.heading || "",
+          content: block.content || "",
         }),
       });
     }

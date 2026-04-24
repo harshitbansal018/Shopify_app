@@ -44,8 +44,11 @@
             <label for="hero-subtitle">Subtitle</label>
             <textarea id="hero-subtitle" rows="4"><%= block.subtitle || "" %></textarea>
 
-            <label for="hero-image">Image URL</label>
-            <input id="hero-image" value="<%= block.image || "" %>">
+            <label for="hero-images">Image URLs (one per line)</label>
+            <textarea id="hero-images" rows="6"><%= Array.isArray(block.images) ? block.images.join("\n") : (block.image || "") %></textarea>
+
+            <label for="hero-image-files">Replace with new slider images</label>
+            <input id="hero-image-files" type="file" accept="image/*" multiple>
             <% } %>
 
               <% if (block.type==="card" ) { %>
@@ -60,6 +63,45 @@
                     <label for="footer-text">Footer text</label>
                     <textarea id="footer-text" rows="4"><%= block.text || "" %></textarea>
                     <% } %>
+
+                      <% if (block.type==="richtext" ) { %>
+                        <label for="richtext-heading">Heading</label>
+                        <input id="richtext-heading" value="<%= block.heading || "" %>">
+
+                        <label for="richtext-content">Content</label>
+                        <textarea id="richtext-content" rows="10"><%- block.content || "" %></textarea>
+                        <% } %>
+
+                      <% if (block.type==="grid" ) { %>
+                        <label for="grid-heading">Heading</label>
+                        <input id="grid-heading" value="<%= block.heading || "" %>">
+
+                        <label for="grid-subheading">Subheading</label>
+                        <textarea id="grid-subheading" rows="4"><%= block.subheading || "" %></textarea>
+
+                        <label for="grid-columns">Columns</label>
+                        <input id="grid-columns" type="number" min="1" max="6" value="<%= block.columns || 3 %>">
+
+                        <div class="grid-edit-list">
+                          <% (block.items || []).forEach((item, gridIndex) => { %>
+                            <div class="grid-edit-item">
+                              <h3>Grid Item <%= gridIndex + 1 %></h3>
+
+                              <label for="grid-title-<%= gridIndex %>">Title</label>
+                              <input id="grid-title-<%= gridIndex %>" value="<%= item.title || "" %>">
+
+                              <label for="grid-desc-<%= gridIndex %>">Description</label>
+                              <textarea id="grid-desc-<%= gridIndex %>" rows="3"><%= item.desc || "" %></textarea>
+
+                              <label for="grid-image-<%= gridIndex %>">Image URL</label>
+                              <input id="grid-image-<%= gridIndex %>" value="<%= item.image || "" %>">
+
+                              <label for="grid-file-<%= gridIndex %>">Replace image</label>
+                              <input id="grid-file-<%= gridIndex %>" type="file" accept="image/*">
+                            </div>
+                          <% }) %>
+                        </div>
+                        <% } %>
         </form>
 
         <div class="block-editor-actions">
@@ -84,18 +126,55 @@
     </div>
   </div>
 
+  <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
   <script>
-    let blocks = <% - JSON.stringify(blocks) %>;
+    let blocks = <%- JSON.stringify(blocks) %>;
     const index = <%= index %>;
     const pageId = <%= pageId %>;
+    let richTextEditor = null;
+
+    blocks = blocks.map((block) => {
+      if (block.type !== "hero") {
+        return block;
+      }
+
+      const images = Array.isArray(block.images)
+        ? block.images.filter(Boolean)
+        : block.image
+          ? [block.image]
+          : [];
+
+      return {
+        ...block,
+        heroId: block.heroId || `hero${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
+        images
+      };
+    });
+
+    if (blocks[index] && blocks[index].type === "richtext" && window.ClassicEditor) {
+      ClassicEditor.create(document.querySelector("#richtext-content"))
+        .then((editor) => {
+          richTextEditor = editor;
+        })
+        .catch((error) => console.error(error));
+    }
 
     function saveBlock() {
       const current = { ...blocks[index] };
 
       if (current.type === "hero") {
+        const heroImageFiles = document.getElementById("hero-image-files");
+        const heroImageUrls = document.getElementById("hero-images").value
+          .split("\n")
+          .map((item) => item.trim())
+          .filter(Boolean);
+
         current.title = document.getElementById("hero-title").value.trim();
         current.subtitle = document.getElementById("hero-subtitle").value.trim();
-        current.image = document.getElementById("hero-image").value.trim();
+        current.images = heroImageFiles && heroImageFiles.files.length
+          ? Array.from(heroImageFiles.files).map(() => "")
+          : heroImageUrls;
+        current.heroId = current.heroId || `hero${Date.now()}`;
       }
 
       if (current.type === "card") {
@@ -114,12 +193,60 @@
         current.text = document.getElementById("footer-text").value.trim();
       }
 
+      if (current.type === "richtext") {
+        current.heading = document.getElementById("richtext-heading").value.trim();
+        current.content = richTextEditor
+          ? richTextEditor.getData()
+          : document.getElementById("richtext-content").value;
+      }
+
+      if (current.type === "grid") {
+        current.heading = document.getElementById("grid-heading").value.trim();
+        current.subheading = document.getElementById("grid-subheading").value.trim();
+        current.columns = Number(document.getElementById("grid-columns").value || 3);
+        current.gridId = current.gridId || `grid${Date.now()}`;
+        current.items = (current.items || []).map((item, itemIndex) => {
+          const fileInput = document.getElementById(`grid-file-${itemIndex}`);
+
+          return {
+            ...item,
+            title: document.getElementById(`grid-title-${itemIndex}`).value.trim(),
+            desc: document.getElementById(`grid-desc-${itemIndex}`).value.trim(),
+            image: fileInput && fileInput.files[0]
+              ? ""
+              : document.getElementById(`grid-image-${itemIndex}`).value.trim(),
+          };
+        });
+      }
+
       blocks[index] = current;
+
+      const formData = new FormData();
+      formData.append("blocks", JSON.stringify(blocks));
+
+      if (current.type === "hero") {
+        const heroImageFiles = document.getElementById("hero-image-files");
+
+        if (heroImageFiles && heroImageFiles.files.length) {
+          Array.from(heroImageFiles.files).forEach((file) => {
+            formData.append(`heroImage_${current.heroId}`, file);
+          });
+        }
+      }
+
+      if (current.type === "grid") {
+        (current.items || []).forEach((item, itemIndex) => {
+          const fileInput = document.getElementById(`grid-file-${itemIndex}`);
+
+          if (fileInput && fileInput.files[0]) {
+            formData.append(`gridImage_${current.gridId}_${itemIndex}`, fileInput.files[0]);
+          }
+        });
+      }
 
       fetch(`/pages/${pageId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blocks }),
+        body: formData,
       })
         .then(async (response) => {
           const data = await response.json().catch(() => ({}));
