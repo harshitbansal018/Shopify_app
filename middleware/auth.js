@@ -83,17 +83,44 @@ function installUrlFor(shop) {
     : `${host}/api/auth/install`;
 }
 
-function rejectUnauthenticated(req, res, shop) {
+/**
+ * Has this shop installed the app? Only an installed app can mint a session
+ * token, so this decides whether an App Bridge bounce is worth attempting.
+ */
+async function isInstalled(shop) {
+  if (!shop) return false;
+
+  try {
+    const store = await findByDomain(shop);
+    return Boolean(store && store.is_active && store.access_token);
+  } catch (err) {
+    console.error("Install lookup failed:", err.message);
+    return false;
+  }
+}
+
+async function rejectUnauthenticated(req, res, shop) {
   const installUrl = installUrlFor(shop);
 
   if (wantsHtml(req)) {
-    if (shop && req.query["shopify-reload"] !== "1") {
+    // The bounce loads App Bridge, which can only mint a session token for an
+    // app the shop has ALREADY installed. Loading it for an app that is NOT
+    // installed makes App Bridge navigate to
+    // admin.shopify.com/store/<shop>/apps/<api-key> -- a page Shopify 404s,
+    // because there is no installed app there to open. A shop we have never
+    // seen must therefore go straight to OAuth, with no App Bridge involved.
+    if (
+      shop &&
+      req.query["shopify-reload"] !== "1" &&
+      (await isInstalled(shop))
+    ) {
       return renderTokenBounce(req, res, shop);
     }
 
-    // The bounce already failed, so send the merchant through OAuth -- but
-    // break out of the admin iframe first. A plain res.redirect() here would
-    // load Shopify's login inside the frame, which it refuses.
+    // Either the bounce already failed, or there was nothing to bounce for.
+    // Send the merchant through OAuth -- but break out of the admin iframe
+    // first. A plain res.redirect() here would load Shopify's login inside
+    // the frame, which it refuses.
     console.warn(
       `No usable session token for ${shop || "unknown shop"}; starting OAuth`
     );
@@ -119,7 +146,7 @@ async function requireSession(req, res, next) {
   const token = extractSessionToken(req);
 
   if (!token) {
-    return rejectUnauthenticated(req, res, hintedShop);
+    return await rejectUnauthenticated(req, res, hintedShop);
   }
 
   let shop;
@@ -131,14 +158,14 @@ async function requireSession(req, res, next) {
     }));
   } catch (err) {
     console.warn("Session token rejected:", err.message);
-    return rejectUnauthenticated(req, res, hintedShop);
+    return await rejectUnauthenticated(req, res, hintedShop);
   }
 
   try {
     const store = await findByDomain(shop);
 
     if (!store || !store.is_active || !store.access_token) {
-      return rejectUnauthenticated(req, res, shop);
+      return await rejectUnauthenticated(req, res, shop);
     }
 
     req.shop = shop;

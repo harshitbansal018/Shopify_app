@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const { upsertStore } = require("../models/storeModel");
 const { registerWebhooks } = require("../services/webhooks");
 const { exchangeCodeForToken } = require("../services/tokens");
-const { normalizeShopDomain } = require("../utils/shop");
+const { normalizeShopDomain, coerceShopDomain } = require("../utils/shop");
 const { topLevelRedirectPage } = require("../utils/html");
 const { parseCookies, setCookie, clearCookie } = require("../utils/cookies");
 
@@ -31,17 +31,29 @@ function timingSafeEqualString(a, b) {
 /* ===================== INSTALL ===================== */
 
 exports.installApp = async (req, res) => {
-  const shop = normalizeShopDomain(req.query.shop);
-
-  if (!shop) {
-    return res.status(400).send("A valid ?shop=your-store.myshopify.com is required");
-  }
-
   const host = appHost();
 
   if (!host || !process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET) {
     console.error("HOST / SHOPIFY_API_KEY / SHOPIFY_API_SECRET must be configured");
     return res.status(500).send("App is not configured");
+  }
+
+  // Shopify appends ?shop= to every App Store install and every embedded
+  // load, so it is normally already here and the merchant types nothing.
+  // Reaching this route without it means someone opened the app directly,
+  // with nothing to say which of the installed stores they mean -- so ask.
+  const typed = req.query.shop;
+  const shop = coerceShopDomain(typed);
+
+  if (!shop) {
+    const attempted = typeof typed === "string" && typed.trim() !== "";
+
+    return res.status(attempted ? 400 : 200).render("install", {
+      error: attempted
+        ? "That does not look like a Shopify store address."
+        : null,
+      value: attempted ? typed : "",
+    });
   }
 
   // CSRF nonce: sent to Shopify as `state` and stored in a cookie so the

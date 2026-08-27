@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Install Product Sync</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<%#
+  The landing page for someone who reached the app with no shop context.
+
+  This is NOT the normal path. Shopify appends ?shop= on every App Store
+  install and on every embedded load, so a merchant arriving through Shopify
+  never sees this page. It exists for a direct link -- a marketing site, a
+  bookmark, a support reply -- where nothing tells the app which of the many
+  installed stores is asking.
+
+  Deliberately not an embedded page: there is no App Bridge and no session
+  token here, because there is no shop yet to have a session with.
+%>
+
+<body>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Install Product Sync</h1>
+        <p class="shell__sub">
+          Sync products from one Shopify store to another.
+        </p>
+      </div>
+    </header>
+
+    <section class="panel">
+
+      <p class="panel__copy">
+        Enter the store you want to install on. Any Shopify store can install
+        this app.
+      </p>
+
+      <% if (error) { %>
+        <p class="notice notice--error"><%= error %></p>
+      <% } %>
+
+      <%# GET, not POST: this re-enters the same install route Shopify uses. %>
+      <form method="get" action="/api/auth/install">
+
+        <div class="field field--full">
+          <label class="field__label" for="shop">Store address</label>
+          <input
+            class="field__input"
+            id="shop"
+            name="shop"
+            type="text"
+            value="<%= value %>"
+            placeholder="mystore.myshopify.com"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            autofocus
+            required>
+          <p class="field__help">
+            Your <code>.myshopify.com</code> address. Pasting the admin URL
+            works too.
+          </p>
+        </div>
+
+        <div class="shell__actions">
+          <button class="btn btn--primary" type="submit">Install</button>
+        </div>
+
+      </form>
+
+    </section>
+
+    <p class="muted">
+      You will be sent to Shopify to approve the app. Already installed? Open
+      it from <strong>Apps</strong> in your Shopify admin.
+    </p>
+
+  </main>
+
+</body>
+
+</html>

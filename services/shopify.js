@@ -1,6 +1,8 @@
 // services/shopify.js
 const axios = require("axios");
 const { normalizeShopDomain } = require("../utils/shop");
+const { getAccessToken, refreshAccessToken } = require("./tokens");
+const storeModel = require("../models/storeModel");
 
 const DEFAULT_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
 
@@ -55,5 +57,43 @@ async function shopifyRequest(shop, accessToken, apiVersion, queryData) {
   }
 }
 
+/**
+ * The call you almost always want.
+ *
+ * Resolves the shop's CURRENT access token before every request, which is what
+ * makes expiring tokens a non-issue: services/tokens.js refreshes ~90s ahead of
+ * expiry and rotates the refresh token, so callers never see a 401 from a token
+ * simply ageing out.
+ *
+ * Use shopifyRequest directly ONLY when a token is already in hand and the
+ * store row does not exist yet -- i.e. during the OAuth callback.
+ *
+ * Throws ReauthRequiredError when nothing but a reinstall can fix it.
+ */
+async function shopifyRequestForShop(shop, queryData, options = {}) {
+  const { apiVersion } = options;
+  const accessToken = await getAccessToken(shop);
+
+  try {
+    return await shopifyRequest(shop, accessToken, apiVersion, queryData);
+  } catch (error) {
+    // A token can still be rejected inside the refresh skew: revoked, scopes
+    // changed, or the clock drifted. Force one refresh and retry exactly once,
+    // so a genuine 401 surfaces rather than looping.
+    if (error.response?.status !== 401) throw error;
+
+    console.warn(`401 from Shopify for ${shop}; forcing a token refresh`);
+
+    const store = await storeModel.findByDomain(shop);
+
+    if (!store) throw error;
+
+    const refreshed = await refreshAccessToken(shop, store);
+
+    return shopifyRequest(shop, refreshed, apiVersion, queryData);
+  }
+}
+
 module.exports = shopifyRequest;
+module.exports.forShop = shopifyRequestForShop;
 module.exports.DEFAULT_API_VERSION = DEFAULT_API_VERSION;
