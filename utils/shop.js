@@ -17,8 +17,50 @@ function normalizeShopDomain(value) {
   return shop;
 }
 
+/**
+ * The same thing, but forgiving about what a HUMAN typed into a form.
+ *
+ * Shopify always sends a clean `shop` param, so this is only for the install
+ * landing page, where a merchant may reasonably type any of:
+ *
+ *   mystore
+ *   mystore.myshopify.com
+ *   https://mystore.myshopify.com/admin/products
+ *   admin.shopify.com/store/mystore        <- what the admin URL bar shows
+ *
+ * The result still goes through normalizeShopDomain, so this widens what may
+ * be TYPED without widening what the app will ACCEPT.
+ */
+function coerceShopDomain(value) {
+  if (typeof value !== "string") return null;
+
+  let raw = value.trim().toLowerCase();
+
+  if (!raw) return null;
+
+  // Drop a scheme, then everything after the host.
+  raw = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+
+  // The modern admin URL carries the handle in the path, not the host.
+  const adminMatch = raw.match(/^admin\.shopify\.com\/store\/([a-z0-9][a-z0-9-]*)/);
+  if (adminMatch) return normalizeShopDomain(`${adminMatch[1]}.myshopify.com`);
+
+  raw = raw.split("/")[0].split("?")[0].split("#")[0];
+  raw = raw.replace(/:\d+$/, ""); // stray port
+
+  // A bare handle is the most common thing a merchant types.
+  if (raw && !raw.includes(".")) raw = `${raw}.myshopify.com`;
+
+  return normalizeShopDomain(raw);
+}
+
 function isValidShopDomain(value) {
   return normalizeShopDomain(value) !== null;
 }
 
-module.exports = { normalizeShopDomain, isValidShopDomain, SHOP_DOMAIN_REGEX };
+module.exports = {
+  normalizeShopDomain,
+  coerceShopDomain,
+  isValidShopDomain,
+  SHOP_DOMAIN_REGEX,
+};
