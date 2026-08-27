@@ -1,68 +1,116 @@
 // controllers/authController.js
 const axios = require("axios");
 const crypto = require("crypto");
-const { saveShop, getShop } = require("../models/shopModel");
-const membershipModel = require("../models/membershipModel");
-// ================= INSTALL =================
+
+const { upsertStore } = require("../models/storeModel");
+const { registerWebhooks } = require("../services/webhooks");
+const { exchangeCodeForToken } = require("../services/tokens");
+const { normalizeShopDomain } = require("../utils/shop");
+const { topLevelRedirectPage } = require("../utils/html");
+const { parseCookies, setCookie, clearCookie } = require("../utils/cookies");
+
+const STATE_COOKIE = "shopify_oauth_state";
+const STATE_TTL_SECONDS = 600;
+const SCOPES =
+  process.env.SHOPIFY_SCOPES ||
+  "read_products,write_content,read_content,write_online_store_pages";
+const REST_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
+
+function appHost() {
+  return String(process.env.HOST || "").trim().replace(/\/+$/, "");
+}
+
+function timingSafeEqualString(a, b) {
+  const bufA = Buffer.from(String(a), "utf8");
+  const bufB = Buffer.from(String(b), "utf8");
+
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/* ===================== INSTALL ===================== */
+
 exports.installApp = async (req, res) => {
-  const { shop } = req.query;
+  const shop = normalizeShopDomain(req.query.shop);
 
-  if (!shop) return res.send("Missing shop");
-
-  try {
-    const existingShop = await getShop(shop);
-    if (existingShop && existingShop.status === 1) {
-      console.log("✅ Shop already installed during install flow, redirecting to dashboard");
-      return res.send(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <script>
-              window.top.location.href = "/?shop=${shop}&host=${existingShop.host}";
-            </script>
-          </head>
-          <body></body>
-        </html>
-      `);
-    }
-  } catch (dbErr) {
-    console.error("⚠️ Error checking existing shop during install:", dbErr.message);
+  if (!shop) {
+    return res.status(400).send("A valid ?shop=your-store.myshopify.com is required");
   }
 
-  const redirectUri = `${process.env.HOST}/api/auth/callback`;
+  const host = appHost();
 
-  // 🔐 Generate state for security
-  const state = crypto.randomBytes(16).toString("hex");
+  if (!host || !process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET) {
+    console.error("HOST / SHOPIFY_API_KEY / SHOPIFY_API_SECRET must be configured");
+    return res.status(500).send("App is not configured");
+  }
 
- const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=read_products,write_content,read_content,write_online_store_pages&grant_options[]=offline_access&redirect_uri=${redirectUri}`;
+  // CSRF nonce: sent to Shopify as `state` and stored in a cookie so the
+  // callback can prove the response belongs to a flow we started.
+  const state = crypto.randomBytes(32).toString("hex");
 
-// console.log("🟡 INSTALL URL:", installUrl);
-// console.log("🟡 SHOP:", shop);
-// console.log("🟡 SCOPES SENT: read_products,write_content,read_content,write_online_store_pages");
+  setCookie(res, STATE_COOKIE, `${state}:${shop}`, {
+    maxAge: STATE_TTL_SECONDS,
+    sameSite: "Lax",
+    secure: host.startsWith("https://"),
+  });
 
-  res.redirect(installUrl);
+  const redirectUri = `${host}/api/auth/callback`;
+
+  const installUrl =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY)}` +
+    `&scope=${encodeURIComponent(SCOPES)}` +
+    `&state=${encodeURIComponent(state)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+  // Always escape the frame before starting OAuth. Shopify's login lives on
+  // accounts.shopify.com, which refuses to be framed, so an in-frame redirect
+  // dead-ends at "accounts.shopify.com refused to connect". When the app is
+  // not framed, window.top is window, so this is correct there too.
+  return res
+    .type("html")
+    .send(topLevelRedirectPage(installUrl, { title: "Connecting to Shopify" }));
 };
 
-// ================= CALLBACK =================
+/* ===================== CALLBACK ===================== */
 
 exports.callback = async (req, res) => {
-  const { shop, hmac, code,host } = req.query;
-if (!shop || !code) {
-  return res.status(400).send("Missing required parameters");
-}
-//   console.log("📥 Received Query:", req.query);
-// console.log("📥 CALLBACK HIT");
-// console.log("📥 SHOP:", shop);
-// console.log("📥 CODE:", code);
-  try {
-    // 🔐 HMAC Verification
-    const map = { ...req.query };
-    delete map["hmac"];
-    delete map["signature"];
+  const shop = normalizeShopDomain(req.query.shop);
+  const { hmac, code, state } = req.query;
 
-    const message = Object.keys(map)
+  if (!shop || !code) {
+    return res.status(400).send("Missing required parameters");
+  }
+
+  try {
+    /* --- 1. state (CSRF) --- */
+    const cookies = parseCookies(req);
+    const storedState = cookies[STATE_COOKIE];
+    clearCookie(res, STATE_COOKIE);
+
+    if (!storedState || !state) {
+      return res.status(403).send("OAuth state missing");
+    }
+
+    const [expectedState, expectedShop] = storedState.split(":");
+
+    if (
+      !expectedState ||
+      !timingSafeEqualString(expectedState, state) ||
+      expectedShop !== shop
+    ) {
+      console.warn("OAuth state validation failed for", shop);
+      return res.status(403).send("OAuth state validation failed");
+    }
+
+    /* --- 2. HMAC --- */
+    const params = { ...req.query };
+    delete params.hmac;
+    delete params.signature;
+
+    const message = Object.keys(params)
       .sort()
-      .map((key) => `${key}=${map[key]}`)
+      .map((key) => `${key}=${params[key]}`)
       .join("&");
 
     const generatedHash = crypto
@@ -70,131 +118,60 @@ if (!shop || !code) {
       .update(message)
       .digest("hex");
 
-    if (generatedHash !== hmac) {
-      console.log("❌ HMAC Validation Failed");
-      return res.status(400).send("HMAC failed ❌");
+    if (typeof hmac !== "string" || !timingSafeEqualString(generatedHash, hmac)) {
+      console.warn("HMAC validation failed for", shop);
+      return res.status(400).send("HMAC validation failed");
     }
 
-    console.log("✅ HMAC Verified");
+    /* --- 3. code -> expiring offline access token ---
+       Shopify rejects non-expiring tokens, so this asks for the expiring
+       variant and keeps the refresh token for later renewals. */
+    const tokens = await exchangeCodeForToken(shop, code);
+    const accessToken = tokens.accessToken;
 
-    // 🔁 Exchange code → access token
-    const tokenRes = await axios.post(
-      `https://${shop}/admin/oauth/access_token`,
-      {
-        client_id: process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
-        code,
-        expiring: 1,
-      }
-    );
-
-    const accessToken = tokenRes.data.access_token;
-  console.log("🔑 TOKEN GENERATED:", accessToken);
-console.log("🔑 TOKEN LENGTH:", accessToken.length);
-
-    // 🔔 Register Webhook (app/uninstalled)
-    try {
-      await axios.post(
-        `https://${shop}/admin/api/2025-01/webhooks.json`,
-        {
-          webhook: {
-            topic: "app/uninstalled",
-            address: `${process.env.HOST}/webhooks/app/uninstalled`,
-            format: "json",
-          },
-        },
-        {
-          headers: {
-            "X-Shopify-Access-Token": accessToken,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      console.log("🔔 Webhook registered successfully");
-    } catch (webhookErr) {
-      console.log("⚠️ Webhook may already exist or failed");
-    }
-
-    // 🧠 Fetch shop details
+    /* --- 4. shop details --- */
     const shopRes = await axios.get(
-      `https://${shop}/admin/api/2025-01/shop.json`,
+      `https://${shop}/admin/api/${REST_API_VERSION}/shop.json`,
       {
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-        },
+        headers: { "X-Shopify-Access-Token": accessToken },
+        timeout: 15000,
       }
     );
 
     const data = shopRes.data.shop;
-    console.log("🏪 Shop Data:", data);
 
-    // 📅 Convert dates for MySQL
-    const createdAt = new Date(data.created_at);
-    const updatedAt = new Date(data.updated_at);
-   // 💾 Save shop data (single table)
-const shopId = await saveShop({
-  shop_name: shop,
-  access_token: accessToken,
-  host: host,
-  shopify_id: data.id,
-  name: data.name,
-  email: data.email,
-  domain: data.domain,
+    // Tokens are encrypted inside storeModel; they are never written in the
+    // clear. store_type is not passed here on purpose -- a reinstall must not
+    // reset the merchant's source/destination choice.
+    const store = await upsertStore({
+      shop_domain: shop,
+      store_name: data.name,
+      currency: data.currency,
+      api_version: REST_API_VERSION,
+      access_token: accessToken,
+      access_token_expires_at: tokens.accessTokenExpiresAt,
+      refresh_token: tokens.refreshToken,
+      refresh_token_expires_at: tokens.refreshTokenExpiresAt,
+      installed_at: new Date(),
+    });
 
-  country: data.country,
-  country_code: data.country_code,
-  country_name: data.country_name,
+    /* --- 5. webhooks --- */
+    await registerWebhooks(shop, accessToken);
 
-  currency: data.currency,
-  money_format: data.money_format,
+    console.log(`App installed for ${shop} (store id ${store.id})`);
 
-  timezone: data.timezone,
-  iana_timezone: data.iana_timezone,
-
-  shop_owner: data.shop_owner,
-
-  address1: data.address1,
-  address2: data.address2,
-  city: data.city,
-  zip: data.zip,
-  phone: data.phone,
-
-  created_at: createdAt,
-  updated_at: updatedAt,
-
-  status: 1,
-});
-
-console.log("✅ Shop saved with ID:", shopId);
-
-// 🔥 SAFE FREE PLAN LOGIC
-const existingPlan = await membershipModel.getActiveMembership(shopId);
-
-if (!existingPlan) {
-  await membershipModel.assignFreePlan(shopId, 1);
-  console.log("✅ Free plan assigned");
-} else {
-  console.log("ℹ️ Plan already exists");
-}
-
-    console.log("✅ Data saved successfully");
-
-    // 🚀 Redirect to dashboard
-    res.send(`
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <script>
-        window.top.location.href = "/?shop=${shop}&host=${host}";
-      </script>
-    </head>
-    <body></body>
-  </html>
-`);
-
+    /* --- 6. back into the embedded admin --- */
+    return res.redirect(
+      `https://${shop}/admin/apps/${encodeURIComponent(
+        process.env.SHOPIFY_API_KEY
+      )}`
+    );
   } catch (err) {
-    console.error("❌ ERROR:", err.response?.data || err.message);
-    res.status(500).send(err.response?.data || "Error occurred");
+    console.error("OAuth callback failed:", err.response?.data || err.message);
+    return res.status(500).send("Installation failed. Please try again.");
   }
 };
+
+/* ===================== EXPORTS ===================== */
+
+exports.STATE_COOKIE = STATE_COOKIE;

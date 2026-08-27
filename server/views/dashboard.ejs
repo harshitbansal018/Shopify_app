@@ -2,73 +2,72 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="shopify-api-key" content="<%= apiKey %>" />
+  <%- include("partials/head") %>
   <title>Dashboard</title>
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://sdks.shopifycdn.com/polaris/2.0.0/polaris.min.css" />
-
-  <link rel="stylesheet" href="/css/dashboard.css" />
+  <link rel="stylesheet" href="/css/app.css">
 </head>
 
 <body>
 
-   <s-app-nav>
-        <s-link href="/?" rel="home">Home</s-link>
-        <s-link href="/pages/create">Pages</s-link>
-        <s-link href="/plans">Plans</s-link>
-      </s-app-nav>
+  <%- include("partials/nav") %>
 
-  <main class="dashboard-shell">
+  <main class="shell">
 
-  <h1>📊 Dashboard</h1>
+    <header class="shell__header">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="shell__sub">Connected to <%= shop %></p>
+      </div>
+    </header>
 
-  <div class="card-container">
-  <div class="card">
-    <span class="card__label">Total pages</span>
-    <span class="card__value"><%= totalPages %></span>
-    <span class="card__meta">All pages currently created in your store.</span>
-  </div>
+    <section class="panel">
+      <h2 class="panel__title">Store</h2>
+      <dl class="facts">
+        <div class="facts__row">
+          <dt>Name</dt>
+          <dd><%= store.store_name || "—" %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Domain</dt>
+          <dd><%= store.shop_domain %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Type</dt>
+          <%# Chosen once at install; there is no route that changes it. %>
+          <dd><%= store.store_type %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Currency</dt>
+          <dd><%= store.currency || "—" %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>API version</dt>
+          <dd><%= store.api_version %></dd>
+        </div>
+      </dl>
+    </section>
 
-  <div class="card">
-    <span class="card__label">Active pages</span>
-    <span class="card__value"><%= activePages %></span>
-    <span class="card__meta"><%= activeRate %>% of your pages are live.</span>
-  </div>
-
-  <div class="card">
-    <span class="card__label">Inactive pages</span>
-    <span class="card__value"><%= inactivePages %></span>
-    <span class="card__meta"><%= inactiveRate %>% may need attention.</span>
-  </div>
-</div>
-
-
+    <!-- <section class="panel">
+      <h2 class="panel__title">Build your feature here</h2>
+      <p class="panel__copy">
+        Install, uninstall, session-token auth, token refresh and the admin nav
+        are wired up. To add a screen:
+      </p>
+      <ol class="steps">
+        <li>Add a table to <code>sql/schema.sql</code> and <code>config/migrate.js</code>, with a <code>shop_domain</code> column.</li>
+        <li>Add a model under <code>models/</code> whose every function takes the shop and filters on it.</li>
+        <li>Add a controller and a view, then a route that starts with <code>router.use(requireSession)</code>.</li>
+        <li>Mount the route in <code>server.js</code> above the dashboard route, and add an <code>&lt;s-link&gt;</code> to <code>views/partials/nav.ejs</code>.</li>
+      </ol>
+      <p class="panel__copy">
+        In the browser, call your routes with <code>window.appFetch()</code> and
+        navigate with <code>window.appNavigate()</code> so the session token
+        travels with the request.
+      </p>
+    </section> -->
 
   </main>
 
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const host = params.get("host");
-
-    const app = window.appBridge.createApp({
-      apiKey: document.querySelector('meta[name="shopify-api-key"]').content,
-      host: host,
-      forceRedirect: true,
-    });
-
-    const NavigationMenu = window.appBridge.actions.NavigationMenu;
-
-    NavigationMenu.create(app, {
-      items: [
-        { label: "Dashboard", destination: "/dashboard" },
-        { label: "Posts", destination: "/posts" },
-        { label: "Create Post", destination: "/create-post" },
-      ],
-    });
-  </script>
 </body>
 
 </html>

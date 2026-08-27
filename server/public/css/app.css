@@ -1,0 +1,540 @@
+/* forms.css — admin screens for the forms feature.
+   Rendered inside the Shopify admin iframe, so it follows the admin's neutral
+   look rather than introducing a brand of its own. */
+
+:root {
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --line: #d9dbe0;
+  --line-soft: #ececf0;
+  --text: #1a1a1a;
+  --muted: #6b6f76;
+  --accent: #1f6feb;
+  --danger: #b3261e;
+  --ok: #0f7b46;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 18, 22, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+/* ---------------- layout ---------------- */
+
+.shell {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.75rem 1.25rem 4rem;
+}
+
+.shell--wide {
+  max-width: 1180px;
+}
+
+.shell__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.shell__header h1 {
+  margin: 0.15rem 0 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.shell__sub {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.shell__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---------------- panels ---------------- */
+
+.builder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.15rem;
+}
+
+@media (min-width: 1040px) {
+  .builder {
+    grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .panel--preview {
+    grid-column: 1 / -1;
+  }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.15rem;
+}
+
+.panel__title {
+  margin: 0 0 0.9rem;
+  font-size: 1.02rem;
+}
+
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.panel__header .panel__title {
+  margin: 0;
+}
+
+.panel__add {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+/* ---------------- form controls ---------------- */
+
+.field {
+  display: block;
+  margin-bottom: 0.85rem;
+}
+
+.field--inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.field--full {
+  grid-column: 1 / -1;
+}
+
+.field__label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.field__input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  color: inherit;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.field__input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.field__input--compact {
+  width: auto;
+  min-width: 9rem;
+}
+
+.field__help {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.field__help code {
+  background: var(--line-soft);
+  padding: 0 0.25rem;
+  border-radius: 4px;
+}
+
+/* ---------------- buttons ---------------- */
+
+.btn {
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #fafafb;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn--primary {
+  color: #fff;
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #333;
+}
+
+.btn--danger {
+  color: var(--danger);
+  border-color: #e6c4c1;
+}
+
+.btn--small {
+  padding: 0.32rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.icon-btn {
+  padding: 0.15rem 0.4rem;
+  font: inherit;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--line-soft);
+  color: var(--text);
+}
+
+.icon-btn--danger:hover {
+  color: var(--danger);
+}
+
+.link {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.link--back {
+  display: inline-block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+/* ---------------- misc ---------------- */
+
+.empty {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.empty h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+}
+
+.empty p {
+  margin: 0 auto 1rem;
+  max-width: 34rem;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The preview reuses the storefront classes; keep it readable in the admin. */
+
+/* ---------------- facts list ---------------- */
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+
+.facts__row {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+  gap: 0.35rem 1.25rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.facts__row:first-child { border-top: 0; }
+
+.facts dt {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.facts dd {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+@media (max-width: 34rem) {
+  .facts__row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------- role picker ---------------- */
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.1rem;
+}
+
+.choice {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--muted);
+}
+
+/* :has lets the whole card show the selection; the ring below is the
+   fallback for browsers without it, drawn on the input itself. */
+.choice:has(.choice__input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.choice:has(.choice__input:disabled) {
+  cursor: default;
+  background: var(--bg);
+  opacity: 0.7;
+}
+
+.choice__input {
+  margin: 0.2rem 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.choice__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.choice__title {
+  font-weight: 600;
+}
+
+.choice__summary {
+  font-size: 0.9rem;
+}
+
+.choice__copy {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The chosen type, shown read-only once it is final. */
+.chosen {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.75rem;
+}
+
+.chosen__badge {
+  padding: 0.2rem 0.6rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--text);
+  border-radius: 999px;
+}
+
+/* ---------------- pairing code ---------------- */
+
+.code {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--line-soft);
+  border-radius: var(--radius);
+}
+
+.code[hidden] {
+  display: none;
+}
+
+.code__value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.code__meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ---------------- connected stores ---------------- */
+
+.stores {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stores__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.stores__row:first-child {
+  border-top: 0;
+}
+
+.stores__name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.stores__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.pill {
+  padding: 0.12rem 0.55rem;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+.pill--active {
+  color: var(--ok);
+  background: #eef8f2;
+  border-color: #bfe3ce;
+}
+
+.pill--paused {
+  color: #6b4a00;
+  background: #fff8e6;
+  border-color: #f0dca8;
+}
+
+.pill--disconnected {
+  color: var(--muted);
+  background: var(--line-soft);
+}
+
+/* ---------------- notices ---------------- */
+
+.notice {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+.notice--warn {
+  color: #6b4a00;
+  background: #fff8e6;
+  border-color: #f0dca8;
+}
+
+.notice--error {
+  color: var(--danger);
+  background: #fdf1f0;
+  border-color: #e6c4c1;
+}
+
+/* ---------------- next-steps list ---------------- */
+
+.panel__copy {
+  margin: 0 0 0.9rem;
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+.steps {
+  margin: 0 0 0.9rem;
+  padding-left: 1.25rem;
+  max-width: 62ch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.steps code,
+.panel__copy code {
+  padding: 0.08em 0.35em;
+  font-size: 0.86em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--line-soft);
+  border-radius: 4px;
+}

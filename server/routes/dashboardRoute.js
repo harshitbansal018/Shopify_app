@@ -1,22 +1,12 @@
 const express = require("express");
 const router = express.Router();
+
+const { requireSession } = require("../middleware/auth");
 const { getDashboard } = require("../controllers/dashboardController");
 
-// ✅ ROOT ROUTE (IMPORTANT FIX)
-router.get("/", (req, res) => {
-  const shop = req.query.shop;
-  const host = req.query.host;
-
-  // If no shop → prevent crash
-  if (!shop || !host) {
-    return res.send("Missing shop or host ❌");
-  }
-
-  // ✅ Redirect to dashboard WITH query
-  res.redirect(`/dashboard?shop=${shop}&host=${host}`);
-});
-
-// ✅ Dashboard route
-router.get("/dashboard", getDashboard);
+// Entry point from the admin. App Bridge keeps shop/host/id_token on the URL,
+// so the dashboard renders directly instead of bouncing through a redirect.
+router.get("/", requireSession, getDashboard);
+router.get("/dashboard", requireSession, getDashboard);
 
 module.exports = router;
