@@ -23,14 +23,14 @@
       </div>
     </header>
 
-    <% if (isDestination) { %>
+    <% if (isSource) { %>
 
-      <%# A destination hands its code out; the source types it in. %>
+      <%# A source hands its code out; the destination types it in. %>
       <section class="panel">
         <h2 class="panel__title">Your pairing code</h2>
         <p class="panel__copy">
-          Give this code to the source store. Someone with admin access there
-          enters it to start sending products here. It lasts
+          Give this code to the destination store. Someone with admin access
+          there enters it to start receiving your products. It lasts
           <%= codeTtlMinutes %> minutes and can only be used once.
         </p>
 
@@ -58,17 +58,17 @@
 
     <% } else { %>
 
-      <%# A source enters the destination's code. %>
+      <%# A destination enters the source's code. %>
       <section class="panel">
-        <h2 class="panel__title">Connect a destination store</h2>
+        <h2 class="panel__title">Connect a source store</h2>
         <p class="panel__copy">
-          Open this app on the destination store, generate its pairing code,
-          and enter it here. The connection goes live straight away.
+          Open this app on the source store, generate its pairing code, and
+          enter it here. The connection goes live straight away.
         </p>
 
         <form id="connect-form">
           <label class="field">
-            <span class="field__label">Destination pairing code</span>
+            <span class="field__label">Source pairing code</span>
             <input
               class="field__input field__input--compact"
               type="text"
@@ -92,19 +92,19 @@
 
     <section class="panel">
       <h2 class="panel__title">
-        <%= isDestination ? "Source stores sending here" : "Destination stores receiving from here" %>
+        <%= isSource ? "Destination stores receiving from here" : "Source stores sending here" %>
       </h2>
 
       <% if (!connections.length) { %>
         <p class="panel__copy">
-          <%= isDestination
-              ? "No source store is connected yet. Share your code above."
-              : "No destination store is connected yet. Enter a code above." %>
+          <%= isSource
+              ? "No destination store is connected yet. Share your code above."
+              : "No source store is connected yet. Enter a code above." %>
         </p>
       <% } else { %>
         <ul class="stores">
           <% connections.forEach(function (connection) { %>
-            <% var other = isDestination ? connection.source : connection.destination; %>
+            <% var other = isSource ? connection.destination : connection.source; %>
             <li class="stores__row">
               <span class="stores__name">
                 <%= other.store_name || other.shop_domain %>
@@ -131,7 +131,7 @@
         node.hidden = false;
       }
 
-      /* ---------------- destination: generate a code ---------------- */
+      /* ---------------- source: generate a code ---------------- */
       var codeButton = document.getElementById("code-button");
 
       if (codeButton) {
@@ -181,7 +181,7 @@
           var code = connectInput.value.trim();
 
           if (!code) {
-            return showError(connectError, "Enter the destination's code.");
+            return showError(connectError, "Enter the source store's code.");
           }
 
           connectButton.disabled = true;
@@ -200,7 +200,7 @@
               return showError(connectError, data.error || "Could not connect.");
             }
 
-            window.appToast("Connected to " + data.connection.destination);
+            window.appToast("Connected to " + data.connection.source);
             window.appNavigate("/stores");
           } catch (err) {
             connectButton.disabled = false;

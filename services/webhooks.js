@@ -30,6 +30,15 @@ const WEBHOOK_CREATE_MUTATION = `
  */
 const TOPICS = [
   { topic: "APP_UNINSTALLED", path: "/webhooks/app/uninstalled" },
+
+  // How a change at the source is noticed at all. Registered on every store
+  // because the role is not chosen until after install; the handler ignores
+  // anything from a store that is not a source.
+  //
+  // That filter is also what stops a loop: writing a product to a destination
+  // makes THAT store fire products/update straight back at us.
+  { topic: "PRODUCTS_UPDATE", path: "/webhooks/products/update" },
+  { topic: "PRODUCTS_DELETE", path: "/webhooks/products/delete" },
 ];
 
 async function registerWebhooks(shop, accessToken) {

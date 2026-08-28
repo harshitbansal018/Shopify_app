@@ -10,6 +10,7 @@ const { serializeForScript } = require("./utils/html");
 
 const authRoutes = require("./routes/authRoute");
 const storeRoutes = require("./routes/storeRoute");
+const productRoutes = require("./routes/productRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
 const webhookRoutes = require("./routes/webhookRoute");
 
@@ -62,6 +63,7 @@ app.use(express.static(path.join(__dirname, "public")));
      app.use("/widgets", require("./routes/widgetRoute"));
    Mount them ABOVE dashboardRoutes, which owns "/". */
 app.use("/api/auth", authRoutes);
+app.use("/products", productRoutes);
 app.use("/", storeRoutes);
 app.use("/", dashboardRoutes);
 
@@ -98,6 +100,11 @@ const PORT = process.env.PORT || 3000;
     console.error("Startup failed:", err.message);
     process.exit(1);
   }
+
+  // Pushes queued changes to destinations that have already accepted them.
+  // Started after the database is confirmed, so a failed boot does not leave a
+  // timer running against a pool that never connected.
+  require("./services/productSync").startAutoSync();
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

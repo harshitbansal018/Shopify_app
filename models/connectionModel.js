@@ -126,6 +126,24 @@ async function listAutoSyncForSource(sourceStoreId) {
   return rows.map(hydrate);
 }
 
+/**
+ * Every connection the background push should service.
+ *
+ * Both stores have to still be installed: pushing into a shop that uninstalled
+ * the app would only produce 401s until its refresh token expires.
+ */
+async function listAutoSync() {
+  const rows = await query(
+    `${SELECT_WITH_STORES}
+      WHERE c.status = 'active'
+        AND c.sync_mode = 'auto'
+        AND src.is_active = 1
+        AND dst.is_active = 1
+      ORDER BY c.id`
+  );
+  return rows.map(hydrate);
+}
+
 /** Connections feeding into one destination store. */
 async function listForDestination(destinationStoreId) {
   const rows = await query(
@@ -302,7 +320,10 @@ class InvalidConnectionError extends Error {
 async function createConnection({
   sourceStoreId,
   destinationStoreId,
-  syncMode = "manual",
+  // 'auto' by default: once a destination accepts a product, later changes to
+  // it should follow without anyone pressing a button. Acceptance is still
+  // required first -- auto only ever pushes what was already agreed to.
+  syncMode = "auto",
   settings = {},
 }) {
   if (Number(sourceStoreId) === Number(destinationStoreId)) {
@@ -419,6 +440,7 @@ module.exports = {
   listForStore,
   listForDestination,
   listForSource,
+  listAutoSync,
   listSourceOptionsFor,
   listAutoSyncForSource,
   connectSources,

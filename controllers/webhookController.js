@@ -7,6 +7,7 @@
 const storeModel = require("../models/storeModel");
 const orderModel = require("../models/orderModel");
 const customerModel = require("../models/customerModel");
+const productSync = require("../services/productSync");
 const { normalizeShopDomain } = require("../utils/shop");
 
 /* ===================== app/uninstalled ===================== */
@@ -37,6 +38,76 @@ exports.appUninstalled = async (req, res) => {
     console.log("App uninstalled for", shop);
   } catch (err) {
     console.error("Uninstall webhook processing failed:", err.message);
+  }
+};
+
+/* ===================== products/update ===================== */
+
+/**
+ * A product changed at a source store.
+ *
+ * Nothing here calls Shopify. The payload already carries the whole product,
+ * and an outbound call from inside a webhook is what makes Shopify time the
+ * request out, retry it, and eventually unsubscribe the topic altogether.
+ * Refreshing the cache and queueing is all that happens; the push itself is
+ * the background job's problem.
+ */
+exports.productsUpdate = async (req, res) => {
+  res.status(200).send("OK");
+
+  const shop = normalizeShopDomain(req.webhookShop);
+  const payload = req.webhookPayload || {};
+
+  if (!shop || !payload.id) return;
+
+  try {
+    const store = await storeModel.findByDomain(shop);
+
+    // Registered on every store, but only a source has products worth
+    // reacting to. This is also the loop-breaker: a product we just wrote to a
+    // destination fires this webhook straight back at us.
+    if (!store || store.store_type !== "source") return;
+
+    const result = await productSync.applySourceUpdate(store.id, payload);
+
+    if (!result) return; // not a product this app stages
+
+    console.log(
+      `products/update ${shop} #${payload.id}: ` +
+        `${result.requeued} mapping(s) queued`
+    );
+  } catch (err) {
+    console.error("products/update processing failed:", err.message);
+  }
+};
+
+/* ===================== products/delete ===================== */
+
+exports.productsDelete = async (req, res) => {
+  res.status(200).send("OK");
+
+  const shop = normalizeShopDomain(req.webhookShop);
+  const payload = req.webhookPayload || {};
+
+  if (!shop || !payload.id) return;
+
+  try {
+    const store = await storeModel.findByDomain(shop);
+
+    if (!store || store.store_type !== "source") return;
+
+    // The mapping rows are marked, never deleted: they record what this
+    // product became on each destination, which a hard delete would lose.
+    const result = await productSync.applySourceDelete(store.id, payload.id);
+
+    if (!result) return;
+
+    console.log(
+      `products/delete ${shop} #${payload.id}: ` +
+        `${result.marked} mapping(s) marked deleted`
+    );
+  } catch (err) {
+    console.error("products/delete processing failed:", err.message);
   }
 };
 

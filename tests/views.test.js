@@ -187,66 +187,422 @@ const STORE_ROW = {
       destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
     };
 
-    // Destination: shows a code, never an input to type one into.
+    // SOURCE: shows a code, never an input to type one into.
     const withCode = await render("stores", {
       ...BASE,
-      store: { ...STORE_ROW, store_type: "destination" },
-      isDestination: true,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
       connections: [CONNECTION],
       pairingCode: { code: "ABCD-2345", expiresAt: new Date("2026-01-01T10:30:00Z") },
       codeTtlMinutes: 15,
     });
 
-    check("destination shows its code", withCode.includes("ABCD-2345"));
+    check("source shows its code", withCode.includes("ABCD-2345"));
     check(
-      "destination has no code input",
+      "source has no code input",
       !withCode.includes('id="connect-code"'),
-      "a destination could redeem a code, which the server refuses"
+      "a source could redeem a code, which the server refuses"
     );
-    check("destination lists the source store", withCode.includes("src.myshopify.com"));
-    check("destination shows the expiry", withCode.includes("10:30"));
+    check(
+      "source lists the destination store",
+      withCode.includes("dst.myshopify.com")
+    );
+    check("source shows the expiry", withCode.includes("10:30"));
 
     // No code yet: the box is hidden rather than showing an empty slot.
     const noCode = await render("stores", {
       ...BASE,
-      store: { ...STORE_ROW, store_type: "destination" },
-      isDestination: true,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
       connections: [],
       pairingCode: null,
       codeTtlMinutes: 15,
     });
 
     check(
-      "destination without a code hides the code box",
+      "source without a code hides the code box",
       /<div class="code" id="code-box" hidden>/.test(noCode)
     );
-    check("destination offers to generate one", noCode.includes("Generate a code"));
-    check("empty list is explained", noCode.includes("No source store is connected"));
+    check("source offers to generate one", noCode.includes("Generate a code"));
+    check(
+      "empty list is explained",
+      noCode.includes("No destination store is connected")
+    );
 
-    // Source: types a code in, never shows one.
-    const sourceHtml = await render("stores", {
+    // DESTINATION: types a code in, never shows one.
+    const destinationHtml = await render("stores", {
       ...BASE,
-      store: { ...STORE_ROW, store_type: "source" },
-      isDestination: false,
+      store: { ...STORE_ROW, store_type: "destination" },
+      isSource: false,
       connections: [CONNECTION],
       pairingCode: null,
       codeTtlMinutes: 15,
     });
 
-    check("source has a code input", sourceHtml.includes('id="connect-code"'));
     check(
-      "source is not offered a code to hand out",
-      !sourceHtml.includes('id="code-box"'),
+      "destination has a code input",
+      destinationHtml.includes('id="connect-code"')
+    );
+    check(
+      "destination is not offered a code to hand out",
+      !destinationHtml.includes('id="code-box"'),
       "both stores would be showing codes"
     );
     check(
-      "source lists the destination store",
-      sourceHtml.includes("dst.myshopify.com")
+      "destination lists the source store",
+      destinationHtml.includes("src.myshopify.com")
     );
+    // CONNECTION.destination has store_name: null, and the source view is what
+    // renders it -- so this is where a missing name would surface.
     check(
       "a store with no name falls back to its domain",
-      !sourceHtml.includes(">null<"),
+      !withCode.includes(">null<"),
       "a missing store_name printed as null"
+    );
+  }
+
+  console.log("\nProducts");
+  {
+    const SOURCE_ROW = {
+      id: 11,
+      shopify_product_id: "900",
+      title: "Blue Shirt",
+      vendor: "Acme",
+      status: "ACTIVE",
+      variant_count: 3,
+      allowed: 0,
+      synced: 0,
+      pending: 0,
+      failed: 0,
+      error_message: null,
+      image_url: "https://cdn.shopify.com/s/files/blue-shirt.jpg",
+      awaiting: 0,
+      allowed_variant_ids: null, // null = every variant
+      variants: [
+        {
+          id: 101,
+          option1: "S", option2: null, option3: null,
+          sku: "SH-S", title: "S", price: "20.00", inventory_quantity: 4,
+        },
+        {
+          // No SKU and no stock figure: both are optional on a real variant.
+          id: 102,
+          option1: "M", option2: null, option3: null,
+          sku: null, title: "M", price: null, inventory_quantity: null,
+        },
+      ],
+    };
+
+    const CONN = {
+      id: 1,
+      status: "active",
+      sync_mode: "manual",
+      source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Src" },
+      destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
+    };
+
+    // Source with nothing staged yet.
+    const emptySource = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
+      products: [],
+      connections: [CONN],
+      activeConnections: [CONN],
+    });
+
+    check("source empty state explains Add products",
+      emptySource.includes("Add products"));
+    check("source empty state has no table", !emptySource.includes("<table"));
+
+    // Source with products in three different states at once.
+    const sourceHtml = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
+      products: [
+        SOURCE_ROW,
+        { ...SOURCE_ROW, id: 12, title: "Red Cap", allowed: 1, pending: 1 },
+        { ...SOURCE_ROW, id: 13, title: "Green Bag", allowed: 1, synced: 1 },
+        {
+          ...SOURCE_ROW,
+          id: 14,
+          title: "Black Shoes",
+          allowed: 1,
+          failed: 1,
+          error_message: "handle taken",
+        },
+      ],
+      connections: [CONN],
+      activeConnections: [CONN],
+    });
+
+    check("source lists every product", sourceHtml.includes("Black Shoes"));
+    check("unshared product says so", sourceHtml.includes("Not shared"));
+    check("pending is shown", sourceHtml.includes("1 pending"));
+    check("synced is shown", sourceHtml.includes("1 synced"));
+    check("failed is shown", sourceHtml.includes("1 failed"));
+    check("the failure reason is carried", sourceHtml.includes("handle taken"));
+    check("source opens the App Bridge picker",
+      sourceHtml.includes("shopify.resourcePicker"),
+      "the custom modal was replaced by the admin picker");
+    check("no hand-rolled picker markup remains",
+      !sourceHtml.includes('id="picker"'));
+    check(
+      "source has NO sync button",
+      !sourceHtml.includes('id="sync-button"'),
+      "the source must not be able to push into someone else's store"
+    );
+    check(
+      "each row is selectable",
+      (sourceHtml.match(/class="row-check"/g) || []).length === 4
+    );
+
+    // Variants are listed under each product, not merely counted.
+    check(
+      "variants are rendered, not just counted",
+      (sourceHtml.match(/class="variants__row"/g) || []).length === 8,
+      "4 products x 2 variants"
+    );
+    check("a variant SKU is shown", sourceHtml.includes("SH-S"));
+    check("a variant price is shown", sourceHtml.includes("20.00"));
+    check("variant stock is shown", sourceHtml.includes("4 in stock"));
+    check(
+      "a variant missing price or stock falls back to a dash",
+      !sourceHtml.includes("null in stock") && !sourceHtml.includes(">null<"),
+      "a missing value printed as null"
+    );
+
+    // Images.
+    check(
+      "the product thumbnail is rendered",
+      sourceHtml.includes("blue-shirt.jpg") &&
+        sourceHtml.includes('class="media__thumb"')
+    );
+    check(
+      "a product with no image gets a placeholder, not a broken img",
+      (await render("products", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "source" },
+        isSource: true,
+        products: [{ ...SOURCE_ROW, image_url: null }],
+        connections: [CONN],
+        activeConnections: [CONN],
+      })).includes("media__thumb--empty")
+    );
+
+    // Variant-level selection.
+    check(
+      "every variant is selectable",
+      (sourceHtml.match(/class="variant-check"/g) || []).length === 8
+    );
+    check(
+      "a variant checkbox knows which product it belongs to",
+      sourceHtml.includes('data-product="11"') && sourceHtml.includes('value="101"')
+    );
+    check(
+      "with allowed_variant_ids null, every variant is ticked",
+      (sourceHtml.match(/class="variant-check"[^>]*checked/g) || []).length === 8,
+      "a product not yet narrowed should default to all variants"
+    );
+
+    // A narrowed product ticks only what was chosen.
+    const narrowed = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
+      products: [{ ...SOURCE_ROW, allowed: 1, pending: 1, allowed_variant_ids: [101] }],
+      connections: [CONN],
+      activeConnections: [CONN],
+    });
+
+    const narrowedChecks = narrowed.match(/<input[^>]*class="variant-check"[^>]*>/g) || [];
+
+    check(
+      "a narrowed product ticks only the chosen variant",
+      narrowedChecks.length === 2 &&
+        /\bchecked\b/.test(narrowedChecks[0]) &&
+        !/\bchecked\b/.test(narrowedChecks[1]),
+      narrowedChecks.join(" | ")
+    );
+
+    // No destination connected: the merchant must be told why nothing can go out.
+    const noDestination = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
+      products: [SOURCE_ROW],
+      connections: [],
+      activeConnections: [],
+    });
+
+    check(
+      "source with no destination is warned",
+      noDestination.includes("No destination store is connected")
+    );
+
+    // Destination, with one product offered and awaiting a decision and one
+    // already accepted.
+    const OFFERED = {
+      mapping_id: 6,
+      destination_shopify_product_id: null,
+      sync_status: "pending",
+      accepted_at: null,
+      awaiting: true,
+      last_synced_at: null,
+      error_message: null,
+      title: "Red Cap",
+      vendor: "Acme",
+      image_url: "https://cdn.shopify.com/s/files/red-cap.jpg",
+      source_shop_domain: "src.myshopify.com",
+      source_store_name: "Warehouse",
+      variant_count: 0,
+      offered_variant_count: 3,
+      variants: [],
+    };
+
+    const destinationHtml = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      isSource: false,
+      awaiting: [OFFERED],
+      products: [
+        {
+          mapping_id: 5,
+          destination_shopify_product_id: "700",
+          sync_status: "synced",
+          last_synced_at: new Date("2026-08-27T09:15:00Z"),
+          error_message: null,
+          title: "Blue Shirt",
+          vendor: "Acme",
+          source_shop_domain: "src.myshopify.com",
+          source_store_name: "Warehouse",
+          variant_count: 2,
+          variants: [
+            {
+              option1: "S", option2: null, option3: null,
+              sku: "SH-S", source_title: "S", destination_variant_id: "5001",
+            },
+            {
+              // Pushed, but this variant never came back linked.
+              option1: "M", option2: null, option3: null,
+              sku: null, source_title: "M", destination_variant_id: null,
+            },
+          ],
+        },
+      ],
+      connections: [CONN],
+    });
+
+    check(
+      "destination names the source store",
+      destinationHtml.includes("Warehouse") &&
+        destinationHtml.includes("src.myshopify.com")
+    );
+    check("destination shows the sync time", destinationHtml.includes("2026-08-27 09:15"));
+    check(
+      "destination lists the synced variants",
+      (destinationHtml.match(/class="variants__row"/g) || []).length === 2
+    );
+    check(
+      "a linked variant says so",
+      destinationHtml.includes("linked")
+    );
+    check(
+      "an unlinked variant is distinguishable",
+      destinationHtml.includes("not linked"),
+      "a variant that never came back would look synced"
+    );
+    check(
+      "destination cannot add products",
+      !destinationHtml.includes('id="add-button"') &&
+        !destinationHtml.includes("resourcePicker"),
+      "a destination was offered controls the server refuses"
+    );
+    check(
+      "destination has no source-side controls",
+      !destinationHtml.includes('id="allow-button"') &&
+        !destinationHtml.includes('id="add-button"')
+    );
+    check(
+      "destination has its own sync button",
+      destinationHtml.includes('id="sync-button"'),
+      "accepted products could never receive an update"
+    );
+
+    // The destination's own decision.
+    check(
+      "offered products are listed separately",
+      destinationHtml.includes("Waiting for you (1)") &&
+        destinationHtml.includes("Red Cap")
+    );
+    check(
+      "each offered product is selectable",
+      (destinationHtml.match(/class="awaiting-check"/g) || []).length === 1
+    );
+    check(
+      "the checkbox carries the mapping id, not the product id",
+      /class="awaiting-check"[^>]*value="6"/.test(destinationHtml)
+    );
+    check(
+      "destination gets its own Sync now",
+      destinationHtml.includes('id="accept-button"')
+    );
+    check("destination can decline", destinationHtml.includes('id="decline-button"'));
+    check(
+      "how many variants are on offer is shown",
+      destinationHtml.includes("3 variants")
+    );
+    check(
+      "an accepted product is not offered again",
+      !/class="awaiting-check"[^>]*value="5"/.test(destinationHtml),
+      "the already-synced mapping appeared in the waiting list"
+    );
+    check(
+      "the accepted list is headed separately",
+      destinationHtml.includes("In your store (1)")
+    );
+
+    // Nothing offered: no controls at all, just the list.
+    const nothingOffered = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      isSource: false,
+      awaiting: [],
+      products: [],
+      connections: [CONN],
+    });
+
+    check(
+      "with nothing offered there is no accept button",
+      !nothingOffered.includes('id="accept-button"')
+    );
+
+    // The normal first-run state: an offer arrives before anything has been
+    // accepted. The empty screen must not swallow it.
+    const firstOffer = await render("products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      isSource: false,
+      awaiting: [OFFERED],
+      products: [],
+      connections: [CONN],
+    });
+
+    check(
+      "a first offer is shown even with nothing accepted yet",
+      firstOffer.includes("Waiting for you (1)") &&
+        firstOffer.includes('id="accept-button"'),
+      "the empty state hid the only thing there was to act on"
+    );
+    check(
+      "and the empty state is not shown alongside it",
+      !firstOffer.includes("Nothing synced yet")
+    );
+    check(
+      "and the empty store is explained",
+      nothingOffered.includes("Nothing synced yet") ||
+        nothingOffered.includes("Nothing accepted yet")
     );
   }
 

@@ -14,6 +14,21 @@ router.post(
   webhookController.appUninstalled
 );
 
+/* Product changes at a source store. */
+router.post(
+  "/products/update",
+  rawBody,
+  verifyWebhook,
+  webhookController.productsUpdate
+);
+
+router.post(
+  "/products/delete",
+  rawBody,
+  verifyWebhook,
+  webhookController.productsDelete
+);
+
 /* Mandatory privacy webhooks, configured in the Partner Dashboard. */
 router.post(
   "/customers/data_request",

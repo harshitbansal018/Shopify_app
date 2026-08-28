@@ -4,7 +4,7 @@
   "description": "Shopify app that syncs products from source stores to destination stores",
   "main": "server.js",
   "scripts": {
-    "test": "node tests/security.test.js && node tests/tokens.test.js && node tests/views.test.js && node tests/pairing.test.js && node tests/models.test.js && node tests/orders.test.js && node tests/customers.test.js",
+    "test": "node tests/security.test.js && node tests/tokens.test.js && node tests/views.test.js && node tests/productSync.test.js && node tests/pairing.test.js && node tests/models.test.js && node tests/orders.test.js && node tests/customers.test.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },

@@ -485,6 +485,158 @@ body {
   background: var(--line-soft);
 }
 
+.pill--failed {
+  color: var(--danger);
+  background: #fdf1f0;
+  border-color: #e6c4c1;
+}
+
+.pill--pending {
+  color: #6b4a00;
+  background: #fff8e6;
+  border-color: #f0dca8;
+}
+
+.pill--synced {
+  color: var(--ok);
+  background: #eef8f2;
+  border-color: #bfe3ce;
+}
+
+/* ---------------- product table ---------------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.table th,
+.table td {
+  padding: 0.6rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  border-top: 1px solid var(--line-soft);
+}
+
+.table th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table__check {
+  width: 2rem;
+}
+
+.table__title {
+  display: block;
+}
+
+.table td .muted {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.table td .pill + .pill {
+  margin-left: 0.3rem;
+}
+
+/* Narrow screens: let the table scroll rather than the whole page. */
+.panel > .table {
+  display: table;
+}
+
+@media (max-width: 46rem) {
+  .panel {
+    overflow-x: auto;
+  }
+
+  .table {
+    min-width: 34rem;
+  }
+}
+
+/* ---------------- variants inside a product row ---------------- */
+
+.variants {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 16rem;
+}
+
+.variants__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 0.25rem 0.7rem;
+  padding: 0.25rem 0;
+  font-size: 0.86rem;
+}
+
+.variant-check {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------------- product thumbnail ---------------- */
+
+.media {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.media__thumb {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.media__thumb--empty {
+  display: block;
+}
+
+.media__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.variants__row + .variants__row {
+  border-top: 1px dashed var(--line-soft);
+}
+
+.variants__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.variants__sku {
+  /* Second line, aligned under the name rather than under the checkbox. */
+  grid-column: 2 / -1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.variants__price {
+  font-variant-numeric: tabular-nums;
+}
+
+.variants__stock {
+  white-space: nowrap;
+}
+
 /* ---------------- notices ---------------- */
 
 .notice {

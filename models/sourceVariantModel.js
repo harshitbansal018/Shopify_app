@@ -123,6 +123,34 @@ async function listForProduct(sourceProductId) {
   );
 }
 
+/**
+ * Variants for a whole page of products at once, grouped by product id.
+ *
+ * The Products table renders every product's variants underneath it, so the
+ * alternative is one query per row -- a hundred products would be a hundred
+ * round trips to render one screen.
+ */
+async function mapForProducts(sourceProductIds) {
+  const ids = [...new Set((sourceProductIds || []).map(Number).filter(Boolean))];
+  const grouped = new Map();
+
+  if (!ids.length) return grouped;
+
+  const rows = await query(
+    `SELECT * FROM source_variant_mappings
+      WHERE source_product_id IN (?)
+      ORDER BY source_product_id, position, id`,
+    [ids]
+  );
+
+  rows.forEach((row) => {
+    if (!grouped.has(row.source_product_id)) grouped.set(row.source_product_id, []);
+    grouped.get(row.source_product_id).push(row);
+  });
+
+  return grouped;
+}
+
 async function findByShopifyId(sourceProductId, shopifyVariantId) {
   const rows = await query(
     `SELECT * FROM source_variant_mappings
@@ -181,6 +209,7 @@ module.exports = {
   fromShopify,
   syncForProduct,
   listForProduct,
+  mapForProducts,
   findByShopifyId,
   findById,
   mapByShopifyId,

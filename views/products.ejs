@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title>Products</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Products</h1>
+        <p class="shell__sub">
+          <% if (isSource) { %>
+            Products staged here, and which of them go out to your destination stores.
+          <% } else { %>
+            Products synced into this store, and where each one came from.
+          <% } %>
+        </p>
+      </div>
+
+      <div class="shell__actions">
+        <% if (isSource) { %>
+          <%# No sync button here on purpose: the source offers products, the
+              destination decides when to pull them in. %>
+          <button class="btn btn--primary" type="button" id="add-button">+ Add products</button>
+        <% } else if (connections.length) { %>
+          <%# Updates to products already accepted -- nothing new is added. %>
+          <button class="btn" type="button" id="sync-button">Sync now</button>
+        <% } %>
+      </div>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <% if (isSource && !activeConnections.length) { %>
+      <p class="notice notice--warn">
+        No destination store is connected yet, so nothing can be pushed. Connect
+        one from <s-link href="/stores">Stores</s-link> first &mdash; you can
+        still add products to the table in the meantime.
+      </p>
+    <% } %>
+
+    <%# A destination with nothing accepted but something OFFERED is not empty
+        -- that is the normal first-run state, and hiding the offer behind an
+        empty screen would leave the merchant with nothing to click. %>
+    <% if (!products.length && (isSource || !awaiting.length)) { %>
+
+      <section class="empty">
+        <h2><%= isSource ? "No products yet" : "Nothing synced yet" %></h2>
+        <p>
+          <% if (isSource) { %>
+            Use <strong>Add products</strong> to pull products in from this
+            store's Shopify catalogue. Nothing is sent anywhere until you allow
+            it.
+          <% } else { %>
+            When a connected source store syncs a product, it appears here with
+            the store it came from.
+          <% } %>
+        </p>
+      </section>
+
+    <% } else if (isSource) { %>
+
+      <section class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title"><%= products.length %> product<%= products.length === 1 ? "" : "s" %></h2>
+          <div class="panel__add">
+            <button class="btn btn--small" type="button" id="allow-button" disabled>
+              Allow selected
+            </button>
+          </div>
+        </div>
+
+        <table class="table">
+          <thead>
+            <tr>
+              <th class="table__check">
+                <input type="checkbox" id="check-all" aria-label="Select all">
+              </th>
+              <th>Product</th>
+              <th>Variants</th>
+              <th>Status</th>
+              <th>Shared</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% products.forEach(function (product) { %>
+              <tr>
+                <td class="table__check">
+                  <input
+                    type="checkbox"
+                    class="row-check"
+                    value="<%= product.id %>"
+                    aria-label="Select <%= product.title %>">
+                </td>
+                <td>
+                  <span class="media">
+                    <% if (product.image_url) { %>
+                      <img class="media__thumb" src="<%= product.image_url %>"
+                           alt="" loading="lazy" width="40" height="40">
+                    <% } else { %>
+                      <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                    <% } %>
+                    <span class="media__body">
+                      <span class="table__title"><%= product.title %></span>
+                      <% if (product.vendor) { %>
+                        <span class="muted"><%= product.vendor %></span>
+                      <% } %>
+                    </span>
+                  </span>
+                </td>
+                <td>
+                  <% if (!product.variants.length) { %>
+                    <span class="muted">—</span>
+                  <% } else { %>
+                    <%# allowed_variant_ids is null for "every variant", so a
+                        product not narrowed yet has all of them ticked. %>
+                    <% var picked = product.allowed_variant_ids; %>
+                    <ul class="variants">
+                      <% product.variants.forEach(function (variant) { %>
+                        <li class="variants__row">
+                          <input
+                            type="checkbox"
+                            class="variant-check"
+                            data-product="<%= product.id %>"
+                            value="<%= variant.id %>"
+                            <%= !picked || picked.indexOf(variant.id) !== -1 ? "checked" : "" %>
+                            aria-label="Sync this variant">
+                          <span class="variants__name">
+                            <%# A single default variant is called "Default Title"
+                                by Shopify, which means nothing to a merchant. %>
+                            <%= [variant.option1, variant.option2, variant.option3]
+                                  .filter(Boolean).join(" / ")
+                                || (variant.title === "Default Title" ? "Single variant" : variant.title)
+                                || "—" %>
+                          </span>
+                          <span class="variants__price">
+                            <%= variant.price === null || variant.price === undefined
+                                ? "—" : variant.price %>
+                          </span>
+                          <span class="variants__stock muted">
+                            <%= variant.inventory_quantity === null ||
+                                variant.inventory_quantity === undefined
+                                ? "—" : variant.inventory_quantity + " in stock" %>
+                          </span>
+                          <% if (variant.sku) { %>
+                            <span class="variants__sku"><%= variant.sku %></span>
+                          <% } %>
+                        </li>
+                      <% }); %>
+                    </ul>
+                  <% } %>
+                </td>
+                <td><span class="muted"><%= product.status || "—" %></span></td>
+                <td>
+                  <% if (!product.allowed) { %>
+                    <span class="muted">Not shared</span>
+                  <% } else { %>
+                    <% if (product.synced) { %>
+                      <span class="pill pill--active"><%= product.synced %> synced</span>
+                    <% } %>
+                    <% if (product.awaiting) { %>
+                      <%# Offered, but the destination has not ticked it yet --
+                          nothing the source can do about it. %>
+                      <span class="pill"><%= product.awaiting %> awaiting them</span>
+                    <% } %>
+                    <% if (product.pending) { %>
+                      <span class="pill pill--paused"><%= product.pending %> pending</span>
+                    <% } %>
+                    <% if (product.failed) { %>
+                      <span class="pill pill--failed" title="<%= product.error_message || "" %>">
+                        <%= product.failed %> failed
+                      </span>
+                    <% } %>
+                  <% } %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </section>
+
+    <% } else { %>
+
+      <%# Offered by a source store, not yet accepted here. Nothing has been
+          written to this shop until the merchant ticks it. %>
+      <% if (awaiting.length) { %>
+        <section class="panel">
+          <div class="panel__header">
+            <h2 class="panel__title">
+              Waiting for you (<%= awaiting.length %>)
+            </h2>
+            <div class="panel__add">
+              <button class="btn btn--small" type="button" id="decline-button" disabled>
+                Decline
+              </button>
+              <button class="btn btn--primary btn--small" type="button" id="accept-button" disabled>
+                Add to my store
+              </button>
+            </div>
+          </div>
+
+          <p class="panel__copy">
+            A source store has offered these. Tick the ones you want and press
+            <strong>Sync now</strong> &mdash; nothing is added to your store until
+            you do.
+          </p>
+
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="table__check">
+                  <input type="checkbox" id="check-all-awaiting" aria-label="Select all">
+                </th>
+                <th>Product</th>
+                <th>From</th>
+                <th>Variants offered</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% awaiting.forEach(function (product) { %>
+                <tr>
+                  <td class="table__check">
+                    <input
+                      type="checkbox"
+                      class="awaiting-check"
+                      value="<%= product.mapping_id %>"
+                      aria-label="Accept <%= product.title %>">
+                  </td>
+                  <td>
+                    <span class="media">
+                      <% if (product.image_url) { %>
+                        <img class="media__thumb" src="<%= product.image_url %>"
+                             alt="" loading="lazy" width="40" height="40">
+                      <% } else { %>
+                        <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                      <% } %>
+                      <span class="media__body">
+                        <span class="table__title"><%= product.title %></span>
+                        <% if (product.vendor) { %>
+                          <span class="muted"><%= product.vendor %></span>
+                        <% } %>
+                      </span>
+                    </span>
+                  </td>
+                  <td>
+                    <span class="table__title">
+                      <%= product.source_store_name || product.source_shop_domain %>
+                    </span>
+                    <% if (product.source_store_name) { %>
+                      <span class="muted"><%= product.source_shop_domain %></span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <%= product.offered_variant_count %> variant<%= product.offered_variant_count === 1 ? "" : "s" %>
+                    <% if (product.sync_status === "failed" && product.error_message) { %>
+                      <span class="muted"><%= product.error_message %></span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </section>
+      <% } %>
+
+      <section class="panel">
+        <h2 class="panel__title">
+          In your store (<%= products.length %>)
+        </h2>
+
+        <% if (!products.length) { %>
+          <p class="panel__copy">
+            Nothing accepted yet. Tick a product above to add it.
+          </p>
+        <% } else { %>
+
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>From</th>
+              <th>Variants</th>
+              <th>Status</th>
+              <th>Last synced</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% products.forEach(function (product) { %>
+              <tr>
+                <td>
+                  <span class="media">
+                    <% if (product.image_url) { %>
+                      <img class="media__thumb" src="<%= product.image_url %>"
+                           alt="" loading="lazy" width="40" height="40">
+                    <% } else { %>
+                      <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                    <% } %>
+                    <span class="media__body">
+                      <span class="table__title"><%= product.title %></span>
+                      <% if (product.vendor) { %>
+                        <span class="muted"><%= product.vendor %></span>
+                      <% } %>
+                    </span>
+                  </span>
+                </td>
+                <td>
+                  <%# The point of this screen: which store sent it. %>
+                  <span class="table__title">
+                    <%= product.source_store_name || product.source_shop_domain %>
+                  </span>
+                  <% if (product.source_store_name) { %>
+                    <span class="muted"><%= product.source_shop_domain %></span>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (!product.variants.length) { %>
+                    <span class="muted">—</span>
+                  <% } else { %>
+                    <ul class="variants">
+                      <% product.variants.forEach(function (variant) { %>
+                        <li class="variants__row">
+                          <span class="variants__name">
+                            <%= [variant.option1, variant.option2, variant.option3]
+                                  .filter(Boolean).join(" / ")
+                                || (variant.source_title === "Default Title"
+                                    ? "Single variant" : variant.source_title)
+                                || "—" %>
+                          </span>
+                          <% if (variant.sku) { %>
+                            <span class="variants__sku"><%= variant.sku %></span>
+                          <% } %>
+                          <span class="variants__stock muted">
+                            <%# NULL means the push has not linked this variant
+                                back yet -- the product row is not synced. %>
+                            <%= variant.destination_variant_id ? "linked" : "not linked" %>
+                          </span>
+                        </li>
+                      <% }); %>
+                    </ul>
+                  <% } %>
+                </td>
+                <td>
+                  <span class="pill pill--<%= product.sync_status %>"><%= product.sync_status %></span>
+                  <% if (product.sync_status === "failed" && product.error_message) { %>
+                    <span class="muted"><%= product.error_message %></span>
+                  <% } %>
+                </td>
+                <td class="muted">
+                  <%= product.last_synced_at
+                      ? new Date(product.last_synced_at).toISOString().slice(0, 16).replace("T", " ") + " UTC"
+                      : "—" %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+        <% } %>
+      </section>
+
+    <% } %>
+
+  </main>
+
+  <%# The two roles get different controls, so each is sent only its own. %>
+  <% if (isSource) { %>
+  <script>
+    (function () {
+      var pageError = document.getElementById("page-error");
+
+      function fail(node, message) {
+        node.textContent = message;
+        node.hidden = false;
+      }
+
+      async function post(url, body) {
+        var response = await window.appFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {})
+        });
+        var data = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(data.error || "Request failed");
+        return data;
+      }
+
+      /* ---------------- the table: allow selected ---------------- */
+
+      var allowButton = document.getElementById("allow-button");
+      var checkAll = document.getElementById("check-all");
+
+      function rowChecks() {
+        return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
+      }
+
+      function variantChecks(productId) {
+        return Array.prototype.slice.call(
+          document.querySelectorAll('.variant-check[data-product="' + productId + '"]')
+        );
+      }
+
+      /**
+       * One entry per ticked product. variant_ids is null when every variant is
+       * ticked, which tells the server "all of them, including future ones"
+       * rather than freezing today's list.
+       */
+      function selections() {
+        return rowChecks()
+          .filter(function (c) { return c.checked; })
+          .map(function (c) {
+            var variants = variantChecks(c.value);
+            var ticked = variants.filter(function (v) { return v.checked; });
+
+            return {
+              source_product_id: c.value,
+              variant_ids:
+                variants.length && ticked.length < variants.length
+                  ? ticked.map(function (v) { return v.value; })
+                  : null
+            };
+          });
+      }
+
+      function refreshAllowButton() {
+        if (!allowButton) return;
+
+        var picked = selections();
+        // A product with every variant unticked has nothing to send.
+        var empty = picked.filter(function (s) {
+          return s.variant_ids && !s.variant_ids.length;
+        });
+
+        allowButton.disabled = picked.length === 0 || empty.length > 0;
+        allowButton.textContent = picked.length
+          ? "Allow " + picked.length + " selected"
+          : "Allow selected";
+      }
+
+      rowChecks().forEach(function (check) {
+        check.addEventListener("change", refreshAllowButton);
+      });
+
+      // A variant tick only matters for a product that is itself ticked, but
+      // the button label depends on both.
+      Array.prototype.slice.call(document.querySelectorAll(".variant-check"))
+        .forEach(function (check) {
+          check.addEventListener("change", refreshAllowButton);
+        });
+
+      if (checkAll) {
+        checkAll.addEventListener("change", function () {
+          rowChecks().forEach(function (c) { c.checked = checkAll.checked; });
+          refreshAllowButton();
+        });
+      }
+
+      if (allowButton) {
+        allowButton.addEventListener("click", async function () {
+          pageError.hidden = true;
+          allowButton.disabled = true;
+
+          try {
+            var data = await post("/products/allow", { selections: selections() });
+            window.appToast("Allowed on " + data.destinations + " destination store(s)");
+            window.appNavigate("/products");
+          } catch (err) {
+            allowButton.disabled = false;
+            fail(pageError, err.message);
+          }
+        });
+      }
+
+      /* ---------------- add products (App Bridge resource picker) ---------------- */
+
+      var addButton = document.getElementById("add-button");
+
+      if (!addButton) return;
+
+      addButton.addEventListener("click", async function () {
+        pageError.hidden = true;
+
+        // The picker is provided by the admin, so it only exists when the app
+        // is actually embedded in it.
+        if (!window.shopify || typeof window.shopify.resourcePicker !== "function") {
+          return fail(
+            pageError,
+            "Open this app from your Shopify admin to add products."
+          );
+        }
+
+        var selected;
+
+        try {
+          selected = await window.shopify.resourcePicker({
+            type: "product",
+            multiple: true,
+            action: "add",
+            // Drafts are allowed through: they sync to the destination as
+            // drafts too. An archived product has nothing useful to copy.
+            filter: { archived: false }
+          });
+        } catch (error) {
+          return fail(pageError, "The product picker could not open.");
+        }
+
+        // undefined means the merchant closed it -- a choice, not a failure.
+        if (!selected || !selected.length) return;
+
+        addButton.disabled = true;
+        addButton.textContent = "Adding…";
+
+        try {
+          // Only ids are sent. The server re-reads each product from Shopify,
+          // so nothing the browser says about a title or price is trusted.
+          var data = await post("/products/import", {
+            product_ids: selected.map(function (product) {
+              return String(product.id).split("/").pop();
+            })
+          });
+
+          window.appToast("Added " + data.imported + " product(s)");
+          window.appNavigate("/products");
+        } catch (err) {
+          addButton.disabled = false;
+          addButton.textContent = "+ Add products";
+          fail(pageError, err.message);
+        }
+      });
+    })();
+  </script>
+  <% } else { %>
+  <script>
+    (function () {
+      var acceptButton = document.getElementById("accept-button");
+      var syncButton = document.getElementById("sync-button");
+      var declineButton = document.getElementById("decline-button");
+      var checkAll = document.getElementById("check-all-awaiting");
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      /* ---------------- refresh what is already accepted ---------------- */
+
+      if (syncButton) {
+        syncButton.addEventListener("click", async function () {
+          pageError.hidden = true;
+          syncButton.disabled = true;
+          syncButton.textContent = "Syncing…";
+
+          try {
+            var response = await window.appFetch("/products/sync", { method: "POST" });
+            var data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok) throw new Error(data.error || "Request failed");
+
+            window.appToast(data.synced + " updated, " + data.failed + " failed");
+            window.appNavigate("/products");
+          } catch (err) {
+            syncButton.disabled = false;
+            syncButton.textContent = "Sync now";
+            fail(err.message);
+          }
+        });
+      }
+
+      /* ---------------- accept what is on offer ---------------- */
+
+      // Nothing offered: the rest of this page is a read-only list.
+      if (!acceptButton) return;
+
+      function checks() {
+        return Array.prototype.slice.call(
+          document.querySelectorAll(".awaiting-check")
+        );
+      }
+
+      function chosen() {
+        return checks()
+          .filter(function (c) { return c.checked; })
+          .map(function (c) { return c.value; });
+      }
+
+      function refresh() {
+        var count = chosen().length;
+        acceptButton.disabled = count === 0;
+        declineButton.disabled = count === 0;
+        acceptButton.textContent = count
+          ? "Add " + count + " to my store"
+          : "Add to my store";
+      }
+
+      checks().forEach(function (check) {
+        check.addEventListener("change", refresh);
+      });
+
+      if (checkAll) {
+        checkAll.addEventListener("change", function () {
+          checks().forEach(function (c) { c.checked = checkAll.checked; });
+          refresh();
+        });
+      }
+
+      async function send(url, label) {
+        pageError.hidden = true;
+        acceptButton.disabled = true;
+        declineButton.disabled = true;
+        acceptButton.textContent = label;
+
+        try {
+          var response = await window.appFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mapping_ids: chosen() })
+          });
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) throw new Error(data.error || "Request failed");
+
+          return data;
+        } catch (err) {
+          refresh();
+          fail(err.message);
+          return null;
+        }
+      }
+
+      acceptButton.addEventListener("click", async function () {
+        // Accepting also pulls the products in, so this can take a moment.
+        var data = await send("/products/accept", "Adding…");
+
+        if (!data) return;
+
+        window.appToast(data.synced + " synced, " + data.failed + " failed");
+        window.appNavigate("/products");
+      });
+
+      declineButton.addEventListener("click", async function () {
+        if (!window.confirm(
+          "Stop receiving " + chosen().length + " product(s)?\n\n" +
+          "Anything already in your store stays; it just will not be updated."
+        )) return;
+
+        var data = await send("/products/decline", "Declining…");
+
+        if (!data) return;
+
+        window.appToast("Declined " + data.declined + " product(s)");
+        window.appNavigate("/products");
+      });
+    })();
+  </script>
+  <% } %>
+
+</body>
+
+</html>

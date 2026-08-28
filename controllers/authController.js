@@ -11,9 +11,12 @@ const { parseCookies, setCookie, clearCookie } = require("../utils/cookies");
 
 const STATE_COOKIE = "shopify_oauth_state";
 const STATE_TTL_SECONDS = 600;
+// Read the source catalogue, write it to the destination, and keep stock in
+// step. Changing this forces every merchant to reinstall, so add a scope only
+// when the feature that needs it is actually being built.
 const SCOPES =
   process.env.SHOPIFY_SCOPES ||
-  "read_products,write_content,read_content,write_online_store_pages";
+  "read_products,write_products,read_inventory,write_inventory";
 const REST_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
 
 function appHost() {

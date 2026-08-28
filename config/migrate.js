@@ -168,6 +168,23 @@ const CREATE_PRODUCT_MAPPINGS = `
     sync_status ENUM('pending','synced','failed','skipped','deleted')
                 NOT NULL DEFAULT 'pending',
 
+    -- Which variants of this product may go to the destination, as an array of
+    -- source_variant_mappings ids.
+    --
+    -- NULL means EVERY variant, and is not the same as an empty array. A
+    -- merchant who ticks the product without narrowing it wants new variants
+    -- added at the source to flow too; a merchant who picked three specific
+    -- variants does not.
+    allowed_variant_ids JSON DEFAULT NULL,
+
+    -- When the DESTINATION store agreed to receive this product.
+    --
+    -- The source allowing a product only OFFERS it; nothing is written to the
+    -- destination until its own operator ticks it. NULL means "waiting for
+    -- them". Once set it stays set, so later updates to an accepted product
+    -- flow through without asking again -- which is the point of a sync.
+    accepted_at DATETIME DEFAULT NULL,
+
     source_updated_at DATETIME DEFAULT NULL,
     last_synced_at    DATETIME DEFAULT NULL,
     error_message     TEXT DEFAULT NULL,
@@ -603,6 +620,45 @@ async function linkLineItemsToMappedVariants() {
   );
 }
 
+/** Variant-level selection, added after product_mappings already existed. */
+async function addAllowedVariants() {
+  await safeAlter(
+    "product_mappings.allowed_variant_ids",
+    "ALTER TABLE product_mappings ADD COLUMN allowed_variant_ids JSON DEFAULT NULL"
+  );
+}
+
+/**
+ * Destination-side acceptance.
+ *
+ * Rows that predate this column were pushed under the old rule, where the
+ * source alone decided. Backfilling them as accepted keeps those products
+ * syncing instead of silently stalling until someone re-ticks them.
+ */
+async function addDestinationAcceptance() {
+  await safeAlter(
+    "product_mappings.accepted_at",
+    "ALTER TABLE product_mappings ADD COLUMN accepted_at DATETIME DEFAULT NULL"
+  );
+  await safeAlter(
+    "product_mappings.idx_mapping_accepted",
+    "ALTER TABLE product_mappings ADD INDEX idx_mapping_accepted (connection_id, accepted_at)"
+  );
+
+  const [result] = await require("./db").pool.query(
+    `UPDATE product_mappings
+        SET accepted_at = COALESCE(last_synced_at, created_at)
+      WHERE accepted_at IS NULL
+        AND sync_status IN ('synced', 'failed')`
+  );
+
+  if (result.affectedRows) {
+    console.log(
+      `Migration: marked ${result.affectedRows} already-pushed product(s) as accepted`
+    );
+  }
+}
+
 async function runMigrations() {
   // Parents before children -- a foreign key needs its target to exist.
   await query(CREATE_STORES);
@@ -611,6 +667,8 @@ async function runMigrations() {
   await query(CREATE_STORE_CONNECTIONS);
   await query(CREATE_SOURCE_PRODUCTS);
   await query(CREATE_PRODUCT_MAPPINGS);
+  await addAllowedVariants();
+  await addDestinationAcceptance();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
