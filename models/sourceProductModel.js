@@ -9,7 +9,42 @@ const sourceVariantModel = require("./sourceVariantModel");
 
 function hydrate(row) {
   if (!row) return null;
-  return { ...row, product_data: parseJson(row.product_data, null) };
+
+  return {
+    ...row,
+    product_data: parseJson(row.product_data, null),
+    // NULL stays NULL: it means "every variant", which an empty array would
+    // quietly turn into "none".
+    selected_variant_ids:
+      row.selected_variant_ids === null || row.selected_variant_ids === undefined
+        ? null
+        : parseJson(row.selected_variant_ids, null),
+  };
+}
+
+/**
+ * Record which variants the merchant ticked in the resource picker.
+ *
+ * An empty list, or one covering every variant the product has, is stored as
+ * NULL -- "all of them, including ones added at the source later". Freezing
+ * today's full list would quietly stop a new variant from ever flowing.
+ */
+async function setSelectedVariants(id, ids, totalVariants = null) {
+  const list = [...new Set((ids || []).map(Number))]
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .sort((a, b) => a - b);
+
+  const store =
+    !list.length || (totalVariants !== null && list.length >= totalVariants)
+      ? null
+      : JSON.stringify(list);
+
+  await query("UPDATE source_products SET selected_variant_ids = ? WHERE id = ?", [
+    store,
+    id,
+  ]);
+
+  return findById(id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -56,6 +91,7 @@ async function listWithMappingStatus(storeId, { limit = 100, offset = 0 } = {}) 
   const rows = await query(
     `SELECT sp.id, sp.shopify_product_id, sp.title, sp.handle, sp.vendor,
             sp.product_type, sp.status, sp.shopify_updated_at, sp.last_fetched_at,
+            sp.selected_variant_ids,
             JSON_UNQUOTE(JSON_EXTRACT(sp.product_data, '$.image')) AS image_url,
             COUNT(pm.id) AS allowed,
             SUM(pm.sync_status = 'synced')  AS synced,
@@ -88,8 +124,15 @@ async function listWithMappingStatus(storeId, { limit = 100, offset = 0 } = {}) 
     awaiting: Number(row.awaiting || 0),
     failed: Number(row.failed || 0),
     variant_count: Number(row.variant_count || 0),
-    // null means "every variant" -- kept distinct from an empty list.
+    // Both use null for "every variant" -- kept distinct from an empty list.
     allowed_variant_ids: parseJson(row.allowed_variant_ids, null),
+    selected_variant_ids: parseJson(row.selected_variant_ids, null),
+    // What is actually going out. Once the product is shared the mapping is
+    // authoritative; before that, the picker's choice is all there is.
+    effective_variant_ids:
+      Number(row.allowed || 0) > 0
+        ? parseJson(row.allowed_variant_ids, null)
+        : parseJson(row.selected_variant_ids, null),
   }));
 }
 
@@ -116,8 +159,16 @@ async function listSyncedIntoStore(destinationStoreId, { limit = 100, offset = 0
                 AND (pm.allowed_variant_ids IS NULL
                      OR JSON_CONTAINS(pm.allowed_variant_ids, CAST(svm.id AS CHAR))))
               AS offered_variant_count,
-            sp.title, sp.handle, sp.vendor, sp.product_type,
+            sp.title, sp.handle, sp.vendor, sp.product_type, sp.status,
             JSON_UNQUOTE(JSON_EXTRACT(sp.product_data, '$.image')) AS image_url,
+            -- Stock across the variants actually on offer, not the whole
+            -- product: the rest are not coming to this store.
+            (SELECT COALESCE(SUM(svm.inventory_quantity), 0)
+               FROM source_variant_mappings svm
+              WHERE svm.source_product_id = sp.id
+                AND (pm.allowed_variant_ids IS NULL
+                     OR JSON_CONTAINS(pm.allowed_variant_ids, CAST(svm.id AS CHAR))))
+              AS inventory,
             src.shop_domain AS source_shop_domain,
             src.store_name  AS source_store_name,
             (SELECT COUNT(*) FROM mapping_variant_products mvp
@@ -136,9 +187,16 @@ async function listSyncedIntoStore(destinationStoreId, { limit = 100, offset = 0
     ...row,
     variant_count: Number(row.variant_count || 0),
     offered_variant_count: Number(row.offered_variant_count || 0),
+    inventory: Number(row.inventory || 0),
     // The destination has not agreed to this one yet.
     awaiting: row.accepted_at === null,
   }));
+}
+
+/** One offered product, scoped to the store it was offered to. */
+async function findOfferedByMapping(destinationStoreId, mappingId) {
+  const rows = await listSyncedIntoStore(destinationStoreId, { limit: 500 });
+  return rows.find((row) => Number(row.mapping_id) === Number(mappingId)) || null;
 }
 
 async function countForStore(storeId) {
@@ -313,6 +371,8 @@ module.exports = {
   listForStore,
   listWithMappingStatus,
   listSyncedIntoStore,
+  findOfferedByMapping,
+  setSelectedVariants,
   countForStore,
   iterateForStore,
   upsert,

@@ -66,6 +66,44 @@ async function findById(id) {
   return hydrate(rows[0]);
 }
 
+/**
+ * The mappings that produced a given product IN a destination store.
+ *
+ * Scoped by store because a destination product id is only unique within its
+ * own shop -- two different destinations can both hold product #700.
+ */
+async function findByDestinationProductId(destinationStoreId, destinationProductId) {
+  const rows = await query(
+    `SELECT m.* FROM product_mappings m
+       JOIN store_connections c ON c.id = m.connection_id
+      WHERE c.destination_store_id = ?
+        AND m.destination_shopify_product_id = ?`,
+    [destinationStoreId, toShopifyId(destinationProductId)]
+  );
+  return rows.map(hydrate);
+}
+
+/**
+ * The destination's own merchant deleted the product we created there.
+ *
+ * Treated as a withdrawal, not as damage to repair: the link to a product that
+ * no longer exists is cleared and the offer goes back to "waiting for you".
+ * Re-creating it on the next sync would keep overruling a deliberate deletion.
+ */
+async function markGoneFromDestination(id) {
+  await query(
+    `UPDATE product_mappings
+        SET destination_shopify_product_id = NULL,
+            accepted_at = NULL,
+            sync_status = IF(sync_status = 'deleted', 'deleted', 'skipped'),
+            last_synced_at = NULL
+      WHERE id = ?`,
+    [id]
+  );
+
+  return findById(id);
+}
+
 /** Every connection that already carries this source product. */
 async function listForSourceProduct(sourceProductId) {
   const rows = await query(
@@ -220,7 +258,12 @@ async function ensure({
      VALUES (?, ?, ?, 'pending', ?, ?)
      ON DUPLICATE KEY UPDATE
        source_product_id = VALUES(source_product_id),
-       allowed_variant_ids = VALUES(allowed_variant_ids),
+       -- COALESCE, not VALUES(): allowing a product again from the table sends
+       -- no variant selection, and that must not wipe out one made on the
+       -- product's own page. Widening back to all is resetAllowedVariants...'s
+       -- job, which says so explicitly.
+       allowed_variant_ids =
+         COALESCE(VALUES(allowed_variant_ids), allowed_variant_ids),
        -- Re-allowing a product queues it again: the selection may have
        -- changed, and a 'synced' row would otherwise never be pushed.
        sync_status = IF(sync_status = 'deleted', 'deleted', 'pending')`,
@@ -257,6 +300,93 @@ async function requeueForSourceProduct(sourceProductId) {
   );
 
   return result.affectedRows;
+}
+
+/**
+ * Push one selection onto every live mapping of a product.
+ *
+ * The picker edits the product's own choice; this carries it onto the mappings,
+ * which is what the push reads. Without it an already-shared product would keep
+ * sending yesterday's variants.
+ */
+async function setAllowedVariantsForProduct(sourceProductId, ids) {
+  const mappings = await listForSourceProduct(sourceProductId);
+  let changed = 0;
+
+  for (const mapping of mappings) {
+    // 'deleted' is a one-way door -- the product is gone at the source.
+    if (mapping.sync_status === "deleted") continue;
+
+    await setAllowedVariants(mapping.id, ids);
+    changed += 1;
+  }
+
+  return changed;
+}
+
+/**
+ * Widen a product back to ALL its variants, on every connection.
+ *
+ * The Products table hides variants that are not shared, so once a product is
+ * narrowed there is no checkbox left to tick the others back on. This is the
+ * way out of that: without it, a mistaken selection could only be undone in
+ * the database.
+ */
+async function resetAllowedVariantsForProduct(sourceProductId) {
+  const [result] = await pool.query(
+    `UPDATE product_mappings
+        SET allowed_variant_ids = NULL,
+            sync_status = IF(sync_status = 'deleted', 'deleted', 'pending')
+      WHERE source_product_id = ?
+        AND allowed_variant_ids IS NOT NULL`,
+    [sourceProductId]
+  );
+
+  return result.affectedRows;
+}
+
+/**
+ * Stop sharing ONE variant of a product, on every connection.
+ *
+ * A mapping with no selection means "every variant", so removing one has to
+ * write out the remaining list explicitly -- there is no way to say "all
+ * except this" in the column.
+ *
+ * Refuses to empty a product: a product with no variants cannot be pushed, and
+ * productSet would strip the destination's copy down to nothing. Removing the
+ * last variant is what Delete on the product itself is for.
+ */
+async function removeAllowedVariant(sourceProductId, variantId, allVariantIds) {
+  const removing = Number(variantId);
+  const every = (allVariantIds || []).map(Number);
+
+  const mappings = await listForSourceProduct(sourceProductId);
+  let changed = 0;
+
+  for (const mapping of mappings) {
+    if (mapping.sync_status === "deleted") continue;
+
+    const current = mapping.allowed_variant_ids
+      ? mapping.allowed_variant_ids.map(Number)
+      : every;
+
+    const next = current.filter((id) => id !== removing);
+
+    if (next.length === current.length) continue; // was not shared anyway
+
+    if (!next.length) {
+      const error = new Error(
+        "This is the only variant being shared. Delete the product instead."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    await setAllowedVariants(mapping.id, next);
+    changed += 1;
+  }
+
+  return changed;
 }
 
 /** Change which variants may go out, without touching anything else. */
@@ -323,7 +453,9 @@ async function markDeleted(id) {
 module.exports = {
   SYNC_STATUSES,
   findBySourceProductId,
+  findByDestinationProductId,
   findById,
+  markGoneFromDestination,
   listForSourceProduct,
   listForConnection,
   countForConnection,
@@ -331,6 +463,9 @@ module.exports = {
   toAllowedVariants,
   ensure,
   setAllowedVariants,
+  setAllowedVariantsForProduct,
+  removeAllowedVariant,
+  resetAllowedVariantsForProduct,
   requeueForSourceProduct,
   acceptForDestination,
   declineForDestination,

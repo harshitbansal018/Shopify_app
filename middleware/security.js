@@ -20,4 +20,20 @@ function frameAncestors(req, res, next) {
   next();
 }
 
-module.exports = { frameAncestors };
+/**
+ * Never let a browser cache an app screen.
+ *
+ * Every screen is per-merchant and per-moment, and appNavigate() reuses the
+ * same id_token for its ~1 minute lifetime -- so navigating right after an
+ * action lands on the SAME URL. Without this the browser answers it from
+ * cache and shows the state from BEFORE the action, which is why a manual
+ * reload appeared to fix things.
+ *
+ * Mount it after express.static so CSS and JS still cache normally.
+ */
+function noStore(req, res, next) {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+}
+
+module.exports = { frameAncestors, noStore };

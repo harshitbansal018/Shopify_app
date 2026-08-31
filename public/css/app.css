@@ -31,7 +31,7 @@ body {
 /* ---------------- layout ---------------- */
 
 .shell {
-  max-width: 900px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 1.75rem 1.25rem 4rem;
 }
@@ -581,6 +581,52 @@ body {
 .variant-check {
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* ---------------- tabs ---------------- */
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.tabs__tab {
+  padding: 0.4rem 0.85rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tabs__tab:hover {
+  background: var(--line-soft);
+  color: var(--text);
+}
+
+.tabs__tab--on {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+/* Zero stock is worth noticing before accepting a product. */
+.stock--none {
+  color: var(--danger);
+}
+
+.table__actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.table__actions .btn + .btn {
+  margin-left: 0.35rem;
 }
 
 /* ---------------- product thumbnail ---------------- */

@@ -5,7 +5,7 @@ const path = require("path");
 
 const { assertConnection } = require("./config/db");
 const { runMigrations } = require("./config/migrate");
-const { frameAncestors } = require("./middleware/security");
+const { frameAncestors, noStore } = require("./middleware/security");
 const { serializeForScript } = require("./utils/html");
 
 const authRoutes = require("./routes/authRoute");
@@ -57,6 +57,10 @@ app.use(frameAncestors);
 
 /* ---------------- STATIC ---------------- */
 app.use(express.static(path.join(__dirname, "public")));
+
+/* ---------------- NO CACHING OF SCREENS ----------------
+   After express.static, so CSS and JS still cache normally. */
+app.use(noStore);
 
 /* ---------------- ROUTES ----------------
    Add feature routes here, e.g.:

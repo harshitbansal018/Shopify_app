@@ -66,6 +66,7 @@ app.locals.json = serializeForScript;
 app.use("/webhooks", webhookRoutes);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(require(path.join(SERVER, "middleware/security")).noStore);
 
 app.get("/api/auth/install", authController.installApp);
 app.get("/api/auth/callback", authController.callback);
@@ -344,12 +345,64 @@ function check(name, condition, detail) {
       html.includes('target="_top"')
     );
 
-    // Callback with no state cookie must be rejected.
+    // Screens must never be cached. appNavigate reuses the same id_token for
+    // its ~1 minute lifetime, so an action followed by a navigation hits the
+    // SAME URL -- a cached answer would show the state from before the action.
+    res = await fetch(`${base}/api/auth/install?shop=good-shop.myshopify.com`, {
+      redirect: "manual",
+    });
+
+    check(
+      "app screens are never cached",
+      res.headers.get("cache-control") === "no-store",
+      `got ${res.headers.get("cache-control")}`
+    );
+
+    // A callback with no state cookie is NOT trusted -- but it is also not a
+    // dead end. The usual cause is the 10-minute cookie expiring while the
+    // merchant was elsewhere, so the flow restarts instead of showing them a
+    // white page they cannot act on.
     res = await fetch(
       `${base}/api/auth/callback?shop=good-shop.myshopify.com&code=abc&state=deadbeef&hmac=00`,
       { redirect: "manual" }
     );
-    check("callback without state cookie -> 403", res.status === 403, `got ${res.status}`);
+
+    check("callback without state cookie is not accepted",
+      res.status === 401, `got ${res.status}`);
+
+    const restartHtml = await res.text();
+
+    check(
+      "it restarts OAuth instead of dead-ending",
+      restartHtml.includes("/api/auth/install"),
+      "the merchant was left with no way forward"
+    );
+    check(
+      "and breaks out of the frame to do it",
+      restartHtml.includes("window.top.location.href"),
+      "accounts.shopify.com refuses to be framed"
+    );
+    check(
+      "the shop is carried into the restart",
+      restartHtml.includes("good-shop.myshopify.com")
+    );
+    check(
+      "the unverified code is never echoed back",
+      !restartHtml.includes("code=abc"),
+      "an unverified authorization code was reflected into the page"
+    );
+
+    // A state that is PRESENT but wrong is different: something was tampered
+    // with, and restarting would loop. That one still stops dead.
+    res = await fetch(
+      `${base}/api/auth/callback?shop=good-shop.myshopify.com&code=abc&state=deadbeef&hmac=00`,
+      {
+        redirect: "manual",
+        headers: { cookie: "shopify_oauth_state=notthesame:good-shop.myshopify.com" },
+      }
+    );
+    check("a mismatched state is still refused outright",
+      res.status === 403, `got ${res.status}`);
   }
 
   // Drop keep-alive sockets and let libuv finish closing them before the

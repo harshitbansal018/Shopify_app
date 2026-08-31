@@ -63,10 +63,25 @@ exports.productsUpdate = async (req, res) => {
   try {
     const store = await storeModel.findByDomain(shop);
 
-    // Registered on every store, but only a source has products worth
-    // reacting to. This is also the loop-breaker: a product we just wrote to a
-    // destination fires this webhook straight back at us.
-    if (!store || store.store_type !== "source") return;
+    if (!store) return;
+
+    // A DESTINATION firing this is usually our own push echoing back, but it
+    // is also how a merchant deleting a variant in their own admin reaches us.
+    // Reconciling is safe: it makes no Shopify call and queues no push, so it
+    // cannot loop.
+    if (store.store_type === "destination") {
+      const echo = await productSync.applyDestinationUpdate(store.id, payload);
+
+      if (echo && echo.dropped) {
+        console.log(
+          `products/update ${shop} #${payload.id}: ` +
+            `${echo.dropped} variant(s) no longer in the destination store`
+        );
+      }
+      return;
+    }
+
+    if (store.store_type !== "source") return;
 
     const result = await productSync.applySourceUpdate(store.id, payload);
 
@@ -94,7 +109,24 @@ exports.productsDelete = async (req, res) => {
   try {
     const store = await storeModel.findByDomain(shop);
 
-    if (!store || store.store_type !== "source") return;
+    if (!store) return;
+
+    // The destination's own merchant deleted a product we created there. The
+    // offer goes back to "waiting for you" rather than being pushed again --
+    // re-creating it would be the app overruling a deliberate deletion.
+    if (store.store_type === "destination") {
+      const gone = await productSync.applyDestinationDelete(store.id, payload.id);
+
+      if (gone) {
+        console.log(
+          `products/delete ${shop} #${payload.id}: ` +
+            `${gone.mappings} offer(s) returned to waiting`
+        );
+      }
+      return;
+    }
+
+    if (store.store_type !== "source") return;
 
     // The mapping rows are marked, never deleted: they record what this
     // product became on each destination, which a hard delete would lose.

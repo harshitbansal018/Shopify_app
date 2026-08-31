@@ -47,28 +47,38 @@
       </p>
     <% } %>
 
-    <%# A destination with nothing accepted but something OFFERED is not empty
-        -- that is the normal first-run state, and hiding the offer behind an
-        empty screen would leave the merchant with nothing to click. %>
-    <% if (!products.length && (isSource || !awaiting.length)) { %>
+    <%# Only the source gets a whole-screen empty state. A destination always
+        shows its tabs, because "nothing here" on one of them is itself the
+        answer and the other tab may still have something. %>
+        <% if (isSource && !counts.shared && !counts.unshared) { %>
+
 
       <section class="empty">
-        <h2><%= isSource ? "No products yet" : "Nothing synced yet" %></h2>
+        <h2>No products yet</h2>
         <p>
-          <% if (isSource) { %>
-            Use <strong>Add products</strong> to pull products in from this
-            store's Shopify catalogue. Nothing is sent anywhere until you allow
-            it.
-          <% } else { %>
-            When a connected source store syncs a product, it appears here with
-            the store it came from.
-          <% } %>
+          Use <strong>Add products</strong> to pull products in from this
+          store's Shopify catalogue. Nothing is sent anywhere until you allow
+          it.
         </p>
       </section>
 
     <% } else if (isSource) { %>
+            <nav class="tabs">
+        <button
+          class="tabs__tab<%= tab === "shared" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="shared">
+          Shared (<%= counts.shared %>)
+        </button>
+        <button
+          class="tabs__tab<%= tab === "unshared" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="unshared">
+          Unshared (<%= counts.unshared %>)
+        </button>
+      </nav>
+
 
       <section class="panel">
+        <% if (tab === "unshared" && products.length) { %>
         <div class="panel__header">
           <h2 class="panel__title"><%= products.length %> product<%= products.length === 1 ? "" : "s" %></h2>
           <div class="panel__add">
@@ -77,29 +87,46 @@
             </button>
           </div>
         </div>
+         <% } %>
+
+        <% if (!products.length) { %>
+
+          <p class="panel__copy">
+            <%= tab === "unshared"
+                ? "Everything staged here is already shared. Use Add products to bring in more."
+                : "Nothing shared yet. Tick a product on the Unshared tab and press Allow selected." %>
+          </p>
+
+        <% } else { %>
 
         <table class="table">
           <thead>
             <tr>
-              <th class="table__check">
-                <input type="checkbox" id="check-all" aria-label="Select all">
-              </th>
+              <%# Nothing to tick on the Shared tab: those are already out. %>
+              <% if (tab === "unshared") { %>
+                <th class="table__check">
+                  <input type="checkbox" id="check-all" aria-label="Select all">
+                </th>
+              <% } %>
               <th>Product</th>
               <th>Variants</th>
               <th>Status</th>
               <th>Shared</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             <% products.forEach(function (product) { %>
               <tr>
-                <td class="table__check">
-                  <input
-                    type="checkbox"
-                    class="row-check"
-                    value="<%= product.id %>"
-                    aria-label="Select <%= product.title %>">
-                </td>
+                <% if (tab === "unshared") { %>
+                  <td class="table__check">
+                    <input
+                      type="checkbox"
+                      class="row-check"
+                      value="<%= product.id %>"
+                      aria-label="Select <%= product.title %>">
+                  </td>
+                <% } %>
                 <td>
                   <span class="media">
                     <% if (product.image_url) { %>
@@ -117,45 +144,11 @@
                   </span>
                 </td>
                 <td>
-                  <% if (!product.variants.length) { %>
-                    <span class="muted">—</span>
-                  <% } else { %>
-                    <%# allowed_variant_ids is null for "every variant", so a
-                        product not narrowed yet has all of them ticked. %>
-                    <% var picked = product.allowed_variant_ids; %>
-                    <ul class="variants">
-                      <% product.variants.forEach(function (variant) { %>
-                        <li class="variants__row">
-                          <input
-                            type="checkbox"
-                            class="variant-check"
-                            data-product="<%= product.id %>"
-                            value="<%= variant.id %>"
-                            <%= !picked || picked.indexOf(variant.id) !== -1 ? "checked" : "" %>
-                            aria-label="Sync this variant">
-                          <span class="variants__name">
-                            <%# A single default variant is called "Default Title"
-                                by Shopify, which means nothing to a merchant. %>
-                            <%= [variant.option1, variant.option2, variant.option3]
-                                  .filter(Boolean).join(" / ")
-                                || (variant.title === "Default Title" ? "Single variant" : variant.title)
-                                || "—" %>
-                          </span>
-                          <span class="variants__price">
-                            <%= variant.price === null || variant.price === undefined
-                                ? "—" : variant.price %>
-                          </span>
-                          <span class="variants__stock muted">
-                            <%= variant.inventory_quantity === null ||
-                                variant.inventory_quantity === undefined
-                                ? "—" : variant.inventory_quantity + " in stock" %>
-                          </span>
-                          <% if (variant.sku) { %>
-                            <span class="variants__sku"><%= variant.sku %></span>
-                          <% } %>
-                        </li>
-                      <% }); %>
-                    </ul>
+                  <%# Just the count here; the variants themselves live on the
+                      product's own page, behind View. %>
+                  <%= product.variants.length %>
+                  <% if (product.variants.length < product.variant_count) { %>
+                    <span class="muted">of <%= product.variant_count %></span>
                   <% } %>
                 </td>
                 <td><span class="muted"><%= product.status || "—" %></span></td>
@@ -181,52 +174,99 @@
                     <% } %>
                   <% } %>
                 </td>
+                <td class="table__actions">
+                  <button
+                    class="btn btn--small view-product"
+                    type="button"
+                    data-product="<%= product.id %>">
+                    View
+                  </button>
+                  <button
+                    class="btn btn--small btn--danger delete-product"
+                    type="button"
+                    data-product="<%= product.id %>"
+                    data-title="<%= product.title %>"
+                    data-synced="<%= product.synced %>">
+                    Delete
+                  </button>
+                </td>
               </tr>
             <% }); %>
           </tbody>
         </table>
+        <% } %>
       </section>
 
     <% } else { %>
 
-      <%# Offered by a source store, not yet accepted here. Nothing has been
-          written to this shop until the merchant ticks it. %>
-      <% if (awaiting.length) { %>
-        <section class="panel">
+      <%# One table, two tabs. "Unsynced" is what a source has offered and this
+          store has not accepted; nothing of it has been written here yet. %>
+      <nav class="tabs">
+        <button
+          class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="synced">
+          Synced (<%= counts.synced %>)
+        </button>
+        <button
+          class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="unsynced">
+          Unsynced (<%= counts.unsynced %>)
+        </button>
+      </nav>
+
+      <section class="panel">
+
+        <%# Only when there is something to act on: buttons over an empty list
+            are just dead controls. %>
+        <% if (tab === "unsynced" && products.length) { %>
           <div class="panel__header">
-            <h2 class="panel__title">
-              Waiting for you (<%= awaiting.length %>)
-            </h2>
+            <p class="panel__copy">
+              A source store has offered these. Tick the ones you want and press
+              <strong>Sync selected</strong> &mdash; nothing is added to your
+              store until you do.
+            </p>
             <div class="panel__add">
               <button class="btn btn--small" type="button" id="decline-button" disabled>
                 Decline
               </button>
               <button class="btn btn--primary btn--small" type="button" id="accept-button" disabled>
-                Add to my store
+                Sync selected
               </button>
             </div>
           </div>
+        <% } %>
+
+        <% if (!products.length) { %>
 
           <p class="panel__copy">
-            A source store has offered these. Tick the ones you want and press
-            <strong>Sync now</strong> &mdash; nothing is added to your store until
-            you do.
+            <%= tab === "unsynced"
+                ? "Nothing is waiting for you. When a source store offers a product it appears here."
+                : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
           </p>
 
-          <table class="table">
-            <thead>
-              <tr>
+        <% } else { %>
+
+        <table class="table">
+          <thead>
+            <tr>
+              <% if (tab === "unsynced") { %>
                 <th class="table__check">
                   <input type="checkbox" id="check-all-awaiting" aria-label="Select all">
                 </th>
-                <th>Product</th>
-                <th>From</th>
-                <th>Variants offered</th>
-              </tr>
-            </thead>
-            <tbody>
-              <% awaiting.forEach(function (product) { %>
-                <tr>
+              <% } %>
+              <th>Product</th>
+              <th>Source store</th>
+              <th>Inventory</th>
+              <th>Total variants</th>
+              <th>Status</th>
+              <th>Actions</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% products.forEach(function (product) { %>
+              <tr>
+                <% if (tab === "unsynced") { %>
                   <td class="table__check">
                     <input
                       type="checkbox"
@@ -234,67 +274,7 @@
                       value="<%= product.mapping_id %>"
                       aria-label="Accept <%= product.title %>">
                   </td>
-                  <td>
-                    <span class="media">
-                      <% if (product.image_url) { %>
-                        <img class="media__thumb" src="<%= product.image_url %>"
-                             alt="" loading="lazy" width="40" height="40">
-                      <% } else { %>
-                        <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
-                      <% } %>
-                      <span class="media__body">
-                        <span class="table__title"><%= product.title %></span>
-                        <% if (product.vendor) { %>
-                          <span class="muted"><%= product.vendor %></span>
-                        <% } %>
-                      </span>
-                    </span>
-                  </td>
-                  <td>
-                    <span class="table__title">
-                      <%= product.source_store_name || product.source_shop_domain %>
-                    </span>
-                    <% if (product.source_store_name) { %>
-                      <span class="muted"><%= product.source_shop_domain %></span>
-                    <% } %>
-                  </td>
-                  <td>
-                    <%= product.offered_variant_count %> variant<%= product.offered_variant_count === 1 ? "" : "s" %>
-                    <% if (product.sync_status === "failed" && product.error_message) { %>
-                      <span class="muted"><%= product.error_message %></span>
-                    <% } %>
-                  </td>
-                </tr>
-              <% }); %>
-            </tbody>
-          </table>
-        </section>
-      <% } %>
-
-      <section class="panel">
-        <h2 class="panel__title">
-          In your store (<%= products.length %>)
-        </h2>
-
-        <% if (!products.length) { %>
-          <p class="panel__copy">
-            Nothing accepted yet. Tick a product above to add it.
-          </p>
-        <% } else { %>
-
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>From</th>
-              <th>Variants</th>
-              <th>Status</th>
-              <th>Last synced</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% products.forEach(function (product) { %>
-              <tr>
+                <% } %>
                 <td>
                   <span class="media">
                     <% if (product.image_url) { %>
@@ -313,50 +293,33 @@
                 </td>
                 <td>
                   <%# The point of this screen: which store sent it. %>
-                  <span class="table__title">
-                    <%= product.source_store_name || product.source_shop_domain %>
+                  <%= product.source_store_name || product.source_shop_domain %>
+                </td>
+                <td>
+                  <%# Red at zero: a product with no stock will sync but sell
+                      nothing, and that is worth noticing before accepting. %>
+                  <span class="<%= product.inventory ? "" : "stock--none" %>">
+                    <%= product.inventory %> in stock
                   </span>
-                  <% if (product.source_store_name) { %>
-                    <span class="muted"><%= product.source_shop_domain %></span>
-                  <% } %>
                 </td>
+                <td><%= product.offered_variant_count %></td>
                 <td>
-                  <% if (!product.variants.length) { %>
-                    <span class="muted">—</span>
+                  <% if (tab === "unsynced") { %>
+                    <span class="pill"><%= (product.status || "").toUpperCase() || "—" %></span>
                   <% } else { %>
-                    <ul class="variants">
-                      <% product.variants.forEach(function (variant) { %>
-                        <li class="variants__row">
-                          <span class="variants__name">
-                            <%= [variant.option1, variant.option2, variant.option3]
-                                  .filter(Boolean).join(" / ")
-                                || (variant.source_title === "Default Title"
-                                    ? "Single variant" : variant.source_title)
-                                || "—" %>
-                          </span>
-                          <% if (variant.sku) { %>
-                            <span class="variants__sku"><%= variant.sku %></span>
-                          <% } %>
-                          <span class="variants__stock muted">
-                            <%# NULL means the push has not linked this variant
-                                back yet -- the product row is not synced. %>
-                            <%= variant.destination_variant_id ? "linked" : "not linked" %>
-                          </span>
-                        </li>
-                      <% }); %>
-                    </ul>
+                    <span class="pill pill--<%= product.sync_status %>"><%= product.sync_status %></span>
+                    <% if (product.sync_status === "failed" && product.error_message) { %>
+                      <span class="muted"><%= product.error_message %></span>
+                    <% } %>
                   <% } %>
                 </td>
-                <td>
-                  <span class="pill pill--<%= product.sync_status %>"><%= product.sync_status %></span>
-                  <% if (product.sync_status === "failed" && product.error_message) { %>
-                    <span class="muted"><%= product.error_message %></span>
-                  <% } %>
-                </td>
-                <td class="muted">
-                  <%= product.last_synced_at
-                      ? new Date(product.last_synced_at).toISOString().slice(0, 16).replace("T", " ") + " UTC"
-                      : "—" %>
+                <td class="table__actions">
+                  <button
+                    class="btn btn--small view-product"
+                    type="button"
+                    data-product="<%= product.mapping_id %>">
+                    View
+                  </button>
                 </td>
               </tr>
             <% }); %>
@@ -400,59 +363,34 @@
         return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
       }
 
-      function variantChecks(productId) {
-        return Array.prototype.slice.call(
-          document.querySelectorAll('.variant-check[data-product="' + productId + '"]')
-        );
-      }
-
       /**
-       * One entry per ticked product. variant_ids is null when every variant is
-       * ticked, which tells the server "all of them, including future ones"
-       * rather than freezing today's list.
+       * One entry per ticked product, always offering EVERY variant.
+       *
+       * variant_ids is null on purpose: the table shares whole products, and
+       * dropping individual variants happens on the product's own page. The
+       * server keeps any narrowing already made rather than overwriting it.
        */
       function selections() {
         return rowChecks()
           .filter(function (c) { return c.checked; })
           .map(function (c) {
-            var variants = variantChecks(c.value);
-            var ticked = variants.filter(function (v) { return v.checked; });
-
-            return {
-              source_product_id: c.value,
-              variant_ids:
-                variants.length && ticked.length < variants.length
-                  ? ticked.map(function (v) { return v.value; })
-                  : null
-            };
+            return { source_product_id: c.value, variant_ids: null };
           });
       }
 
       function refreshAllowButton() {
         if (!allowButton) return;
 
-        var picked = selections();
-        // A product with every variant unticked has nothing to send.
-        var empty = picked.filter(function (s) {
-          return s.variant_ids && !s.variant_ids.length;
-        });
-
-        allowButton.disabled = picked.length === 0 || empty.length > 0;
-        allowButton.textContent = picked.length
-          ? "Allow " + picked.length + " selected"
+        var count = selections().length;
+        allowButton.disabled = count === 0;
+        allowButton.textContent = count
+          ? "Allow " + count + " selected"
           : "Allow selected";
       }
 
       rowChecks().forEach(function (check) {
         check.addEventListener("change", refreshAllowButton);
       });
-
-      // A variant tick only matters for a product that is itself ticked, but
-      // the button label depends on both.
-      Array.prototype.slice.call(document.querySelectorAll(".variant-check"))
-        .forEach(function (check) {
-          check.addEventListener("change", refreshAllowButton);
-        });
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
@@ -469,13 +407,71 @@
           try {
             var data = await post("/products/allow", { selections: selections() });
             window.appToast("Allowed on " + data.destinations + " destination store(s)");
-            window.appNavigate("/products");
+            // They have moved to the other tab, so follow them there.
+            window.appNavigate("/products?tab=shared");
           } catch (err) {
             allowButton.disabled = false;
             fail(pageError, err.message);
           }
         });
       }
+
+      /** "gid://shopify/Product/900" -> "900" */
+      function numericId(gid) {
+        return String(gid).split("/").pop();
+      }
+
+      /* ---------------- tabs ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            // A real navigation, not a class toggle: the two tabs hold
+            // different rows and the server decides which ones.
+            window.appNavigate("/products?tab=" + button.dataset.tab);
+          });
+        });
+
+      /* ---------------- row actions: view / delete ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".view-product"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            window.appNavigate("/products/" + button.dataset.product);
+          });
+        });
+
+      Array.prototype.slice.call(document.querySelectorAll(".delete-product"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            var synced = Number(button.dataset.synced) || 0;
+
+            // This removes the product from OTHER merchants' stores, so say so
+            // in as many words before doing it.
+            if (!window.confirm(
+              'Delete "' + button.dataset.title + '"?\n\n' +
+              (synced
+                ? "It will be PERMANENTLY DELETED from " + synced +
+                  " destination store(s), along with its variants and images.\n\n"
+                : "") +
+              "It will also be removed from this list. This cannot be undone."
+            )) return;
+
+            pageError.hidden = true;
+            button.disabled = true;
+            button.textContent = "Deleting…";
+
+            try {
+              var data = await post("/products/" + button.dataset.product + "/delete");
+              window.appToast("Deleted from " + data.deleted + " store(s)");
+              window.appNavigate("/products");
+            } catch (err) {
+              button.disabled = false;
+              button.textContent = "Delete";
+              fail(pageError, err.message);
+            }
+          });
+        });
 
       /* ---------------- add products (App Bridge resource picker) ---------------- */
 
@@ -498,6 +494,14 @@
         var selected;
 
         try {
+          // "product", not "variant": this picker groups variants under their
+          // product with names, images and search. The variant picker renders
+          // a flat list with none of that.
+          //
+          // Deliberately NOT pre-ticked with what is already staged. Doing so
+          // made the picker hand every staged product back on every Add, and
+          // the server then re-imported the whole catalogue to add one thing.
+          // Opening blank means only what the merchant just picked is sent.
           selected = await window.shopify.resourcePicker({
             type: "product",
             multiple: true,
@@ -517,11 +521,17 @@
         addButton.textContent = "Adding…";
 
         try {
-          // Only ids are sent. The server re-reads each product from Shopify,
-          // so nothing the browser says about a title or price is trusted.
+          // Only ids are sent -- the product's, and whichever of its variants
+          // were ticked. The server re-reads everything else from Shopify, so
+          // nothing the browser says about a title or a price is trusted.
           var data = await post("/products/import", {
-            product_ids: selected.map(function (product) {
-              return String(product.id).split("/").pop();
+            products: selected.map(function (product) {
+              return {
+                id: numericId(product.id),
+                variant_ids: (product.variants || []).map(function (variant) {
+                  return numericId(variant.id);
+                })
+              };
             })
           });
 
@@ -548,6 +558,26 @@
         pageError.textContent = message;
         pageError.hidden = false;
       }
+
+      /* ---------------- tabs ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            // A real navigation, not a class toggle: the two tabs hold
+            // different rows and the server decides which ones.
+            window.appNavigate("/products?tab=" + button.dataset.tab);
+          });
+        });
+
+      /* ---------------- view one product ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".view-product"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            window.appNavigate("/products/" + button.dataset.product);
+          });
+        });
 
       /* ---------------- refresh what is already accepted ---------------- */
 
@@ -595,8 +625,8 @@
         acceptButton.disabled = count === 0;
         declineButton.disabled = count === 0;
         acceptButton.textContent = count
-          ? "Add " + count + " to my store"
-          : "Add to my store";
+          ? "Sync " + count + " selected"
+          : "Sync selected";
       }
 
       checks().forEach(function (check) {
@@ -637,12 +667,13 @@
 
       acceptButton.addEventListener("click", async function () {
         // Accepting also pulls the products in, so this can take a moment.
-        var data = await send("/products/accept", "Adding…");
+        var data = await send("/products/accept", "Syncing…");
 
         if (!data) return;
 
         window.appToast(data.synced + " synced, " + data.failed + " failed");
-        window.appNavigate("/products");
+        // They are synced now, so show them where they landed.
+        window.appNavigate("/products?tab=synced");
       });
 
       declineButton.addEventListener("click", async function () {

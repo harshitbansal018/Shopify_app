@@ -8,6 +8,7 @@ const { exchangeCodeForToken } = require("../services/tokens");
 const { normalizeShopDomain, coerceShopDomain } = require("../utils/shop");
 const { topLevelRedirectPage } = require("../utils/html");
 const { parseCookies, setCookie, clearCookie } = require("../utils/cookies");
+const { installUrlFor } = require("../middleware/auth");
 
 const STATE_COOKIE = "shopify_oauth_state";
 const STATE_TTL_SECONDS = 600;
@@ -103,12 +104,27 @@ exports.callback = async (req, res) => {
     const storedState = cookies[STATE_COOKIE];
     clearCookie(res, STATE_COOKIE);
 
+    // No cookie at all means this app never started the flow -- the code was
+    // exchanged in a tab we know nothing about, the 10-minute cookie expired
+    // while the merchant was elsewhere, or the tunnel URL changed under them.
+    //
+    // Start OAuth properly rather than dead-ending on a white page: the code
+    // in this request is simply never exchanged, so an attacker gains nothing,
+    // and the far more common expired-cookie case heals itself.
     if (!storedState || !state) {
-      return res.status(403).send("OAuth state missing");
+      console.warn(`OAuth callback with no state cookie for ${shop}; restarting`);
+
+      return res
+        .status(401)
+        .type("html")
+        .send(topLevelRedirectPage(installUrlFor(shop), { title: "Reconnecting" }));
     }
 
     const [expectedState, expectedShop] = storedState.split(":");
 
+    // A state that does not match is different: something was tampered with,
+    // or two installs raced in the same browser. Restarting would just loop,
+    // so this one stops.
     if (
       !expectedState ||
       !timingSafeEqualString(expectedState, state) ||

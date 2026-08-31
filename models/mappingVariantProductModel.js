@@ -140,6 +140,21 @@ async function mapBySourceVariant(productMappingId) {
   return index;
 }
 
+/**
+ * Drop one link because the variant is gone from the DESTINATION store.
+ *
+ * Keyed on the destination id, not the source one: the merchant deleted a
+ * variant in their own admin, and that id is all the webhook tells us.
+ */
+async function removeByDestinationVariant(productMappingId, destinationVariantId) {
+  const [result] = await pool.query(
+    `DELETE FROM mapping_variant_products
+      WHERE product_mapping_id = ? AND destination_variant_id = ?`,
+    [productMappingId, toShopifyId(destinationVariantId)]
+  );
+  return result.affectedRows;
+}
+
 /** Link rows whose source variant has gone; their pairs are meaningless now. */
 async function removeMissing(productMappingId, keepSourceShopifyVariantIds) {
   const keep = (keepSourceShopifyVariantIds || []).map(toShopifyId).filter(Boolean);
@@ -185,6 +200,7 @@ module.exports = {
   listWithSourceVariants,
   findBySourceVariant,
   mapBySourceVariant,
+  removeByDestinationVariant,
   removeMissing,
   countForMapping,
   listUnsynced,

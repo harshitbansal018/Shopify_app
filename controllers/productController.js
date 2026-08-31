@@ -37,10 +37,13 @@ exports.getProducts = async (req, res) => {
     if (!isSource) {
       const offered = await sourceProductModel.listSyncedIntoStore(req.storeId);
 
-      // Split rather than one long list: the two halves need different
-      // controls, and what needs a decision belongs at the top.
-      const products = offered.filter((product) => !product.awaiting);
-      const awaiting = offered.filter((product) => product.awaiting);
+      const synced = offered.filter((product) => !product.awaiting);
+      const unsynced = offered.filter((product) => product.awaiting);
+
+      // Land on whichever tab has something to do. A merchant opening this
+      // screen almost always came because something is waiting.
+      const requested = req.query.tab === "synced" ? "synced" : req.query.tab;
+      const tab = requested || (unsynced.length ? "unsynced" : "synced");
 
       // One batched query for the whole page, not one per product.
       const variants = await mappingVariantProductModel.mapForMappings(
@@ -57,8 +60,9 @@ exports.getProducts = async (req, res) => {
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
         isSource: false,
-        products: products.map(withVariants),
-        awaiting: awaiting.map(withVariants),
+        tab,
+        counts: { synced: synced.length, unsynced: unsynced.length },
+        products: (tab === "synced" ? synced : unsynced).map(withVariants),
         connections: await connectionModel.listForDestination(req.storeId),
       });
     }
@@ -72,19 +76,41 @@ exports.getProducts = async (req, res) => {
       products.map((product) => product.id)
     );
 
+        // effective, not allowed: before a product is shared there is no mapping,
+    // and what counts is the choice made in the picker when it was added.
+    const withVariants = (product) => {
+      const all = variants.get(product.id) || [];
+      const picked = product.effective_variant_ids; // null = every variant
+
+      return {
+        ...product,
+        variants: picked
+          ? all.filter((variant) => picked.indexOf(variant.id) !== -1)
+          : all,
+      };
+    };
+
+    const shared = products.filter((product) => product.allowed > 0);
+    const unshared = products.filter((product) => !product.allowed);
+
+    // Land on whichever tab has something to do.
+    const requested = req.query.tab === "shared" ? "shared" : req.query.tab;
+    const tab = requested || (unshared.length ? "unshared" : "shared");
+
     res.render("products", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
       isSource: true,
-      products: products.map((product) => ({
-        ...product,
-        variants: variants.get(product.id) || [],
-      })),
+      tab,
+      counts: { shared: shared.length, unshared: unshared.length },
+      products: (tab === "shared" ? shared : unshared).map(withVariants),
+
       connections,
       // Nothing can be allowed until there is somewhere to send it.
       activeConnections: connections.filter((c) => c.status === "active"),
     });
+
   } catch (err) {
     console.error("Products screen failed:", err.message);
     res.status(500).send("Error loading products");
@@ -104,6 +130,58 @@ function sourceOnly(req, res) {
 }
 
 /**
+ * Record which variants the picker came back with, for each product.
+ *
+ * Shopify's ids are translated into OUR row ids -- what every screen and the
+ * push work with -- and the result is copied onto any existing mappings so an
+ * already-shared product starts sending the new selection.
+ *
+ * A pick with no variants listed, or one covering all of them, means "every
+ * variant": setSelectedVariants stores that as NULL so a variant added at the
+ * source later still flows.
+ */
+async function recordSelections(storeId, picks) {
+  let narrowed = 0;
+
+  for (const pick of picks) {
+    const cached = await sourceProductModel.findByShopifyId(storeId, pick.id);
+
+    if (!cached) continue;
+
+    const rows = await sourceVariantModel.listForProduct(cached.id);
+    const wanted = new Set((pick.variant_ids || []).map(String));
+
+    const ours = wanted.size
+      ? rows
+          .filter((row) => wanted.has(String(row.shopify_variant_id)))
+          .map((row) => row.id)
+      : rows.map((row) => row.id);
+
+    // Nothing matched -- the picker sent variant ids from another product, or
+    // they have since been deleted. Leave the product's selection alone rather
+    // than silently emptying it.
+    if (!ours.length) continue;
+
+    const saved = await sourceProductModel.setSelectedVariants(
+      cached.id,
+      ours,
+      rows.length
+    );
+
+    if (saved.selected_variant_ids) narrowed += 1;
+
+    // Carry it onto the mappings, or a shared product would keep sending the
+    // variants it was sharing before.
+    await productMappingModel.setAllowedVariantsForProduct(
+      cached.id,
+      saved.selected_variant_ids
+    );
+  }
+
+  return { narrowed };
+}
+
+/**
  * Copy the picked products into source_products.
  *
  * The browser posts only ids -- taken from App Bridge's resource picker -- and
@@ -113,29 +191,256 @@ function sourceOnly(req, res) {
 exports.postImport = async (req, res) => {
   if (!sourceOnly(req, res)) return;
 
-  const ids = Array.isArray(req.body.product_ids) ? req.body.product_ids : [];
+  // [{ id, variant_ids: [...] }] -- the picker reopens pre-ticked with the
+  // current choice, so whatever comes back IS the new choice. Products the
+  // merchant did not touch are simply absent and keep what they had.
+  const picks = Array.isArray(req.body.products) ? req.body.products : [];
 
-  if (!ids.length) {
+  if (!picks.length) {
     return res.status(400).json({ error: "Pick at least one product." });
   }
 
   try {
-    const result = await productSync.importProducts(req.shop, req.storeId, ids);
+    const result = await productSync.importProducts(
+      req.shop,
+      req.storeId,
+      picks.map((pick) => pick.id)
+    );
+
+    const selection = await recordSelections(req.storeId, picks);
 
     console.log(
       `${req.shop} imported ${result.imported} product(s), ` +
+        `${selection.narrowed} narrowed, ` +
         `${result.requeued} mapping(s) queued for another push`
     );
 
     return res.json({
       ok: true,
       imported: result.imported,
+      narrowed: selection.narrowed,
       requeued: result.requeued,
     });
   } catch (err) {
     return res.status(err.statusCode || 502).json({
       error: reauthAware(err, "Could not import those products."),
     });
+  }
+};
+
+/**
+ * One product's own page: the variants that are actually being shared.
+ *
+ * The table lists products; this lists what goes out for one of them, and is
+ * where a variant is dropped from the offer.
+ */
+exports.getProduct = async (req, res) => {
+  try {
+    if (!req.store.store_type) return renderStoreType(req, res);
+
+    // The two roles key this page differently, because they hold different
+    // things: a source owns the product row, a destination only ever sees it
+    // through the mapping that offered it.
+    if (req.store.store_type === "destination") {
+      const offered = await sourceProductModel.findOfferedByMapping(
+        req.storeId,
+        req.params.id
+      );
+
+      if (!offered) return res.status(404).send("Product not found");
+
+      const variants = await mappingVariantProductModel.mapForMappings([
+        offered.mapping_id,
+      ]);
+
+      return res.render("productDetail", {
+        shop: req.shop,
+        apiKey: process.env.SHOPIFY_API_KEY,
+        store: req.store,
+        isSource: false,
+        product: offered,
+        shared: variants.get(offered.mapping_id) || [],
+        totalVariants: offered.offered_variant_count,
+        isShared: !offered.awaiting,
+      });
+    }
+
+    const product = await sourceProductModel.findById(req.params.id);
+
+    // Same check, same reason, as every other handler here: the id came from
+    // a URL, so it proves nothing until the row says it belongs to this store.
+    if (!product || product.store_id !== req.storeId) {
+      return res.status(404).send("Product not found");
+    }
+
+    const variants = await sourceVariantModel.listForProduct(product.id);
+    const mappings = await productMappingModel.listForSourceProduct(product.id);
+
+    // Once the product is shared the mapping is authoritative -- every
+    // connection carries the same selection, so any live one describes it.
+    // Before that, the picker's choice is what there is. Both use null for
+    // "every variant".
+    const live = mappings.find((mapping) => mapping.sync_status !== "deleted");
+    const picked = live ? live.allowed_variant_ids : product.selected_variant_ids;
+
+    res.render("productDetail", {
+      shop: req.shop,
+      apiKey: process.env.SHOPIFY_API_KEY,
+      store: req.store,
+      isSource: true,
+      product,
+      shared: picked
+        ? variants.filter((variant) => picked.indexOf(variant.id) !== -1)
+        : variants,
+      totalVariants: variants.length,
+      isShared: mappings.length > 0,
+    });
+  } catch (err) {
+    console.error("Product page failed:", err.message);
+    res.status(500).send("Error loading product");
+  }
+};
+
+/** Stop sharing one variant. The others carry on. */
+exports.postRemoveVariant = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  try {
+    const product = await sourceProductModel.findById(req.params.id);
+
+    if (!product || product.store_id !== req.storeId) {
+      return res.status(404).json({ error: "Product not found." });
+    }
+
+    const variants = await sourceVariantModel.listForProduct(product.id);
+    const variantId = Number(req.body.variant_id);
+
+    if (!variants.some((variant) => Number(variant.id) === variantId)) {
+      return res.status(400).json({ error: "That variant is not on this product." });
+    }
+
+    const every = variants.map((variant) => variant.id);
+
+    // Two places hold a selection and both have to lose the variant: the
+    // mapping is what the push reads, the product's own choice is what an
+    // UNSHARED product shows -- and what Allow would later copy back over.
+    const current = product.selected_variant_ids || every;
+    const remaining = current.filter((id) => Number(id) !== variantId);
+
+    if (!remaining.length) {
+      return res.status(409).json({
+        error: "This is the only variant being shared. Delete the product instead.",
+      });
+    }
+
+    const changed = await productMappingModel.removeAllowedVariant(
+      product.id,
+      variantId,
+      every
+    );
+
+    await sourceProductModel.setSelectedVariants(product.id, remaining, every.length);
+
+    return res.json({ ok: true, changed });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+
+    console.error("Removing a variant failed:", err.message);
+    return res.status(500).json({ error: "Could not remove that variant." });
+  }
+};
+
+/**
+ * Delete a product from this app AND from every destination it reached.
+ *
+ * The destination delete happens FIRST and the local rows are only dropped if
+ * it worked. Doing it the other way round would lose the id of the product on
+ * the destination, leaving one behind that nothing can ever find again.
+ */
+exports.postDeleteProduct = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  try {
+    const product = await sourceProductModel.findById(req.params.id);
+
+    if (!product || product.store_id !== req.storeId) {
+      return res.status(404).json({ error: "Product not found." });
+    }
+
+    const result = await productSync.deleteFromDestinations(product.id);
+
+    if (result.failed) {
+      // Keep everything: the merchant can retry, and the mapping still knows
+      // which product to remove.
+      return res.status(502).json({
+        error:
+          `Deleted from ${result.deleted} store(s), but ${result.failed} failed. ` +
+          `Nothing was removed here so you can try again. ${result.errors[0] || ""}`,
+      });
+    }
+
+    // Cascades to the mappings, the cached variants and the variant links.
+    await sourceProductModel.deleteByShopifyId(
+      req.storeId,
+      product.shopify_product_id
+    );
+
+    console.log(
+      `${req.shop} deleted "${product.title}" ` +
+        `(${result.deleted} destination store(s), ${result.skipped} never pushed)`
+    );
+
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(err.statusCode || 502).json({
+      error: reauthAware(err, "Could not delete that product."),
+    });
+  }
+};
+
+/**
+ * Put every variant of a product back on offer.
+ *
+ * The table only lists variants that are actually shared, so a narrowed
+ * product has no checkbox left for the ones it left out. This is the way back:
+ * clearing the selection makes all of them visible and shareable again.
+ */
+exports.postResetVariants = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  const ids = Array.isArray(req.body.source_product_ids)
+    ? req.body.source_product_ids
+    : [];
+
+  if (!ids.length) {
+    return res.status(400).json({ error: "Pick at least one product." });
+  }
+
+  try {
+    let reset = 0;
+
+    for (const id of ids) {
+      // Re-read rather than trusting the posted id, exactly as postAllow does:
+      // this proves the product belongs to THIS store.
+      const product = await sourceProductModel.findById(id);
+
+      if (!product || product.store_id !== req.storeId) continue;
+
+      reset += await productMappingModel.resetAllowedVariantsForProduct(product.id);
+
+      // Clear the picker's choice too, or an unshared product would still be
+      // showing only some of its variants.
+      await sourceProductModel.setSelectedVariants(product.id, [], null);
+    }
+
+    console.log(`${req.shop} reset the variant selection on ${reset} mapping(s)`);
+
+    return res.json({ ok: true, reset });
+  } catch (err) {
+    console.error("Resetting the variant selection failed:", err.message);
+    return res.status(500).json({ error: "Could not reset that selection." });
   }
 };
 
@@ -183,9 +488,12 @@ exports.postAllow = async (req, res) => {
         (await sourceVariantModel.listForProduct(product.id)).map((v) => Number(v.id))
       );
 
+      // Nothing posted means "use what was ticked in the picker", which is the
+      // normal path: the table shares whole rows and the variant choice was
+      // already made when the product was added.
       const requested = Array.isArray(selection.variant_ids)
         ? selection.variant_ids.map(Number).filter((id) => own.has(id))
-        : null;
+        : product.selected_variant_ids || null;
 
       if (requested && !requested.length) {
         return res.status(400).json({
@@ -193,7 +501,7 @@ exports.postAllow = async (req, res) => {
         });
       }
 
-      // Every variant ticked is stored as "all", not as a frozen list, so a
+      // Every variant chosen is stored as "all", not as a frozen list, so a
       // variant added at the source later still flows.
       const allowedVariantIds =
         requested && requested.length < own.size ? requested : null;

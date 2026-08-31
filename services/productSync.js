@@ -130,15 +130,39 @@ async function importProducts(shop, storeId, shopifyProductIds) {
     // A deleted product comes back as null rather than an error.
     const found = (data.nodes || []).filter(Boolean).map(flatten);
 
-    await sourceProductModel.upsertMany(storeId, found);
+    // What Shopify said last time, BEFORE the upsert overwrites it. The
+    // picker reopens pre-ticked, so confirming it re-imports every staged
+    // product -- without this, adding one product would re-push the lot.
+    const seenBefore = new Map();
 
-    // The cache just changed, so anything already pushed is now out of date.
-    // Queue it rather than leaving the destination silently stale.
     for (const product of found) {
       const cached = await sourceProductModel.findByShopifyId(storeId, product.id);
-      if (cached) {
-        requeued += await productMappingModel.requeueForSourceProduct(cached.id);
-      }
+      seenBefore.set(
+        String(product.id),
+        cached && cached.shopify_updated_at
+          ? new Date(cached.shopify_updated_at).getTime()
+          : null
+      );
+    }
+
+    await sourceProductModel.upsertMany(storeId, found);
+
+    for (const product of found) {
+      const cached = await sourceProductModel.findByShopifyId(storeId, product.id);
+
+      if (!cached) continue;
+
+      const was = seenBefore.get(String(product.id));
+      const now = cached.shopify_updated_at
+        ? new Date(cached.shopify_updated_at).getTime()
+        : null;
+
+      // Unchanged since the last import: the destination already has this.
+      // (A change to what WE cache rather than to the product itself is not
+      // caught here -- that needs a deliberate re-push.)
+      if (was !== null && was === now) continue;
+
+      requeued += await productMappingModel.requeueForSourceProduct(cached.id);
     }
 
     imported.push(...found);
@@ -225,6 +249,74 @@ async function applySourceUpdate(storeId, payload) {
   const requeued = await productMappingModel.requeueForSourceProduct(known.id);
 
   return { sourceProductId: known.id, requeued };
+}
+
+/**
+ * The DESTINATION's own catalogue changed. Bring our record of it into line.
+ *
+ * A merchant can delete a variant, or the whole product, straight from their
+ * Shopify admin. Nothing tells the app -- the destination screen reads
+ * mapping_variant_products, so it would go on listing variants that are not
+ * there any more until the next push happened to notice.
+ *
+ * Makes NO Shopify call and queues NO push: it only reconciles what we hold
+ * against what the payload says. That is also what keeps it from looping --
+ * our own push makes this same webhook fire straight back at us.
+ */
+async function applyDestinationUpdate(storeId, payload) {
+  const mappings = await productMappingModel.findByDestinationProductId(
+    storeId,
+    payload.id
+  );
+
+  if (!mappings.length) return null; // not a product this app created
+
+  const alive = new Set(
+    (payload.variants || []).map((variant) => String(variant.id)).filter(Boolean)
+  );
+
+  let dropped = 0;
+
+  for (const mapping of mappings) {
+    const links = await mappingVariantProductModel.listForMapping(mapping.id);
+
+    for (const link of links) {
+      // No destination id recorded means the push never linked it; leave it.
+      if (!link.destination_variant_id) continue;
+      if (alive.has(String(link.destination_variant_id))) continue;
+
+      await mappingVariantProductModel.removeByDestinationVariant(
+        mapping.id,
+        link.destination_variant_id
+      );
+      dropped += 1;
+    }
+  }
+
+  return { mappings: mappings.length, dropped };
+}
+
+/**
+ * The destination's merchant deleted the whole product we created there.
+ *
+ * The offer goes back to "waiting for you" rather than being pushed again:
+ * re-creating a product someone just deleted would be the app overruling them.
+ */
+async function applyDestinationDelete(storeId, destinationProductId) {
+  const mappings = await productMappingModel.findByDestinationProductId(
+    storeId,
+    destinationProductId
+  );
+
+  if (!mappings.length) return null;
+
+  for (const mapping of mappings) {
+    // The links describe variants of a product that is gone.
+    await mappingVariantProductModel.removeMissing(mapping.id, []);
+    await productMappingModel.markGoneFromDestination(mapping.id);
+  }
+
+  return { mappings: mappings.length };
 }
 
 /**
@@ -473,6 +565,19 @@ async function linkVariants(productMappingId, sourceVariants, destinationVariant
     if (key) byOptions.set(key, variant);
   });
 
+  // A variant the merchant stopped sharing was DELETED on the destination by
+  // productSet, so its link row describes something that no longer exists.
+  // Dropping it here is what keeps the destination's Products screen honest --
+  // it reads these rows, not Shopify.
+  const removed = await mappingVariantProductModel.removeMissing(
+    productMappingId,
+    sourceVariants.map((variant) => variant.shopify_variant_id)
+  );
+
+  if (removed) {
+    console.log(`Dropped ${removed} stale variant link(s) on mapping ${productMappingId}`);
+  }
+
   const pairs = [];
 
   for (const source of sourceVariants) {
@@ -544,6 +649,85 @@ async function pushPending(connectionId, { limit = 100 } = {}) {
   if (synced) await connectionModel.touchLastSynced(connectionId);
 
   return { synced, failed, total: pending.length };
+}
+
+/* ------------------------------------------------------------------ */
+/* Removing a product from the destinations                            */
+/* ------------------------------------------------------------------ */
+
+const PRODUCT_DELETE_MUTATION = `
+  mutation DeleteProduct($input: ProductDeleteInput!, $synchronous: Boolean!) {
+    productDelete(input: $input, synchronous: $synchronous) {
+      deletedProductId
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * Delete this product from every destination it was pushed to.
+ *
+ * This is the destructive one: it removes a product from a store this app does
+ * not own, and Shopify's own docs call it permanent -- variants, media and
+ * inventory go with it. Only products THIS app created are touched: a mapping
+ * with no destination_shopify_product_id was never pushed, so there is nothing
+ * of ours there to remove.
+ *
+ * Returns per-destination results rather than throwing, so a caller can refuse
+ * to forget the mapping when a delete did not actually happen.
+ */
+async function deleteFromDestinations(sourceProductId) {
+  const mappings = await productMappingModel.listForSourceProduct(sourceProductId);
+  const results = { deleted: 0, failed: 0, skipped: 0, errors: [] };
+
+  for (const mapping of mappings) {
+    if (!mapping.destination_shopify_product_id) {
+      results.skipped += 1; // never pushed
+      continue;
+    }
+
+    const connection = await connectionModel.findById(mapping.connection_id);
+
+    if (!connection || !connection.destination.is_active) {
+      // The shop uninstalled the app; we have no token to delete with.
+      results.skipped += 1;
+      continue;
+    }
+
+    try {
+      const data = await shopify.forShop(connection.destination.shop_domain, {
+        query: PRODUCT_DELETE_MUTATION,
+        variables: {
+          input: {
+            id: `gid://shopify/Product/${mapping.destination_shopify_product_id}`,
+          },
+          synchronous: true,
+        },
+      });
+
+      const errors = data.productDelete?.userErrors || [];
+
+      // Already gone counts as done: the goal was for it not to be there.
+      const alreadyGone = errors.some((error) =>
+        /not found|does not exist/i.test(error.message || "")
+      );
+
+      if (errors.length && !alreadyGone) {
+        results.failed += 1;
+        results.errors.push(
+          `${connection.destination.shop_domain}: ${errors[0].message}`
+        );
+        continue;
+      }
+
+      results.deleted += 1;
+    } catch (err) {
+      results.failed += 1;
+      results.errors.push(`${connection.destination.shop_domain}: ${err.message}`);
+    }
+  }
+
+  return results;
 }
 
 /* ------------------------------------------------------------------ */
@@ -636,6 +820,9 @@ module.exports = {
   fromWebhook,
   applySourceUpdate,
   applySourceDelete,
+  applyDestinationUpdate,
+  applyDestinationDelete,
+  deleteFromDestinations,
   runAutoSync,
   startAutoSync,
   stopAutoSync,

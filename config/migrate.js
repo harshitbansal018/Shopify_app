@@ -140,6 +140,15 @@ const CREATE_SOURCE_PRODUCTS = `
     -- Full Shopify payload, kept so a re-sync needs no extra API call.
     product_data JSON DEFAULT NULL,
 
+    -- Which variants the merchant ticked in the resource picker when they
+    -- added this product, as an array of source_variant_mappings ids.
+    -- NULL means every variant.
+    --
+    -- It lives here, not on product_mappings, because it is chosen BEFORE any
+    -- connection exists. Allowing the product copies it onto the mapping,
+    -- which is what the push actually reads.
+    selected_variant_ids JSON DEFAULT NULL,
+
     shopify_updated_at DATETIME DEFAULT NULL,
     last_fetched_at    DATETIME DEFAULT NULL,
 
@@ -620,6 +629,14 @@ async function linkLineItemsToMappedVariants() {
   );
 }
 
+/** The variant choice made in the resource picker at "Add products" time. */
+async function addSelectedVariants() {
+  await safeAlter(
+    "source_products.selected_variant_ids",
+    "ALTER TABLE source_products ADD COLUMN selected_variant_ids JSON DEFAULT NULL"
+  );
+}
+
 /** Variant-level selection, added after product_mappings already existed. */
 async function addAllowedVariants() {
   await safeAlter(
@@ -666,6 +683,7 @@ async function runMigrations() {
   await addStoreGrouping();
   await query(CREATE_STORE_CONNECTIONS);
   await query(CREATE_SOURCE_PRODUCTS);
+  await addSelectedVariants();
   await query(CREATE_PRODUCT_MAPPINGS);
   await addAllowedVariants();
   await addDestinationAcceptance();
