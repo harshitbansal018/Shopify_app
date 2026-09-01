@@ -1,17 +1,36 @@
-/* forms.css — admin screens for the forms feature.
-   Rendered inside the Shopify admin iframe, so it follows the admin's neutral
-   look rather than introducing a brand of its own. */
+/* app.css — the Product Sync admin screens.
+   Rendered inside the Shopify admin iframe, so the layout stays close to the
+   admin's own; the brand shows in the accents rather than the furniture.
+   Every colour is a token below: change those and the whole app follows. */
 
 :root {
+  /* Brand. Taken from the logo -- change these three and every button, tab,
+     focus ring and chart follows. Nothing below hard-codes the blue. */
+  --brand: #0e6ebd;
+  --brand-dark: #0b5896; /* hover / pressed */
+  --brand-soft: #e8f1fa; /* tinted backgrounds */
+
   --bg: #f6f6f6;
   --surface: #ffffff;
   --line: #d9dbe0;
   --line-soft: #ececf0;
   --text: #1a1a1a;
   --muted: #6b6f76;
-  --accent: #1f6feb;
-  --danger: #b3261e;
+  --accent: var(--brand);
+  /* Semantic, not brand: green still means "done" and red "wrong", whatever
+     colour the logo happens to be. Each has a tint for pills and notices. */
   --ok: #0f7b46;
+  --ok-bg: #eef8f2;
+  --ok-line: #bfe3ce;
+  --danger: #b3261e;
+  --danger-bg: #fdf1f0;
+  --danger-line: #e6c4c1;
+  /* Paired with the brand blue on charts: amber reads as "waiting" and stays
+     distinguishable from blue for the common kinds of colour blindness. */
+  --waiting: #d9a400;
+  --waiting-ink: #6b4a00;
+  --waiting-bg: #fff8e6;
+  --waiting-line: #f0dca8;
   --radius: 10px;
   --shadow: 0 1px 2px rgba(16, 18, 22, 0.08);
 }
@@ -200,17 +219,18 @@ body {
 
 .btn--primary {
   color: #fff;
-  background: var(--text);
-  border-color: var(--text);
+  background: var(--brand);
+  border-color: var(--brand);
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: #333;
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
 }
 
 .btn--danger {
   color: var(--danger);
-  border-color: #e6c4c1;
+  border-color: var(--danger-line);
 }
 
 .btn--small {
@@ -394,7 +414,7 @@ body {
   padding: 0.2rem 0.6rem;
   font-weight: 600;
   color: #fff;
-  background: var(--text);
+  background: var(--brand);
   border-radius: 999px;
 }
 
@@ -470,14 +490,14 @@ body {
 
 .pill--active {
   color: var(--ok);
-  background: #eef8f2;
-  border-color: #bfe3ce;
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 
 .pill--paused {
-  color: #6b4a00;
-  background: #fff8e6;
-  border-color: #f0dca8;
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+  border-color: var(--waiting-line);
 }
 
 .pill--disconnected {
@@ -487,20 +507,20 @@ body {
 
 .pill--failed {
   color: var(--danger);
-  background: #fdf1f0;
-  border-color: #e6c4c1;
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
 }
 
 .pill--pending {
-  color: #6b4a00;
-  background: #fff8e6;
-  border-color: #f0dca8;
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+  border-color: var(--waiting-line);
 }
 
 .pill--synced {
   color: var(--ok);
-  background: #eef8f2;
-  border-color: #bfe3ce;
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 
 /* ---------------- product table ---------------- */
@@ -583,6 +603,394 @@ body {
   accent-color: var(--accent);
 }
 
+/* ---------------- dashboard cards ---------------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 1.15rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 1.05rem 1.15rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.card__label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.card__value {
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Something is waiting on the merchant, so it should catch the eye. */
+.card__value--warn {
+  color: var(--waiting-ink);
+}
+
+.card__note {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* ---------------- charts ---------------- */
+
+.charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.15rem;
+  margin-bottom: 1.15rem;
+}
+
+@media (min-width: 56rem) {
+  .charts {
+    grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.chart--pie {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.chart--pie svg {
+  width: 160px;
+  height: 160px;
+  flex: 0 0 auto;
+}
+
+/* Each slice is an arc drawn as a dashed circle stroke -- no fill, no paths. */
+.slice {
+  fill: none;
+  stroke-width: 26;
+}
+
+/* Brand blue against amber: the two stay apart for the common kinds of
+   colour blindness, where green against amber does not. */
+.slice--synced {
+  stroke: var(--brand);
+  background: var(--brand);
+}
+
+.slice--unsynced {
+  stroke: var(--waiting);
+  background: var(--waiting);
+}
+
+.chart__total {
+  text-anchor: middle;
+  font-size: 1.35rem;
+  font-weight: 600;
+  fill: var(--text);
+}
+
+.chart__caption {
+  text-anchor: middle;
+  font-size: 0.7rem;
+  fill: var(--muted);
+}
+
+.legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+}
+
+.legend--inline {
+  flex-direction: row;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.legend__swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.legend__value {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- bar chart ---------------- */
+
+.bars {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.bars__row {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  font-size: 0.88rem;
+}
+
+.bars__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* Both lines truncate rather than wrap: a long myshopify domain would
+   otherwise push every bar out of line with the others. */
+.bars__name,
+.bars__label .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bars__status {
+  justify-self: end;
+}
+
+@media (max-width: 40rem) {
+  .bars__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .bars__track {
+    grid-column: 1 / -1;
+  }
+}
+
+.bars__track {
+  display: flex;
+  height: 0.85rem;
+  background: var(--line-soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bars__fill {
+  height: 100%;
+}
+
+.bars__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Placeholder rows are dimmed so nobody reads them as real sales. */
+.row--placeholder td {
+  opacity: 0.55;
+}
+
+/* ---------------- sync settings ---------------- */
+
+/* The panel is split into banded sections, so its own padding comes off and
+   each band pays for its own. overflow keeps the header tint inside the
+   rounded corners. */
+.settings {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings + .settings {
+  margin-top: 1.15rem;
+}
+
+.settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1.1rem 1.35rem;
+  background: var(--brand-soft);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings__eyebrow {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings__store {
+  margin: 0.2rem 0 0.1rem;
+  font-size: 1.12rem;
+  line-height: 1.25;
+}
+
+.settings__who .muted {
+  font-size: 0.85rem;
+}
+
+.settings__group {
+  padding: 1.25rem 1.35rem;
+}
+
+.settings__group + .settings__group {
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings__legend {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.settings__hint {
+  margin: 0.3rem 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  max-width: 62ch;
+}
+
+.settings__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.35rem;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.settings__foot .muted {
+  margin: 0;
+  font-size: 0.85rem;
+  max-width: 52ch;
+}
+
+.settings__margin {
+  padding-top: 0.35rem;
+}
+
+/* Inline label, so the stacked spacing .field__label carries elsewhere would
+   push the text off centre here. */
+.settings__margin .field {
+  margin: 0;
+}
+
+.settings__margin .field__label {
+  margin: 0;
+}
+
+.settings__margin .settings__hint {
+  margin: 0.45rem 0 0;
+}
+
+/* ---------------- toggle grid ---------------- */
+
+.toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+  gap: 0.1rem 0.75rem;
+}
+
+.toggles__item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.toggles__item:hover {
+  background: var(--line-soft);
+}
+
+.toggles__item input {
+  margin: 0;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* A disabled toggle is still a saved preference, so it stays readable
+   rather than fading to nothing. */
+.toggles__item input:disabled + span {
+  color: var(--muted);
+}
+
+.toggles__item:has(input:disabled) {
+  cursor: default;
+}
+
+.toggles__item:has(input:disabled):hover {
+  background: transparent;
+}
+
+.tag {
+  padding: 0.05rem 0.4rem;
+  color: var(--muted);
+  background: var(--line-soft);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+/* Number input with a unit pinned inside its right edge, so "%" cannot drift
+   away from the field it belongs to. */
+.input-suffix {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.input-suffix .field__input {
+  width: 7.5rem;
+  padding-right: 2rem;
+  text-align: right;
+}
+
+.input-suffix__unit {
+  position: absolute;
+  right: 0.65rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  pointer-events: none;
+}
+
+.rule {
+  margin: 1.1rem 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
 /* ---------------- tabs ---------------- */
 
 .tabs {
@@ -608,11 +1016,11 @@ body {
 }
 
 .tabs__tab--on {
-  color: var(--text);
+  color: var(--brand);
   font-weight: 600;
-  background: var(--surface);
-  border-color: var(--line);
-  box-shadow: var(--shadow);
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  box-shadow: none;
 }
 
 /* Zero stock is worth noticing before accepting a product. */
@@ -698,15 +1106,15 @@ body {
 }
 
 .notice--warn {
-  color: #6b4a00;
-  background: #fff8e6;
-  border-color: #f0dca8;
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+  border-color: var(--waiting-line);
 }
 
 .notice--error {
   color: var(--danger);
-  background: #fdf1f0;
-  border-color: #e6c4c1;
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
 }
 
 /* ---------------- next-steps list ---------------- */

@@ -389,6 +389,26 @@ async function removeAllowedVariant(sourceProductId, variantId, allVariantIds) {
   return changed;
 }
 
+/**
+ * Queue everything on one connection for another push.
+ *
+ * Used when the connection's sync settings change: those only take effect on
+ * the next push, so without this a merchant would turn a field off and see
+ * nothing happen until the source next touched the product.
+ */
+async function requeueForConnection(connectionId) {
+  const [result] = await pool.query(
+    `UPDATE product_mappings
+        SET sync_status = 'pending'
+      WHERE connection_id = ?
+        AND sync_status = 'synced'
+        AND accepted_at IS NOT NULL`,
+    [connectionId]
+  );
+
+  return result.affectedRows;
+}
+
 /** Change which variants may go out, without touching anything else. */
 async function setAllowedVariants(id, ids) {
   await query(
@@ -467,6 +487,7 @@ module.exports = {
   removeAllowedVariant,
   resetAllowedVariantsForProduct,
   requeueForSourceProduct,
+  requeueForConnection,
   acceptForDestination,
   declineForDestination,
   markSynced,

@@ -12,4 +12,7 @@
   <s-link href="/dashboard" rel="home">Dashboard</s-link>
   <s-link href="/products">Products</s-link>
   <s-link href="/stores">Stores</s-link>
+  <% if(typeof store!== 'undefined' && store && store.store_type==="destination" ) { %>
+    <s-link href="/settings">Settings</s-link>
+  <% } %>
 </s-app-nav>

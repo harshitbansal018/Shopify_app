@@ -13,6 +13,7 @@ const sourceVariantModel = require("../models/sourceVariantModel");
 const productMappingModel = require("../models/productMappingModel");
 const mappingVariantProductModel = require("../models/mappingVariantProductModel");
 const connectionModel = require("../models/connectionModel");
+const syncSettingsModel = require("../models/syncSettingsModel");
 
 /* ------------------------------------------------------------------ */
 /* Reading the source catalogue                                        */
@@ -39,11 +40,18 @@ function flatten(node) {
     id: numericId(variant.id),
     title: variant.title,
     sku: variant.sku,
+    barcode: variant.barcode,
     price: variant.price,
     compare_at_price: variant.compareAtPrice,
     position: variant.position ?? index + 1,
+    taxable: variant.taxable,
+    // CONTINUE or DENY -- "keep selling when out of stock".
+    inventory_policy: variant.inventoryPolicy,
     inventory_quantity: variant.inventoryQuantity,
     inventory_item_id: numericId(variant.inventoryItem?.id),
+    inventory_tracked: variant.inventoryItem?.tracked,
+    // Money comes back as { amount }; the column and the push want a number.
+    cost: variant.inventoryItem?.unitCost?.amount ?? null,
     selectedOptions: variant.selectedOptions || [],
   }));
 
@@ -66,6 +74,15 @@ function flatten(node) {
     tags: node.tags,
     updated_at: node.updatedAt,
     total_inventory: node.totalInventory,
+    // Taxonomy category id, copied straight across -- the taxonomy is global,
+    // so the same id means the same category in the destination shop.
+    category: node.category?.id || null,
+    metafields: (node.metafields?.nodes || []).map((metafield) => ({
+      namespace: metafield.namespace,
+      key: metafield.key,
+      type: metafield.type,
+      value: metafield.value,
+    })),
     // The thumbnail for our own tables.
     image: featured || (images[0] ? images[0].url : null),
     // Everything, for copying onto the destination.
@@ -87,6 +104,8 @@ const PRODUCTS_BY_ID_QUERY = `
       ... on Product {
         id title handle vendor productType status descriptionHtml tags
         updatedAt totalInventory
+        category { id }
+        metafields(first: 25) { nodes { namespace key type value } }
         featuredMedia { preview { image { url } } }
         media(first: 10) {
           nodes {
@@ -99,9 +118,9 @@ const PRODUCTS_BY_ID_QUERY = `
         options { name position optionValues { name } }
         variants(first: 100) {
           nodes {
-            id title sku price compareAtPrice position
-            inventoryQuantity
-            inventoryItem { id }
+            id title sku barcode price compareAtPrice position
+            taxable inventoryPolicy inventoryQuantity
+            inventoryItem { id tracked unitCost { amount } }
             selectedOptions { name value }
           }
         }
@@ -211,13 +230,19 @@ function fromWebhook(payload) {
       id: String(variant.id),
       title: variant.title,
       sku: variant.sku,
+      barcode: variant.barcode,
       price: variant.price,
       compare_at_price: variant.compare_at_price,
       position: variant.position ?? index + 1,
+      taxable: variant.taxable,
+      inventory_policy: variant.inventory_policy,
       inventory_quantity: variant.inventory_quantity,
       inventory_item_id: variant.inventory_item_id
         ? String(variant.inventory_item_id)
         : null,
+      // Cost is NOT in a products/update payload. Left undefined so the
+      // upsert's COALESCE keeps whatever a full fetch recorded, rather than
+      // wiping it on every edit.
       option1: variant.option1,
       option2: variant.option2,
       option3: variant.option3,
@@ -354,6 +379,7 @@ const PRODUCT_SET_MUTATION = `
           nodes {
             id
             sku
+            barcode
             title
             inventoryItem { id }
             selectedOptions { name value }
@@ -404,32 +430,105 @@ function selectVariants(variants, allowedIds) {
  * sent rather than copied wholesale -- an option value with no variant behind
  * it would be rejected.
  */
-function buildProductInput(product, variants, settings, destinationProductId) {
+function buildProductInput(
+  product,
+  variants,
+  settings,
+  destinationProductId,
+  { locationId = null } = {}
+) {
   const data = product.product_data || {};
   const sourceOptions = data.options || [];
 
+  // A field that is switched off is simply NOT SENT. productSet leaves an
+  // omitted field unchanged, so the destination keeps its own value rather
+  // than being blanked -- which is what "do not sync this" has to mean.
+  const on = (field) => settings[field] !== false;
+
   const input = {
-    title: product.title,
-    descriptionHtml: data.descriptionHtml || "",
-    vendor: product.vendor || undefined,
-    productType: product.product_type || undefined,
-    tags: Array.isArray(data.tags) ? data.tags : undefined,
-    status: (product.status || "ACTIVE").toUpperCase(),
-    variants: variants.map((variant) => ({
-      sku: variant.sku || undefined,
-      price: withMarkup(variant.price, settings.price_markup_percent),
-      compareAtPrice: variant.compare_at_price
-        ? withMarkup(variant.compare_at_price, settings.price_markup_percent)
-        : undefined,
-      optionValues: [variant.option1, variant.option2, variant.option3]
-        .map((value, index) => {
-          const option = sourceOptions[index];
-          if (!option || !value) return null;
-          return { optionName: option.name, name: value };
-        })
-        .filter(Boolean),
-    })),
+    // Always sent when creating: productSet cannot make a product with no
+    // title. The toggle only decides whether later changes to it follow.
+    title: on("title") || !destinationProductId ? product.title : undefined,
+    variants: undefined, // filled in below, or left off entirely
   };
+
+  if (on("description")) input.descriptionHtml = data.descriptionHtml || "";
+  if (on("vendor") && product.vendor) input.vendor = product.vendor;
+  if (on("product_type") && product.product_type) {
+    input.productType = product.product_type;
+  }
+  if (on("tags") && Array.isArray(data.tags)) input.tags = data.tags;
+  if (on("status")) input.status = (product.status || "ACTIVE").toUpperCase();
+  // The taxonomy is global, so the same id means the same category over there.
+  if (on("category") && data.category) input.category = data.category;
+  if (on("metafields") && Array.isArray(data.metafields) && data.metafields.length) {
+    input.metafields = data.metafields;
+  }
+
+  // Variants off means the destination's own variants are left completely
+  // alone -- so the key is omitted rather than sent empty, which would delete
+  // every variant it has.
+  if (on("variants")) {
+    input.variants = variants.map((variant) => {
+      const out = {
+        // Option values identify the variant; they are never optional.
+        optionValues: [variant.option1, variant.option2, variant.option3]
+          .map((value, index) => {
+            const option = sourceOptions[index];
+            if (!option || !value) return null;
+            return { optionName: option.name, name: value };
+          })
+          .filter(Boolean),
+      };
+
+      if (on("variant_sku") && variant.sku) out.sku = variant.sku;
+      if (on("variant_barcode") && variant.barcode) out.barcode = variant.barcode;
+
+      if (on("variant_price")) {
+        out.price = withMarkup(variant.price, settings.price_markup_percent);
+
+        if (variant.compare_at_price) {
+          out.compareAtPrice = withMarkup(
+            variant.compare_at_price,
+            settings.price_markup_percent
+          );
+        }
+      }
+
+      // Tri-state at the source: null means it never told us, which is not
+      // the same as false.
+      if (on("variant_taxable") && variant.taxable !== null &&
+          variant.taxable !== undefined) {
+        out.taxable = Boolean(variant.taxable);
+      }
+
+      if (on("variant_continue_selling") && variant.inventory_policy) {
+        out.inventoryPolicy = String(variant.inventory_policy).toUpperCase();
+      }
+
+      if (on("variant_cost") && variant.cost !== null && variant.cost !== undefined) {
+        out.inventoryItem = { cost: Number(variant.cost) };
+      }
+
+      // Stock needs somewhere to put it. Without a location on the destination
+      // there is nothing to set, so it is skipped rather than guessed at.
+      if (on("inventory") && locationId &&
+          variant.inventory_quantity !== null &&
+          variant.inventory_quantity !== undefined) {
+        out.inventoryQuantities = [
+          {
+            locationId,
+            name: "available",
+            quantity: Number(variant.inventory_quantity),
+          },
+        ];
+      }
+
+      return out;
+    });
+  } else {
+    delete input.variants;
+  }
 
   // Rebuilt from the variants being sent, in source order, dropping any option
   // left with no values (a colour option is meaningless when only one colour
@@ -453,13 +552,15 @@ function buildProductInput(product, variants, settings, destinationProductId) {
     // Positions must stay contiguous once a middle option has been dropped.
     .map((option, index) => ({ ...option, position: index + 1 }));
 
-  // Only send options when the product actually has them; a default variant
-  // product has none, and an empty array would be rejected.
-  if (productOptions.length) input.productOptions = productOptions;
+  // Only send options when the variants are going too -- options describe
+  // variants, and sending them without any would not match what is there.
+  if (on("variants") && productOptions.length) {
+    input.productOptions = productOptions;
+  }
 
   // Images are copied by URL -- Shopify downloads them onto the destination,
   // so nothing has to be uploaded from here.
-  const images = Array.isArray(data.images) ? data.images : [];
+  const images = on("images") && Array.isArray(data.images) ? data.images : [];
 
   if (images.length) {
     input.files = images.map((image) => ({
@@ -509,11 +610,20 @@ async function pushOne(connection, mapping) {
     return { ok: false, error: message };
   }
 
+  // What this connection is configured to copy. Never null: an unconfigured
+  // connection reads as "everything on".
+  const settings = await syncSettingsModel.forConnection(connection.id);
+
+  const locationId = settings.inventory
+    ? await destinationLocationId(connection.destination.shop_domain)
+    : null;
+
   const input = buildProductInput(
     product,
     variants,
-    connection.settings,
-    mapping.destination_shopify_product_id
+    settings,
+    mapping.destination_shopify_product_id,
+    { locationId }
   );
 
   const data = await shopify.forShop(connection.destination.shop_domain, {
@@ -541,7 +651,17 @@ async function pushOne(connection, mapping) {
     sourceUpdatedAt: product.shopify_updated_at,
   });
 
-  await linkVariants(mapping.id, variants, destinationProduct.variants?.nodes || []);
+  // Variants off means nothing was sent and the destination's own variants
+  // were left alone -- so there is nothing new to link, and re-deriving links
+  // from what is over there would wrongly claim we put it there.
+  if (settings.variants) {
+    await linkVariants(
+      mapping.id,
+      variants,
+      destinationProduct.variants?.nodes || [],
+      settings.match_by
+    );
+  }
 
   return { ok: true, destinationProductId: destinationId };
 }
@@ -554,12 +674,30 @@ function optionKey(values) {
     .join(" / ");
 }
 
-async function linkVariants(productMappingId, sourceVariants, destinationVariants) {
-  const bySku = new Map();
+/** Whatever the connection uses to say two variants are the same one. */
+function identityOf(variant, matchBy) {
+  const raw =
+    matchBy === "barcode"
+      ? variant.barcode
+      : matchBy === "title"
+      ? variant.title
+      : variant.sku;
+
+  return raw ? String(raw).trim().toLowerCase() : null;
+}
+
+async function linkVariants(
+  productMappingId,
+  sourceVariants,
+  destinationVariants,
+  matchBy = "sku"
+) {
+  const byIdentity = new Map();
   const byOptions = new Map();
 
   destinationVariants.forEach((variant) => {
-    if (variant.sku) bySku.set(String(variant.sku).trim().toLowerCase(), variant);
+    const identity = identityOf(variant, matchBy);
+    if (identity) byIdentity.set(identity, variant);
 
     const key = optionKey((variant.selectedOptions || []).map((o) => o.value));
     if (key) byOptions.set(key, variant);
@@ -581,10 +719,12 @@ async function linkVariants(productMappingId, sourceVariants, destinationVariant
   const pairs = [];
 
   for (const source of sourceVariants) {
-    // SKU first when there is one -- it is the merchant's own identifier and
-    // survives an option being renamed on either side.
+    const identity = identityOf(source, matchBy);
+
+    // The chosen identifier first -- it is the merchant's own and survives an
+    // option being renamed on either side. Option values are the fallback.
     const match =
-      (source.sku && bySku.get(String(source.sku).trim().toLowerCase())) ||
+      (identity && byIdentity.get(identity)) ||
       byOptions.get(optionKey([source.option1, source.option2, source.option3])) ||
       // A product with no options has exactly one variant on both sides.
       (destinationVariants.length === 1 && sourceVariants.length === 1
@@ -654,6 +794,33 @@ async function pushPending(connectionId, { limit = 100 } = {}) {
 /* ------------------------------------------------------------------ */
 /* Removing a product from the destinations                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The destination's first location, needed to set stock anywhere.
+ *
+ * Cached per shop for the life of the process: it is a fixed fact about the
+ * store, and looking it up per product would cost one API call per push.
+ */
+const LOCATION_CACHE = new Map();
+
+async function destinationLocationId(shop) {
+  if (LOCATION_CACHE.has(shop)) return LOCATION_CACHE.get(shop);
+
+  try {
+    const data = await shopify.forShop(shop, {
+      query: "{ locations(first: 1) { nodes { id } } }",
+    });
+
+    const id = data.locations?.nodes?.[0]?.id || null;
+    LOCATION_CACHE.set(shop, id);
+    return id;
+  } catch (err) {
+    // Not fatal: without a location, stock is skipped and everything else on
+    // the product still syncs.
+    console.warn(`Could not read a location for ${shop}:`, err.message);
+    return null;
+  }
+}
 
 const PRODUCT_DELETE_MUTATION = `
   mutation DeleteProduct($input: ProductDeleteInput!, $synchronous: Boolean!) {
@@ -832,6 +999,7 @@ module.exports = {
   selectVariants,
   withMarkup,
   optionKey,
+  identityOf,
   numericId,
   flatten,
 };

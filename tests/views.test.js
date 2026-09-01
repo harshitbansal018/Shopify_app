@@ -68,10 +68,15 @@ const STORE_ROW = {
 (async () => {
   console.log("\nDashboard");
   {
+    const dashboardController = require(
+      path.join(SERVER, "controllers/dashboardController")
+    );
+
+    // SOURCE: the plain store summary. Its own work is on Products.
     await expectRenders(
-      "renders with a fully populated store",
+      "source sees the store summary",
       "dashboard",
-      { ...BASE, store: STORE_ROW },
+      { ...BASE, store: STORE_ROW, isDestination: false, stats: null },
       ["Demo Store", "demo.myshopify.com", "Dashboard"]
     );
 
@@ -85,13 +90,124 @@ const STORE_ROW = {
           id: 1,
           shop_domain: "demo.myshopify.com",
           store_name: null,
-          store_type: null,
+          store_type: "source",
           currency: null,
           api_version: "2025-01",
         },
+        isDestination: false,
+        stats: null,
       },
       ["—"] // falls back to an em-dash rather than printing "null"
     );
+
+    const destination = (stats) =>
+      render("dashboard", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        isDestination: true,
+        stats,
+      });
+
+    const busy = await destination({
+      cards: { synced: 8, unsynced: 2, stores: 2 },
+      bySource: [
+        { name: "Warehouse", synced: 6, unsynced: 1 },
+        { name: "Outlet", synced: 2, unsynced: 1 },
+      ],
+      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+    });
+
+    check("all three cards are shown",
+      (busy.match(/class="card"/g) || []).length === 3);
+    check("the numbers land in them",
+      busy.includes(">8<") && busy.includes(">2<"));
+    check("waiting products are flagged",
+      busy.includes("card__value--warn") && busy.includes("/products?tab=unsynced"),
+      "the merchant should be told where to act");
+
+    // Pie: one arc per non-zero slice, and the arcs must add up to the circle.
+    const arcs = busy.match(/stroke-dasharray="([\d.]+) ([\d.]+)"/g) || [];
+
+    check("the pie draws one arc per slice", arcs.length === 2);
+
+    const circumference = 2 * Math.PI * 60;
+    const drawn = arcs
+      .map((arc) => Number(arc.match(/"([\d.]+) /)[1]))
+      .reduce((sum, length) => sum + length, 0);
+
+    check("the arcs add up to the whole circle",
+      Math.abs(drawn - circumference) < 0.5,
+      `${drawn.toFixed(2)} vs ${circumference.toFixed(2)}`);
+
+    check("the pie shows the total in the middle", busy.includes("10<"));
+    check("percentages are shown", busy.includes("80%") && busy.includes("20%"));
+
+    // Bars are scaled against the BIGGEST store, so the largest fills the row.
+    check("the biggest source fills its bar",
+      busy.includes('width: 85.7%'),
+      "6 of a 7-product peak");
+    check("every source gets a row",
+      (busy.match(/class="bars__row"/g) || []).length === 2);
+    check("sources are named", busy.includes("Warehouse") && busy.includes("Outlet"));
+
+    // A store that is connected but has offered nothing must still be listed,
+    // or the "Stores connected" card and this list would disagree.
+    const idle = await destination({
+      cards: { synced: 0, unsynced: 0, stores: 2 },
+      bySource: [
+        {
+          domain: "a.myshopify.com", name: "Warehouse",
+          status: "active", active: true, synced: 0, unsynced: 0,
+        },
+        {
+          domain: "b.myshopify.com", name: "Paused Shop",
+          status: "paused", active: false, synced: 0, unsynced: 0,
+        },
+      ],
+      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+    });
+
+    check("a connected store with no products is still listed",
+      (idle.match(/class="bars__row"/g) || []).length === 2,
+      "the card would say 2 stores beside an empty list");
+    check("and says so instead of showing a blank",
+      (idle.match(/none yet/g) || []).length === 2);
+    check("each row shows the shop domain",
+      idle.includes("a.myshopify.com") && idle.includes("b.myshopify.com"),
+      "two stores can share a display name");
+    check("a connection that is not active is flagged",
+      idle.includes("pill--paused") && idle.includes(">paused<"));
+    check("an active one is not",
+      (idle.match(/class="bars__status"/g) || []).length === 1,
+      "only the paused store should carry a badge");
+    check("the panel links to Stores",
+      idle.includes("Manage") && idle.includes("/stores"));
+
+    // Top sellers: placeholder, and it has to say so.
+    check("the top sellers table is there",
+      busy.includes("Top selling products") &&
+        (busy.match(/class="row--placeholder"/g) || []).length ===
+          dashboardController.SAMPLE_TOP_SELLERS.length);
+    check("and is labelled as sample data",
+      busy.includes("Sample data") && busy.includes("not being tracked yet"),
+      "fake numbers must never read as real sales");
+
+    // Nothing offered yet: no divide-by-zero, no empty chart frame.
+    const empty = await destination({
+      cards: { synced: 0, unsynced: 0, stores: 0 },
+      bySource: [],
+      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+    });
+
+    check("an empty store still renders the cards",
+      (empty.match(/class="card"/g) || []).length === 3);
+    check("but draws no pie", !empty.includes("stroke-dasharray"));
+    check("and explains both charts",
+      empty.includes("Nothing has been offered") &&
+        empty.includes("No source store is connected"));
+    check("no NaN anywhere",
+      !empty.includes("NaN"),
+      "dividing by a zero total");
   }
 
   console.log("\nStore type (chosen once)");
@@ -805,6 +921,104 @@ const STORE_ROW = {
     // Matched on the BUTTON: the page script mentions the class too.
     check("and offers nothing to delete",
       !/<button[^>]*remove-variant/.test(notShared));
+  }
+
+  console.log("\nSync settings");
+  {
+    const syncSettingsModel = require(path.join(SERVER, "models/syncSettingsModel"));
+    const controller = require(path.join(SERVER, "controllers/storeController"));
+
+    const CONN = {
+      id: 9,
+      status: "active",
+      source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Warehouse" },
+      destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
+    };
+
+    const settingsPage = (sync) =>
+      render("settings", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        connections: [{ ...CONN, sync }],
+        productFields: syncSettingsModel.PRODUCT_FIELDS,
+        variantFields: syncSettingsModel.VARIANT_FIELDS,
+        labels: controller.FIELD_LABELS,
+      });
+
+    const allOn = await settingsPage(syncSettingsModel.defaults(9));
+
+    check("the source store is named", allOn.includes("Warehouse"));
+    // No identifier picker: the destination product is created by this app,
+    // so its SKUs are the ones we sent and always line up.
+    check("there is no identifier picker",
+      !allOn.includes('name="match_by"'),
+      "a dropdown almost no merchant would ever need to touch");
+
+    /** The checkbox tags themselves, not the words in the page script. */
+    const boxes = (html) => html.match(/<input[^>]*type="checkbox"[^>]*>/g) || [];
+
+    // Every toggle except the variants master, which the screen no longer
+    // offers: Variants is a section heading, not a parent switch.
+    const shown = syncSettingsModel.TOGGLES.filter((f) => f !== "variants");
+
+    check("every toggle is rendered",
+      boxes(allOn).length === shown.length,
+      `${boxes(allOn).length} of ${shown.length}`);
+    check("there is no variants master switch",
+      !/<input[^>]*name="variants"/.test(allOn),
+      "it read as a checkbox in front of a heading");
+    check("defaults render as ticked",
+      boxes(allOn).every((tag) => /\bchecked\b/.test(tag)),
+      "a merchant who has chosen nothing wants everything synced");
+
+    check("title cannot be turned off",
+      /name="title"[^>]*disabled/.test(allOn),
+      "productSet cannot create a product without one");
+
+    check("the price margin is shown", allOn.includes('name="price_markup_percent"'));
+    check("saving is explained",
+      allOn.includes("queues every product on this connection"));
+    check("and so is what unticking means",
+      allOn.includes("your own value") && allOn.includes("not erased"),
+      "a merchant would reasonably fear it deletes their data");
+
+    // With no master switch on the screen, every save has to send it on --
+    // otherwise a merchant who once turned variants off could never get them
+    // back, and there would be no control to do it with.
+    check("saving turns variants back on",
+      allOn.includes("settings.variants = true"),
+      "sync_variants would otherwise be stuck at whatever it is now");
+
+    const priceOff = await settingsPage({
+      ...syncSettingsModel.defaults(9),
+      variant_price: false,
+    });
+
+    check("an unticked field renders unticked",
+      /name="variant_price"[^>]*(?!checked)>/.test(priceOff) &&
+        !/name="variant_price"[^>]*\bchecked\b/.test(priceOff));
+    check("and the others stay ticked",
+      /name="variant_sku"[^>]*\bchecked\b/.test(priceOff));
+
+    // No connection yet: say so rather than showing an empty form.
+    const noConnection = await render("settings", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      connections: [],
+      productFields: syncSettingsModel.PRODUCT_FIELDS,
+      variantFields: syncSettingsModel.VARIANT_FIELDS,
+      labels: controller.FIELD_LABELS,
+    });
+
+    check("with no connection it points at Stores",
+      noConnection.includes("No source store connected") &&
+        noConnection.includes("/stores"));
+    check("and renders no form", boxes(noConnection).length === 0);
+
+    // Every toggle needs a label, or a checkbox ships with a raw column name.
+    check("every toggle has a label",
+      syncSettingsModel.TOGGLES.every((field) => controller.FIELD_LABELS[field]),
+      syncSettingsModel.TOGGLES.filter((f) => !controller.FIELD_LABELS[f]).join(", "));
   }
 
   console.log("\nPartials");

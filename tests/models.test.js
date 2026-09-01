@@ -1196,6 +1196,90 @@ async function cleanup() {
       "the link to what was created there was lost");
   }
 
+  console.log("\nsync_settings");
+  {
+    const syncSettingsModel = require(path.join(SERVER, "models/syncSettingsModel"));
+
+    const a = await storeModel.upsertStore({
+      shop_domain: `${RUN}-setsrc.myshopify.com`,
+      store_name: "Settings Source",
+      access_token: "shpat_setsrc",
+    });
+    const b = await storeModel.upsertStore({
+      shop_domain: `${RUN}-setdst.myshopify.com`,
+      store_name: "Settings Destination",
+      access_token: "shpat_setdst",
+    });
+
+    await pair(a, b);
+
+    const link = await connectionModel.createConnection({
+      sourceStoreId: a.id,
+      destinationStoreId: b.id,
+    });
+
+    // A connection with no row must still sync: "not configured" can only
+    // safely mean "everything on".
+    const before = await syncSettingsModel.forConnection(link.id);
+    check("an unconfigured connection reads as everything on",
+      syncSettingsModel.TOGGLES.every((field) => before[field] === true),
+      syncSettingsModel.TOGGLES.filter((f) => !before[f]).join(", "));
+    check("and defaults to matching on SKU", before.match_by === "sku");
+
+    const saved = await syncSettingsModel.save(link.id, {
+      match_by: "barcode",
+      price_markup_percent: 12.5,
+      images: false,
+      variant_cost: false,
+    });
+
+    check("the chosen identifier is stored", saved.match_by === "barcode");
+    check("the markup is stored", saved.price_markup_percent === 12.5);
+    check("an unticked field is off", saved.images === false);
+    check("and so is the variant one", saved.variant_cost === false);
+    check("everything else stays on",
+      saved.title === true && saved.tags === true && saved.variant_price === true,
+      "only what was unticked should have changed");
+
+    // Missing keys mean ON, not off. A field added to the list later must not
+    // silently switch itself off for every existing connection.
+    const partial = await syncSettingsModel.save(link.id, { match_by: "sku" });
+    check("a field absent from the payload stays on",
+      partial.images === true && partial.variant_cost === true,
+      "an older screen would have turned off every field it did not know");
+
+    // Saving twice must not make a second row.
+    await syncSettingsModel.save(link.id, { tags: false });
+    const rows = await query(
+      "SELECT COUNT(*) AS total FROM sync_settings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("saving twice keeps ONE row", Number(rows[0].total) === 1,
+      String(rows[0].total));
+
+    // Nonsense from a browser must not reach a column.
+    const cleaned = await syncSettingsModel.save(link.id, {
+      match_by: "whatever",
+      price_markup_percent: 99999,
+    });
+    check("an unknown identifier falls back to SKU", cleaned.match_by === "sku");
+    check("an absurd markup is capped", cleaned.price_markup_percent === 1000,
+      String(cleaned.price_markup_percent));
+
+    const many = await syncSettingsModel.mapForConnections([link.id, 999999]);
+    check("a batch read returns settings for every id asked for",
+      many.size === 2 && many.get(999999).title === true,
+      "a connection with no row still has to sync");
+
+    // Settings belong to the connection: delete it and they go.
+    await connectionModel.deleteConnection(link.id);
+    const after = await query(
+      "SELECT COUNT(*) AS total FROM sync_settings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("settings cascade with the connection", Number(after[0].total) === 0);
+  }
+
   await cleanup();
   await pool.end();
 

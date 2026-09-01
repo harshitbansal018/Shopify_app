@@ -8,6 +8,9 @@ const { query, pool, withTransaction } = require("../config/db");
 const storeModel = require("./storeModel");
 const { parseJson, toJsonColumn } = require("./helpers");
 
+// Field-level sync settings live in their own table -- see
+// models/syncSettingsModel.js. What stays here is the connection's own
+// behaviour, not what a product carries.
 const DEFAULT_SETTINGS = {
   price_markup_percent: 0,
   sync_images: true,

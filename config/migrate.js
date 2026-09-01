@@ -234,9 +234,15 @@ const CREATE_SOURCE_VARIANT_MAPPINGS = `
     shopify_inventory_item_id BIGINT UNSIGNED DEFAULT NULL,
 
     sku              VARCHAR(255) DEFAULT NULL,
+    barcode          VARCHAR(255) DEFAULT NULL,
     title            VARCHAR(255) DEFAULT NULL,
     price            DECIMAL(12,2) DEFAULT NULL,
     compare_at_price DECIMAL(12,2) DEFAULT NULL,
+    -- Unit cost. DECIMAL like every other money column here.
+    cost             DECIMAL(12,2) DEFAULT NULL,
+    taxable          TINYINT(1) DEFAULT NULL,
+    -- CONTINUE or DENY: whether the shop keeps selling at zero stock.
+    inventory_policy VARCHAR(16) DEFAULT NULL,
 
     option1 VARCHAR(255) DEFAULT NULL,
     option2 VARCHAR(255) DEFAULT NULL,
@@ -629,6 +635,26 @@ async function linkLineItemsToMappedVariants() {
   );
 }
 
+/**
+ * Variant fields the settings screen can now switch on and off.
+ *
+ * These are DATA, not settings: the toggles decide whether they are pushed,
+ * but they have to be cached first or there is nothing to push.
+ */
+async function addVariantDetailColumns() {
+  for (const [column, type] of [
+    ["barcode", "VARCHAR(255) DEFAULT NULL"],
+    ["cost", "DECIMAL(12,2) DEFAULT NULL"],
+    ["taxable", "TINYINT(1) DEFAULT NULL"],
+    ["inventory_policy", "VARCHAR(16) DEFAULT NULL"],
+  ]) {
+    await safeAlter(
+      `source_variant_mappings.${column}`,
+      `ALTER TABLE source_variant_mappings ADD COLUMN ${column} ${type}`
+    );
+  }
+}
+
 /** The variant choice made in the resource picker at "Add products" time. */
 async function addSelectedVariants() {
   await safeAlter(
@@ -644,6 +670,70 @@ async function addAllowedVariants() {
     "ALTER TABLE product_mappings ADD COLUMN allowed_variant_ids JSON DEFAULT NULL"
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 10. sync_settings                                                    */
+/* ------------------------------------------------------------------ */
+/*
+ * What each connection copies across, one row per connection.
+ *
+ * Real columns rather than a JSON blob: these are read on every push, and a
+ * column is something the database can constrain, default and index. A blob
+ * would also make "which connections stopped syncing prices?" unanswerable.
+ *
+ * Every toggle defaults to 1. A merchant who has chosen nothing wants the
+ * product as it is at the source, and a connection that predates this table
+ * gets a row of defaults rather than silently syncing nothing.
+ *
+ * Turning one OFF means the field is simply NOT SENT. productSet leaves an
+ * omitted field unchanged, so the destination keeps whatever it already has --
+ * it is not blanked.
+ */
+const CREATE_SYNC_SETTINGS = `
+  CREATE TABLE IF NOT EXISTS sync_settings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- Which field decides that two variants are the same one.
+    match_by ENUM('sku','barcode','title') NOT NULL DEFAULT 'sku',
+
+    -- Added to every price on the way across. DECIMAL, never FLOAT.
+    price_markup_percent DECIMAL(6,2) NOT NULL DEFAULT 0.00,
+
+    /* Product-level fields */
+    -- Always sent when CREATING: productSet cannot make a product with no
+    -- title. The flag only decides whether later changes to it are copied.
+    sync_title        TINYINT(1) NOT NULL DEFAULT 1,
+    sync_description  TINYINT(1) NOT NULL DEFAULT 1,
+    sync_images       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_category     TINYINT(1) NOT NULL DEFAULT 1,
+    sync_status       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_product_type TINYINT(1) NOT NULL DEFAULT 1,
+    sync_vendor       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_tags         TINYINT(1) NOT NULL DEFAULT 1,
+    sync_metafields   TINYINT(1) NOT NULL DEFAULT 1,
+
+    /* Variant-level fields. sync_variants is the parent: off means the
+       destination's own variants are left alone entirely. */
+    sync_variants                 TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_sku              TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_barcode          TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_price            TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_cost             TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_taxable          TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_continue_selling TINYINT(1) NOT NULL DEFAULT 1,
+    sync_inventory                TINYINT(1) NOT NULL DEFAULT 1,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- One row per connection, so an upsert can never make a second.
+    UNIQUE KEY uniq_settings_connection (connection_id),
+
+    CONSTRAINT fk_settings_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
 
 /**
  * Destination-side acceptance.
@@ -688,12 +778,36 @@ async function runMigrations() {
   await addAllowedVariants();
   await addDestinationAcceptance();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
+  await addVariantDetailColumns();
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
   await slimOrdersCustomerColumns();
   await query(CREATE_ORDER_LINE_ITEMS);
   await linkLineItemsToMappedVariants();
   await query(CREATE_CUSTOMERS);
+  // After store_connections: the foreign key needs its target to exist.
+  await query(CREATE_SYNC_SETTINGS);
+  await backfillSyncSettings();
+}
+
+/**
+ * Give every existing connection a row of defaults.
+ *
+ * Without this, a connection made before this table existed would read as
+ * "nothing configured" -- and the safe reading of that is "sync everything",
+ * which is exactly what a row of 1s says explicitly.
+ */
+async function backfillSyncSettings() {
+  const [result] = await require("./db").pool.query(
+    `INSERT IGNORE INTO sync_settings (connection_id)
+     SELECT id FROM store_connections`
+  );
+
+  if (result.affectedRows) {
+    console.log(
+      `Migration: created sync settings for ${result.affectedRows} connection(s)`
+    );
+  }
 }
 
 module.exports = { runMigrations, safeAlter };

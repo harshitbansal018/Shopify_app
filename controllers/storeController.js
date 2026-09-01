@@ -13,7 +13,35 @@
 // services/pairing for the code, connectionModel for the link itself.
 const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
+const syncSettingsModel = require("../models/syncSettingsModel");
+const productMappingModel = require("../models/productMappingModel");
 const pairing = require("../services/pairing");
+
+/**
+ * What each toggle is called on screen.
+ *
+ * Kept beside the model's field list so a field added there without a label
+ * shows its raw name rather than an empty checkbox.
+ */
+const FIELD_LABELS = {
+  title: "Source title",
+  description: "Description",
+  images: "Images",
+  category: "Category",
+  status: "Status",
+  product_type: "Product type",
+  vendor: "Vendor",
+  tags: "Tags",
+  metafields: "Product metafields",
+  inventory: "Inventory",
+  variants: "Variants",
+  variant_sku: "SKU",
+  variant_barcode: "Barcode",
+  variant_price: "Price / Compare-at price",
+  variant_cost: "Cost per item",
+  variant_taxable: "Charge tax on variant",
+  variant_continue_selling: "Continue selling when out of stock",
+};
 
 /**
  * Human copy for each role, kept beside the values storeModel accepts so the
@@ -38,6 +66,9 @@ const ROLE_COPY = {
 };
 
 const ROLES = storeModel.ROLES.map((value) => ({ value, ...ROLE_COPY[value] }));
+
+// Exported so a test can prove every toggle the model knows about has a label.
+exports.FIELD_LABELS = FIELD_LABELS;
 
 /* ------------------------------------------------------------------ */
 /* /store-type -- the one-time choice                                  */
@@ -241,4 +272,81 @@ exports.postConnect = async (req, res) => {
     console.error("Creating the connection failed:", err.message);
     return res.status(500).json({ error: "Could not connect those stores." });
   }
+  
 };
+function destinationOnly(req, res) {
+  if (req.store.store_type !== "destination") {
+    res.status(403).send("Settings are for a destination store.");
+    return false;
+  }
+  return true;
+}
+
+exports.getSettings = async (req, res) => {
+  try {
+    if (!req.store.store_type) return renderStoreType(req, res);
+    if (!destinationOnly(req, res)) return;
+
+    const connections = await connectionModel.listForDestination(req.storeId);
+
+    // One batched read, and every connection gets settings whether or not it
+    // has a row yet -- an unconfigured connection behaves as "sync everything".
+    const settings = await syncSettingsModel.mapForConnections(
+      connections.map((connection) => connection.id)
+    );
+
+    res.render("settings", {
+      shop: req.shop,
+      apiKey: process.env.SHOPIFY_API_KEY,
+      store: req.store,
+      connections: connections.map((connection) => ({
+        ...connection,
+        sync: settings.get(connection.id),
+      })),
+      productFields: syncSettingsModel.PRODUCT_FIELDS,
+      variantFields: syncSettingsModel.VARIANT_FIELDS,
+      labels: FIELD_LABELS,
+    });
+  } catch (err) {
+    console.error("Settings screen failed:", err.message);
+    res.status(500).send("Error loading settings");
+  }
+};
+
+/**
+ * Save one connection's settings, then queue its products.
+ *
+ * Settings only take effect on the next push, so without the re-queue a
+ * merchant would turn something off and see nothing happen until the source
+ * next changed the product.
+ */
+exports.postSettings = async (req, res) => {
+  if (!destinationOnly(req, res)) return;
+
+  const connectionId = Number(req.body.connection_id);
+
+  try {
+    // The id came from a browser. Prove it belongs to THIS store before
+    // writing anything: otherwise a guessed number reconfigures someone else's
+    // connection.
+    const mine = await connectionModel.listForDestination(req.storeId);
+
+    if (!mine.some((connection) => connection.id === connectionId)) {
+      return res.status(404).json({ error: "Connection not found." });
+    }
+
+    const saved = await syncSettingsModel.save(connectionId, req.body.settings || {});
+    const queued = await productMappingModel.requeueForConnection(connectionId);
+
+    console.log(
+      `${req.shop} updated sync settings for connection ${connectionId}; ` +
+        `${queued} product(s) queued`
+    );
+
+    return res.json({ ok: true, settings: saved, queued });
+  } catch (err) {
+    console.error("Saving sync settings failed:", err.message);
+    return res.status(500).json({ error: "Could not save those settings." });
+  }
+};
+
