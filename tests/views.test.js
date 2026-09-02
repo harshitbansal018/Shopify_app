@@ -731,6 +731,9 @@ const STORE_ROW = {
         unsynced.includes('id="decline-button"'));
 
     check("the source store is named", unsynced.includes("Warehouse"));
+    check("the product's own state moved next to its name",
+      /table__title[\s\S]{0,220}ACTIVE/.test(unsynced),
+      "Status now means the sync, so ACTIVE/DRAFT cannot live there too");
     check("the variant count is shown", unsynced.includes("<td>3</td>"));
     check("zero stock is flagged",
       /class="stock--none"/.test(unsynced),
@@ -746,8 +749,34 @@ const STORE_ROW = {
       "there is nothing left to accept");
     check("nor offered accept controls",
       !synced.includes('id="accept-button"'));
-    check("the sync status is shown", synced.includes(">synced<"));
+    check("the sync status is shown",
+      /status-toggle[\s\S]{0,260}>\s*synced\s*</.test(synced));
     check("stock is shown", synced.includes("12 in stock"));
+
+    /* ---- the status pill is the switch ---- */
+    check("an unsynced status syncs on click",
+      /class="[^"]*status-toggle"[^>]*data-mapping="6"[^>]*data-action="sync"/.test(unsynced),
+      "one product is one decision; ticking then hunting for a button is two");
+    check("a synced status unsyncs on click",
+      /class="[^"]*status-toggle"[^>]*data-mapping="5"[^>]*data-action="unsync"/.test(synced));
+    check("unsyncing posts to decline, which clears accepted_at",
+      synced.includes('"/products/decline"') &&
+        synced.includes('"/products/accept"'),
+      "that is what moves the row back to the Unsynced tab");
+    check("and it says where the row went",
+      synced.includes('"/products?tab=" + (unsync ? "unsynced" : "synced")'));
+
+    // A product that is gone at the source cannot be synced back, so the pill
+    // there stays a label.
+    const gone = await destination("synced", [
+      { ...ACCEPTED, sync_status: "deleted" },
+    ]);
+
+    // The class, not the word: the page script names it too, so a bare
+    // includes() would find it whether or not a row rendered one.
+    check("a deleted product has no switch",
+      !/class="[^"]*status-toggle"/.test(gone) && gone.includes(">deleted<"),
+      "there is nothing at the source left to send");
 
     /* ---- View, on both tabs ---- */
     check("every row has a View button",

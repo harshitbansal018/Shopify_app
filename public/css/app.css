@@ -523,6 +523,31 @@ body {
   border-color: var(--ok-line);
 }
 
+/* A pill that is also the button that changes it. It keeps the colour of the
+   state it is showing -- what it says is still true -- and earns its
+   clickability from the cursor, the hover lift and a focus ring. */
+.pill--action {
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+.pill--action:hover {
+  filter: brightness(0.96);
+  box-shadow: var(--shadow);
+}
+
+.pill--action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pill--action:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
 /* ---------------- product table ---------------- */
 
 .table {

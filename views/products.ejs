@@ -285,9 +285,12 @@
                     <% } %>
                     <span class="media__body">
                       <span class="table__title"><%= product.title %></span>
-                      <% if (product.vendor) { %>
-                        <span class="muted"><%= product.vendor %></span>
-                      <% } %>
+                      <span class="muted">
+                        <%# The product's own state at the source. It used to
+                            sit under Status, which now means the sync. %>
+                        <%= (product.status || "").toUpperCase() || "—" %>
+                        <% if (product.vendor) { %>&middot; <%= product.vendor %><% } %>
+                      </span>
                     </span>
                   </span>
                 </td>
@@ -304,10 +307,32 @@
                 </td>
                 <td><%= product.offered_variant_count %></td>
                 <td>
-                  <% if (tab === "unsynced") { %>
-                    <span class="pill"><%= (product.status || "").toUpperCase() || "—" %></span>
+                  <%# Clicking the status is what changes it: syncing one
+                      product is a single decision, and ticking a box then
+                      reaching for a button makes two steps of it.
+
+                      'deleted' is the exception -- the product is gone at the
+                      source, so there is nothing to sync back. %>
+                  <% if (product.sync_status === "deleted") { %>
+                    <span class="pill pill--failed">deleted</span>
+                  <% } else if (tab === "unsynced") { %>
+                    <button
+                      class="pill pill--pending pill--action status-toggle"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="sync"
+                      title="Sync into this store">
+                      unsynced
+                    </button>
                   <% } else { %>
-                    <span class="pill pill--<%= product.sync_status %>"><%= product.sync_status %></span>
+                    <button
+                      class="pill pill--<%= product.sync_status %> pill--action status-toggle"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="unsync"
+                      title="Stop syncing &mdash; moves back to Unsynced">
+                      <%= product.sync_status %>
+                    </button>
                     <% if (product.sync_status === "failed" && product.error_message) { %>
                       <span class="muted"><%= product.error_message %></span>
                     <% } %>
@@ -602,6 +627,53 @@
           }
         });
       }
+
+      /* ---------------- the status pill, as a switch ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".status-toggle"))
+        .forEach(function (pill) {
+          pill.addEventListener("click", async function () {
+            var unsync = pill.dataset.action === "unsync";
+
+            // Syncing writes to the store, so it needs no warning; stopping
+            // one does, because the merchant is giving up future updates.
+            if (unsync && !window.confirm(
+              "Stop syncing this product?\n\n" +
+              "It moves back to Unsynced. What is already in your store stays, " +
+              "it just will not be updated any more."
+            )) return;
+
+            pageError.hidden = true;
+            pill.disabled = true;
+            pill.textContent = unsync ? "stopping…" : "syncing…";
+
+            try {
+              var response = await window.appFetch(
+                unsync ? "/products/decline" : "/products/accept",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ mapping_ids: [pill.dataset.mapping] })
+                }
+              );
+
+              var data = await response.json().catch(function () { return {}; });
+
+              if (!response.ok) throw new Error(data.error || "Request failed");
+
+              window.appToast(unsync ? "Moved to Unsynced" : "Synced");
+              // The row belongs on the other tab now, so go and show it there.
+              window.appNavigate("/products?tab=" + (unsync ? "unsynced" : "synced"));
+            } catch (err) {
+              pill.disabled = false;
+              pill.textContent = pill.dataset.was;
+              fail(err.message);
+            }
+          });
+
+          // Remembered before any click, so a failure can put the word back.
+          pill.dataset.was = pill.textContent.trim();
+        });
 
       /* ---------------- accept what is on offer ---------------- */
 
