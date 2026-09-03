@@ -198,18 +198,24 @@ body {
 /* ---------------- buttons ---------------- */
 
 .btn {
-  padding: 0.5rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.38rem 0.72rem;
   font: inherit;
-  font-weight: 500;
-  color: var(--text);
-  background: #fff;
-  border: 1px solid var(--line);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #303030;
+  background: #e5e5e7;
+  border: 1px solid transparent;
   border-radius: 8px;
   cursor: pointer;
 }
 
 .btn:hover:not(:disabled) {
-  background: #fafafb;
+  background: #dcdcdf;
 }
 
 .btn:disabled {
@@ -217,25 +223,38 @@ body {
   cursor: default;
 }
 
-.btn--primary {
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn--primary,.btn {
   color: #fff;
-  background: var(--brand);
-  border-color: var(--brand);
+  background: #303030;
+  border-color: #1f1f1f;
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--brand-dark);
-  border-color: var(--brand-dark);
+  background: #1f1f1f;
+  border-color: #111;
 }
 
 .btn--danger {
   color: var(--danger);
+  background: var(--danger-bg);
   border-color: var(--danger-line);
 }
 
+.btn--danger:hover:not(:disabled) {
+  color: #8e1b15;
+  background: #f9dfdd;
+  border-color: #dba5a0;
+}
+
 .btn--small {
-  padding: 0.32rem 0.6rem;
-  font-size: 0.85rem;
+  min-height: 1.75rem;
+  padding: 0.3rem 0.58rem;
+  font-size: 0.78rem;
 }
 
 .icon-btn {
@@ -552,33 +571,56 @@ body {
 
 .table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.92rem;
+  border: 1px solid var(--line);
+  border-spacing: 0;
+  border-collapse: separate;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.86rem;
+  background: var(--surface);
 }
 
 .table th,
 .table td {
-  padding: 0.6rem 0.5rem;
+  padding: 0.65rem 0.8rem;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   border-top: 1px solid var(--line-soft);
 }
 
 .table th {
-  color: var(--muted);
-  font-size: 0.82rem;
+  color: #4b4e54;
+  background: #f6f6f7;
+  font-size: 0.78rem;
   font-weight: 600;
   border-top: 0;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
+.table tbody tr:hover {
+  background: #fafafa;
+}
+
 .table__check {
-  width: 2rem;
+  width: 2.8rem;
+  padding-right: 0.35rem !important;
+  padding-left: 0.8rem !important;
+}
+
+.table__check input {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .table__title {
   display: block;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .table td .muted {
@@ -682,7 +724,9 @@ body {
 @media (min-width: 56rem) {
   .charts {
     grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
-    align-items: start;
+    /* Keep the dashboard's two side-by-side panels level even when one
+       contains more chart or store content than the other. */
+    align-items: stretch;
   }
 }
 
