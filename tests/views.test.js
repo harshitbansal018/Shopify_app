@@ -75,15 +75,15 @@ const STORE_ROW = {
     // SOURCE: the plain store summary. Its own work is on Products.
     await expectRenders(
       "source sees the store summary",
-      "dashboard",
-      { ...BASE, store: STORE_ROW, isDestination: false, stats: null },
+      "source/dashboard",
+      { ...BASE, store: STORE_ROW, stats: null },
       ["Demo Store", "demo.myshopify.com", "Dashboard"]
     );
 
     // A freshly installed shop can be missing most of these.
     await expectRenders(
       "renders with sparse store details",
-      "dashboard",
+      "source/dashboard",
       {
         ...BASE,
         store: {
@@ -94,17 +94,15 @@ const STORE_ROW = {
           currency: null,
           api_version: "2025-01",
         },
-        isDestination: false,
         stats: null,
       },
       ["—"] // falls back to an em-dash rather than printing "null"
     );
 
     const destination = (stats) =>
-      render("dashboard", {
+      render("destination/dashboard", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
-        isDestination: true,
         stats,
       });
 
@@ -304,10 +302,9 @@ const STORE_ROW = {
     };
 
     // SOURCE: shows a code, never an input to type one into.
-    const withCode = await render("stores", {
+    const withCode = await render("source/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       connections: [CONNECTION],
@@ -328,10 +325,9 @@ const STORE_ROW = {
     check("source shows the expiry", withCode.includes("10:30"));
 
     // No code yet: the box is hidden rather than showing an empty slot.
-    const noCode = await render("stores", {
+    const noCode = await render("source/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       connections: [],
@@ -350,10 +346,9 @@ const STORE_ROW = {
     );
 
     // DESTINATION: types a code in, never shows one.
-    const destinationHtml = await render("stores", {
+    const destinationHtml = await render("destination/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      isSource: false,
       connections: [CONNECTION],
       pairingCode: null,
       codeTtlMinutes: 15,
@@ -424,10 +419,9 @@ const STORE_ROW = {
     };
 
     // Source with nothing staged yet.
-    const emptySource = await render("products", {
+    const emptySource = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       products: [],
@@ -437,13 +431,16 @@ const STORE_ROW = {
 
     check("source empty state explains Add products",
       emptySource.includes("Add products"));
-    check("source empty state has no table", !emptySource.includes("<table"));
+    // An empty table keeps its columns and says so in a row of its own. A
+    // table that disappears reads as a screen that failed to load.
+    check("source empty state keeps the columns",
+      emptySource.includes("<table") && emptySource.includes("No records found"),
+      "the table vanished instead of saying it is empty");
 
     // Source with products in three different states at once.
-    const sourceHtml = await render("products", {
+    const sourceHtml = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       products: [
@@ -480,10 +477,9 @@ const STORE_ROW = {
 
     // Two tabs over one table, same shape as the destination.
     const sourceTab = (tab, products) =>
-      render("products", {
+      render("source/products", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "source" },
-        isSource: true,
         tab,
         counts: { shared: 1, unshared: 1 },
         products,
@@ -571,10 +567,9 @@ const STORE_ROW = {
     );
     check(
       "a product with no image gets a placeholder, not a broken img",
-      (await render("products", {
+      (await render("source/products", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "source" },
-        isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
         products: [{ ...SOURCE_ROW, image_url: null }],
@@ -613,10 +608,9 @@ const STORE_ROW = {
     );
 
     // A narrowed product says so without listing anything.
-    const narrowedOnly = await render("products", {
+    const narrowedOnly = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       products: [
@@ -640,10 +634,9 @@ const STORE_ROW = {
     );
 
     // No destination connected: the merchant must be told why nothing can go out.
-    const noDestination = await render("products", {
+    const noDestination = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       tab: "unshared",
       counts: { shared: 0, unshared: 1 },
       products: [SOURCE_ROW],
@@ -704,10 +697,9 @@ const STORE_ROW = {
     };
 
     const destination = (tab, products) =>
-      render("products", {
+      render("destination/products", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
-        isSource: false,
         tab,
         counts: { synced: 1, unsynced: 1 },
         products,
@@ -797,10 +789,9 @@ const STORE_ROW = {
       "accepted products could never receive an update");
 
     /* ---- Empty tabs still show the tabs ---- */
-    const emptyUnsynced = await render("products", {
+    const emptyUnsynced = await render("destination/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      isSource: false,
       tab: "unsynced",
       counts: { synced: 0, unsynced: 0 },
       products: [],
@@ -812,6 +803,11 @@ const STORE_ROW = {
       "the other tab may still have something");
     check("and explains itself",
       emptyUnsynced.includes("Nothing is waiting for you"));
+    check("in a row of an otherwise complete table",
+      emptyUnsynced.includes("<table") &&
+        emptyUnsynced.includes("No records found") &&
+        emptyUnsynced.includes('colspan="8"'),
+      "the columns must survive, and the row must span all of them");
     check("with nothing to accept there is no accept button",
       !emptyUnsynced.includes('id="accept-button"'));
   }
@@ -826,10 +822,9 @@ const STORE_ROW = {
         sku: null, price: null, inventory_quantity: null },
     ];
 
-    const html = await render("productDetail", {
+    const html = await render("source/productDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       product: PRODUCT,
       shared: VARIANTS,
       totalVariants: 4,
@@ -858,10 +853,9 @@ const STORE_ROW = {
 
     // The LAST shared variant cannot be removed -- that would push a product
     // with no variants and strip the destination's copy to nothing.
-    const lastOne = await render("productDetail", {
+    const lastOne = await render("source/productDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       product: PRODUCT,
       shared: [VARIANTS[0]],
       totalVariants: 4,
@@ -875,10 +869,9 @@ const STORE_ROW = {
     );
 
     // Nothing shared at all: the page explains rather than looking broken.
-    const notShared = await render("productDetail", {
+    const notShared = await render("source/productDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       product: PRODUCT,
       shared: [],
       totalVariants: 4,
@@ -889,13 +882,14 @@ const STORE_ROW = {
     check("an unshared product says what to do",
       notShared.includes("offered to a destination store yet") &&
         notShared.includes("Allow selected"));
+    check("and its variant table keeps the columns",
+      notShared.includes("<table") && notShared.includes("No records found"));
 
     // The DESTINATION sees the same page, read-only: it cannot change what it
     // was sent, so it gets no controls rather than dead ones.
-    const destinationDetail = await render("productDetail", {
+    const destinationDetail = await render("destination/productDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      isSource: false,
       product: {
         id: 6,
         title: "Blue Shirt",
@@ -930,10 +924,9 @@ const STORE_ROW = {
       destinationDetail.includes("Variants in this product"));
 
     // Offered but not accepted: tell them what to do next.
-    const offeredDetail = await render("productDetail", {
+    const offeredDetail = await render("destination/productDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      isSource: false,
       product: {
         id: 6, title: "Red Cap", vendor: null,
         source_shop_domain: "src.myshopify.com",
@@ -965,7 +958,7 @@ const STORE_ROW = {
     };
 
     const settingsPage = (sync) =>
-      render("settings", {
+      render("destination/settings", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
         connections: [{ ...CONN, sync }],
@@ -1030,7 +1023,7 @@ const STORE_ROW = {
       /name="variant_sku"[^>]*\bchecked\b/.test(priceOff));
 
     // No connection yet: say so rather than showing an empty form.
-    const noConnection = await render("settings", {
+    const noConnection = await render("destination/settings", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
       connections: [],
@@ -1078,10 +1071,9 @@ const STORE_ROW = {
     };
 
     const orders = (role, tab, rows) =>
-      render("orders", {
+      render(`${role}/orders`, {
         ...BASE,
         store: { ...STORE_ROW, store_type: role },
-        isSource: role === "source",
         tab,
         counts: { placed: 1, waiting: 1 },
         orders: rows,
@@ -1129,13 +1121,14 @@ const STORE_ROW = {
 
     const none = await orders("destination", "placed", []);
     check("an empty screen explains itself",
-      none.includes("No orders yet") && !none.includes("<table"));
+      none.includes("No orders yet") && none.includes("No records found"));
+    check("and keeps its columns", none.includes("<table"),
+      "the table vanished instead of saying it is empty");
 
     // Detail: the per-line price comparison.
-    const detail = await render("orderDetail", {
+    const detail = await render("destination/orderDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      isSource: false,
       order: { ...ROW, sync_status: "synced", source_order_name: "#5005" },
       lines: [
         {
@@ -1155,16 +1148,20 @@ const STORE_ROW = {
     check("it says where the margin is set",
       detail.includes("/settings"));
 
-    const emptyDetail = await render("orderDetail", {
+    const emptyDetail = await render("source/orderDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      isSource: true,
       order: ROW,
       lines: [],
     });
 
     check("a detail with no lines left explains why",
       emptyDetail.includes("nothing left to charge for"));
+    check("and keeps its columns",
+      emptyDetail.includes("<table") && emptyDetail.includes("No records found"));
+    check("but drops the totals row",
+      !emptyDetail.includes("Totals"),
+      "totalling nothing would print 0.00 as though it were a real invoice");
   }
 
   console.log("\nPartials");

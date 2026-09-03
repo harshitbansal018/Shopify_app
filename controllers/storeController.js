@@ -159,11 +159,11 @@ exports.getStores = async (req, res) => {
       ? await connectionModel.listForSource(req.storeId)
       : await connectionModel.listForDestination(req.storeId);
 
-    res.render("stores", {
+    // Each role has its own screen under views/<role>/.
+    res.render(`${req.store.store_type}/stores`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isSource,
       connections,
       // Only a source hands a code out; a destination redeems one.
       pairingCode: isSource ? liveCode(req.store) : null,
@@ -295,7 +295,7 @@ exports.getSettings = async (req, res) => {
       connections.map((connection) => connection.id)
     );
 
-    res.render("settings", {
+    res.render("destination/settings", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,

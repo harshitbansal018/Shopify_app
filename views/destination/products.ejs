@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Products</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Products</h1>
+        <p class="shell__sub">
+          Products synced into this store, and where each one came from.
+        </p>
+      </div>
+
+      <div class="shell__actions">
+        <% if (connections.length) { %>
+          <%# Updates to products already accepted -- nothing new is added. %>
+          <button class="btn" type="button" id="sync-button">Sync now</button>
+        <% } %>
+      </div>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <%# One table, two tabs, always shown: "nothing here" on one of them is
+        itself the answer and the other tab may still have something.
+        "Unsynced" is what a source has offered and this store has not
+        accepted; nothing of it has been written here yet. %>
+    <nav class="tabs">
+      <button
+        class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="synced">
+        Synced (<%= counts.synced %>)
+      </button>
+      <button
+        class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="unsynced">
+        Unsynced (<%= counts.unsynced %>)
+      </button>
+    </nav>
+
+    <%# Only when there is something to act on: buttons over an empty list
+        are just dead controls. %>
+    <% if (tab === "unsynced" && products.length) { %>
+      <div class="panel__header">
+        <p class="panel__copy">
+          A source store has offered these. Tick the ones you want and press
+          <strong>Sync selected</strong> &mdash; nothing is added to your
+          store until you do.
+        </p>
+        <div class="panel__add">
+          <button class="btn btn--small" type="button" id="decline-button" disabled>
+            Decline
+          </button>
+          <button class="btn btn--primary btn--small" type="button" id="accept-button" disabled>
+            Sync selected
+          </button>
+        </div>
+      </div>
+    <% } %>
+
+    <%# The table keeps its columns when it is empty and says so in a row of
+        its own: a table that vanishes reads as a screen that failed. %>
+        <table class="table">
+          <thead>
+            <tr>
+              <% if (tab === "unsynced") { %>
+                <th class="table__check">
+                  <input type="checkbox" id="check-all-awaiting" aria-label="Select all">
+                </th>
+              <% } %>
+              <th>Product</th>
+              <th>Source store</th>
+              <th>Inventory</th>
+              <th>Total variants</th>
+              <th>Status</th>
+              <th>Actions</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!products.length) { %>
+              <tr class="row--empty">
+                <%# One cell across every column, including the checkbox one
+                    the Unsynced tab adds. %>
+                <td class="table__empty" colspan="<%= tab === "unsynced" ? 8 : 7 %>">
+                  <strong>No records found</strong>
+                  <span>
+                    <%= tab === "unsynced"
+                        ? "Nothing is waiting for you. When a source store offers a product it appears here."
+                        : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
+                  </span>
+                </td>
+              </tr>
+            <% } else { %>
+            <% products.forEach(function (product) { %>
+              <tr>
+                <% if (tab === "unsynced") { %>
+                  <td class="table__check">
+                    <input
+                      type="checkbox"
+                      class="awaiting-check"
+                      value="<%= product.mapping_id %>"
+                      aria-label="Accept <%= product.title %>">
+                  </td>
+                <% } %>
+                <td>
+                  <span class="media">
+                    <% if (product.image_url) { %>
+                      <img class="media__thumb" src="<%= product.image_url %>"
+                           alt="" loading="lazy" width="40" height="40">
+                    <% } else { %>
+                      <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                    <% } %>
+                    <span class="media__body">
+                      <span class="table__title"><%= product.title %></span>
+                      <span class="muted">
+                        <%# The product's own state at the source. It used to
+                            sit under Status, which now means the sync. %>
+                        <%= (product.status || "").toUpperCase() || "—" %>
+                        <% if (product.vendor) { %>&middot; <%= product.vendor %><% } %>
+                      </span>
+                    </span>
+                  </span>
+                </td>
+                <td>
+                  <%# The point of this screen: which store sent it. %>
+                  <%= product.source_store_name || product.source_shop_domain %>
+                </td>
+                <td>
+                  <%# Red at zero: a product with no stock will sync but sell
+                      nothing, and that is worth noticing before accepting. %>
+                  <span class="<%= product.inventory ? "" : "stock--none" %>">
+                    <%= product.inventory %> in stock
+                  </span>
+                </td>
+                <td><%= product.offered_variant_count %></td>
+                <td>
+                  <%# Clicking the status is what changes it: syncing one
+                      product is a single decision, and ticking a box then
+                      reaching for a button makes two steps of it.
+
+                      'deleted' is the exception -- the product is gone at the
+                      source, so there is nothing to sync back. %>
+                  <% if (product.sync_status === "deleted") { %>
+                    <span class="pill pill--failed">deleted</span>
+                  <% } else if (tab === "unsynced") { %>
+                    <button
+                      class="pill pill--pending pill--action status-toggle"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="sync"
+                      title="Sync into this store">
+                      unsynced
+                    </button>
+                  <% } else { %>
+                    <button
+                      class="pill pill--<%= product.sync_status %> pill--action status-toggle"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="unsync"
+                      title="Stop syncing &mdash; moves back to Unsynced">
+                      <%= product.sync_status %>
+                    </button>
+                    <% if (product.sync_status === "failed" && product.error_message) { %>
+                      <span class="muted"><%= product.error_message %></span>
+                    <% } %>
+                  <% } %>
+                </td>
+                <td class="table__actions">
+                  <button
+                    class="btn btn--small view-product"
+                    type="button"
+                    data-product="<%= product.mapping_id %>">
+                    View
+                  </button>
+                </td>
+              </tr>
+            <% }); %>
+            <% } %>
+          </tbody>
+        </table>
+
+  </main>
+
+  <script>
+    (function () {
+      var acceptButton = document.getElementById("accept-button");
+      var syncButton = document.getElementById("sync-button");
+      var declineButton = document.getElementById("decline-button");
+      var checkAll = document.getElementById("check-all-awaiting");
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      /* ---------------- tabs ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            // A real navigation, not a class toggle: the two tabs hold
+            // different rows and the server decides which ones.
+            window.appNavigate("/products?tab=" + button.dataset.tab);
+          });
+        });
+
+      /* ---------------- view one product ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".view-product"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            window.appNavigate("/products/" + button.dataset.product);
+          });
+        });
+
+      /* ---------------- refresh what is already accepted ---------------- */
+
+      if (syncButton) {
+        syncButton.addEventListener("click", async function () {
+          pageError.hidden = true;
+          syncButton.disabled = true;
+          syncButton.textContent = "Syncing…";
+
+          try {
+            var response = await window.appFetch("/products/sync", { method: "POST" });
+            var data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok) throw new Error(data.error || "Request failed");
+
+            window.appToast(data.synced + " updated, " + data.failed + " failed");
+            window.appNavigate("/products");
+          } catch (err) {
+            syncButton.disabled = false;
+            syncButton.textContent = "Sync now";
+            fail(err.message);
+          }
+        });
+      }
+
+      /* ---------------- the status pill, as a switch ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".status-toggle"))
+        .forEach(function (pill) {
+          pill.addEventListener("click", async function () {
+            var unsync = pill.dataset.action === "unsync";
+
+            // Syncing writes to the store, so it needs no warning; stopping
+            // one does, because the merchant is giving up future updates.
+            if (unsync && !window.confirm(
+              "Stop syncing this product?\n\n" +
+              "It moves back to Unsynced. What is already in your store stays, " +
+              "it just will not be updated any more."
+            )) return;
+
+            pageError.hidden = true;
+            pill.disabled = true;
+            pill.textContent = unsync ? "stopping…" : "syncing…";
+
+            try {
+              var response = await window.appFetch(
+                unsync ? "/products/decline" : "/products/accept",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ mapping_ids: [pill.dataset.mapping] })
+                }
+              );
+
+              var data = await response.json().catch(function () { return {}; });
+
+              if (!response.ok) throw new Error(data.error || "Request failed");
+
+              window.appToast(unsync ? "Moved to Unsynced" : "Synced");
+              // The row belongs on the other tab now, so go and show it there.
+              window.appNavigate("/products?tab=" + (unsync ? "unsynced" : "synced"));
+            } catch (err) {
+              pill.disabled = false;
+              pill.textContent = pill.dataset.was;
+              fail(err.message);
+            }
+          });
+
+          // Remembered before any click, so a failure can put the word back.
+          pill.dataset.was = pill.textContent.trim();
+        });
+
+      /* ---------------- accept what is on offer ---------------- */
+
+      // Nothing offered: the rest of this page is a read-only list.
+      if (!acceptButton) return;
+
+      function checks() {
+        return Array.prototype.slice.call(
+          document.querySelectorAll(".awaiting-check")
+        );
+      }
+
+      function chosen() {
+        return checks()
+          .filter(function (c) { return c.checked; })
+          .map(function (c) { return c.value; });
+      }
+
+      function refresh() {
+        var count = chosen().length;
+        acceptButton.disabled = count === 0;
+        declineButton.disabled = count === 0;
+        acceptButton.textContent = count
+          ? "Sync " + count + " selected"
+          : "Sync selected";
+      }
+
+      checks().forEach(function (check) {
+        check.addEventListener("change", refresh);
+      });
+
+      if (checkAll) {
+        checkAll.addEventListener("change", function () {
+          checks().forEach(function (c) { c.checked = checkAll.checked; });
+          refresh();
+        });
+      }
+
+      async function send(url, label) {
+        pageError.hidden = true;
+        acceptButton.disabled = true;
+        declineButton.disabled = true;
+        acceptButton.textContent = label;
+
+        try {
+          var response = await window.appFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mapping_ids: chosen() })
+          });
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) throw new Error(data.error || "Request failed");
+
+          return data;
+        } catch (err) {
+          refresh();
+          fail(err.message);
+          return null;
+        }
+      }
+
+      acceptButton.addEventListener("click", async function () {
+        // Accepting also pulls the products in, so this can take a moment.
+        var data = await send("/products/accept", "Syncing…");
+
+        if (!data) return;
+
+        window.appToast(data.synced + " synced, " + data.failed + " failed");
+        // They are synced now, so show them where they landed.
+        window.appNavigate("/products?tab=synced");
+      });
+
+      declineButton.addEventListener("click", async function () {
+        if (!window.confirm(
+          "Stop receiving " + chosen().length + " product(s)?\n\n" +
+          "Anything already in your store stays; it just will not be updated."
+        )) return;
+
+        var data = await send("/products/decline", "Declining…");
+
+        if (!data) return;
+
+        window.appToast("Declined " + data.declined + " product(s)");
+        window.appNavigate("/products");
+      });
+    })();
+  </script>
+
+</body>
+
+</html>

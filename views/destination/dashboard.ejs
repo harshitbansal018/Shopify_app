@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Dashboard</h1>
+        <!-- <p class="shell__sub">
+          <%= store.store_name || shop %> &mdash;
+          <strong><%= store.store_type %></strong> store
+        </p> -->
+      </div>
+    </header>
+
+    <%
+      var total = stats.cards.synced + stats.cards.unsynced;
+
+      /* Pie slices are drawn with stroke-dasharray on a circle: each arc is
+         "its share of the circumference, then the rest as a gap", rotated by
+         however much came before it. No library, no canvas, and it scales. */
+      var R = 60;
+      var C = 2 * Math.PI * R;
+      var slices = [
+        { label: "Synced", value: stats.cards.synced, className: "slice--synced" },
+        { label: "Unsynced", value: stats.cards.unsynced, className: "slice--unsynced" },
+      ];
+      var offset = 0;
+    %>
+
+    <section class="cards">
+      <div class="card">
+        <span class="card__label">Total synced products</span>
+        <span class="card__value"><%= stats.cards.synced %></span>
+        <span class="card__note">Live in this store</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Unsynced products</span>
+        <span class="card__value <%= stats.cards.unsynced ? "card__value--warn" : "" %>">
+          <%= stats.cards.unsynced %>
+        </span>
+        <span class="card__note">
+          <% if (stats.cards.unsynced) { %>
+            Waiting for you on <s-link href="/products?tab=unsynced">Products</s-link>
+          <% } else { %>
+            Nothing waiting
+          <% } %>
+        </span>
+      </div>
+      <div class="card">
+        <span class="card__label">Stores connected</span>
+        <span class="card__value"><%= stats.cards.stores %></span>
+        <span class="card__note">Sending products here</span>
+      </div>
+    </section>
+
+    <div class="charts">
+
+      <section class="panel">
+        <h2 class="panel__title">Sync status</h2>
+
+        <% if (!total) { %>
+          <p class="panel__copy">
+            Nothing has been offered to this store yet.
+          </p>
+        <% } else { %>
+          <div class="chart chart--pie">
+            <svg viewBox="0 0 160 160" role="img"
+                 aria-label="<%= stats.cards.synced %> synced, <%= stats.cards.unsynced %> unsynced">
+              <g transform="rotate(-90 80 80)">
+                <% slices.forEach(function (slice) { %>
+                  <% if (slice.value) { %>
+                    <circle
+                      class="slice <%= slice.className %>"
+                      cx="80" cy="80" r="<%= R %>"
+                      stroke-dasharray="<%= (slice.value / total * C).toFixed(2) %> <%= C.toFixed(2) %>"
+                      stroke-dashoffset="<%= (-offset / total * C).toFixed(2) %>"></circle>
+                    <% offset += slice.value; %>
+                  <% } %>
+                <% }); %>
+              </g>
+              <text x="80" y="76" class="chart__total"><%= total %></text>
+              <text x="80" y="94" class="chart__caption">products</text>
+            </svg>
+
+            <ul class="legend">
+              <% slices.forEach(function (slice) { %>
+                <li class="legend__item">
+                  <span class="legend__swatch <%= slice.className %>"></span>
+                  <span><%= slice.label %></span>
+                  <span class="legend__value">
+                    <%= slice.value %>
+                    <span class="muted"><%= Math.round(slice.value / total * 100) %>%</span>
+                  </span>
+                </li>
+              <% }); %>
+            </ul>
+          </div>
+        <% } %>
+      </section>
+
+      <section class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Connected source stores</h2>
+          <s-link href="/stores">Manage</s-link>
+        </div>
+
+        <% if (!stats.bySource.length) { %>
+          <p class="panel__copy">
+            No source store is connected. Get a pairing code from one and
+            enter it on <s-link href="/stores">Stores</s-link>.
+          </p>
+        <% } else { %>
+          <%
+            /* Bars are scaled against the biggest store, not against the
+               total: otherwise one large store flattens every other bar to
+               an unreadable sliver. */
+            var peak = Math.max.apply(null, stats.bySource.map(function (s) {
+              return s.synced + s.unsynced;
+            })) || 1;
+          %>
+          <ul class="bars">
+            <% stats.bySource.forEach(function (source) { %>
+              <li class="bars__row">
+                <span class="bars__label">
+                  <span class="bars__name" title="<%= source.domain %>">
+                    <%= source.name %>
+                  </span>
+                  <span class="muted"><%= source.domain %></span>
+                </span>
+
+                <span class="bars__track">
+                  <span class="bars__fill slice--synced"
+                        style="width: <%= (source.synced / peak * 100).toFixed(1) %>%"></span>
+                  <span class="bars__fill slice--unsynced"
+                        style="width: <%= (source.unsynced / peak * 100).toFixed(1) %>%"></span>
+                </span>
+
+                <span class="bars__value">
+                  <% if (source.synced + source.unsynced) { %>
+                    <%= source.synced + source.unsynced %>
+                  <% } else { %>
+                    <%# Connected, but has not offered anything yet. Saying so
+                        beats a blank row the merchant has to interpret. %>
+                    <span class="muted">none yet</span>
+                  <% } %>
+                </span>
+
+                <% if (!source.active) { %>
+                  <span class="bars__status">
+                    <span class="pill pill--<%= source.status %>"><%= source.status %></span>
+                  </span>
+                <% } %>
+              </li>
+            <% }); %>
+          </ul>
+
+          <ul class="legend legend--inline">
+            <li class="legend__item">
+              <span class="legend__swatch slice--synced"></span><span>Synced</span>
+            </li>
+            <li class="legend__item">
+              <span class="legend__swatch slice--unsynced"></span><span>Unsynced</span>
+            </li>
+          </ul>
+        <% } %>
+      </section>
+
+    </div>
+
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">Top selling products</h2>
+        <span class="pill pill--paused">Sample data</span>
+      </div>
+
+      <p class="panel__copy">
+        <%# Orders are not synced yet: the tables exist but nothing fills
+            them. These rows are placeholders so the shape is settled. %>
+        Sales are not being tracked yet. Once orders are synced this will show
+        the synced products that actually sold, biggest first.
+      </p>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Source store</th>
+            <th>Units sold</th>
+            <th>Revenue</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!stats.topSellers.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="4">
+                <strong>No records found</strong>
+                <span>Nothing has sold yet.</span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% stats.topSellers.forEach(function (row) { %>
+            <tr class="row--placeholder">
+              <td><span class="table__title"><%= row.title %></span></td>
+              <td class="muted"><%= row.source %></td>
+              <td><%= row.units %></td>
+              <td><%= row.revenue %></td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+</body>
+
+</html>

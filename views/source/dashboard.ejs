@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Dashboard</h1>
+        <!-- <p class="shell__sub">
+          <%= store.store_name || shop %> &mdash;
+          <strong><%= store.store_type %></strong> store
+        </p> -->
+      </div>
+    </header>
+
+    <%# A source store's own work lives on Products; this stays a summary. %>
+    <section class="panel">
+      <h2 class="panel__title">Store</h2>
+      <dl class="facts">
+        <div class="facts__row">
+          <dt>Name</dt>
+          <dd><%= store.store_name || "—" %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Domain</dt>
+          <dd><%= store.shop_domain %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Type</dt>
+          <%# Chosen once at install; there is no route that changes it. %>
+          <dd><%= store.store_type %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Currency</dt>
+          <dd><%= store.currency || "—" %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>API version</dt>
+          <dd><%= store.api_version %></dd>
+        </div>
+      </dl>
+    </section>
+
+  </main>
+
+</body>
+
+</html>

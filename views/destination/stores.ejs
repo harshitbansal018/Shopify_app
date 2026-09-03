@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Stores</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Stores</h1>
+        <!-- <p class="shell__sub">
+          <%= store.store_name || shop %> &mdash;
+          <strong><%= store.store_type %></strong> store
+        </p> -->
+      </div>
+    </header>
+
+    <%# A destination enters the source's code; the source hands it out. %>
+    <section class="panel">
+      <h2 class="panel__title">Connect a source store</h2>
+      <p class="panel__copy">
+        Open this app on the source store, generate its pairing code, and
+        enter it here. The connection goes live straight away.
+      </p>
+
+      <form id="connect-form">
+        <label class="field">
+          <span class="field__label">Source pairing code</span>
+          <input
+            class="field__input field__input--compact"
+            type="text"
+            id="connect-code"
+            name="code"
+            placeholder="ABCD-1234"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="9">
+        </label>
+
+        <p class="notice notice--error" id="connect-error" hidden></p>
+
+        <div class="shell__actions">
+          <button class="btn btn--primary" type="submit" id="connect-button">Connect</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Source stores sending here</h2>
+
+      <% if (!connections.length) { %>
+        <p class="panel__copy">
+          No source store is connected yet. Enter a code above.
+        </p>
+      <% } else { %>
+        <ul class="stores">
+          <% connections.forEach(function (connection) { %>
+            <% var other = connection.source; %>
+            <li class="stores__row">
+              <span class="stores__name">
+                <%= other.store_name || other.shop_domain %>
+                <% if (other.store_name) { %>
+                  <span class="muted"><%= other.shop_domain %></span>
+                <% } %>
+              </span>
+              <span class="stores__meta">
+                <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+                <span class="muted"><%= connection.sync_mode %> sync</span>
+              </span>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      var connectForm = document.getElementById("connect-form");
+      var connectInput = document.getElementById("connect-code");
+      var connectButton = document.getElementById("connect-button");
+      var connectError = document.getElementById("connect-error");
+
+      function showError(message) {
+        connectError.textContent = message;
+        connectError.hidden = false;
+      }
+
+      /* ---------------- redeem a code ---------------- */
+      connectForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        connectError.hidden = true;
+
+        var code = connectInput.value.trim();
+
+        if (!code) {
+          return showError("Enter the source store's code.");
+        }
+
+        connectButton.disabled = true;
+
+        try {
+          var response = await window.appFetch("/stores/connect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: code })
+          });
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) {
+            connectButton.disabled = false;
+            return showError(data.error || "Could not connect.");
+          }
+
+          window.appToast("Connected to " + data.connection.source);
+          window.appNavigate("/stores");
+        } catch (err) {
+          connectButton.disabled = false;
+          showError("Could not reach the app. Try again.");
+        }
+      });
+    })();
+  </script>
+
+</body>
+
+</html>

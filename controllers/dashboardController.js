@@ -99,11 +99,11 @@ exports.getDashboard = async (req, res) => {
 
     const isDestination = req.store.store_type === "destination";
 
-    res.render("dashboard", {
+    // Each role has its own screen under views/<role>/.
+    res.render(`${req.store.store_type}/dashboard`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isDestination,
       stats: isDestination ? await destinationStats(req.storeId) : null,
     });
   } catch (err) {

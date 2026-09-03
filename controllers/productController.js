@@ -55,11 +55,10 @@ exports.getProducts = async (req, res) => {
         variants: variants.get(product.mapping_id) || [],
       });
 
-      return res.render("products", {
+      return res.render("destination/products", {
         shop: req.shop,
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
-        isSource: false,
         tab,
         counts: { synced: synced.length, unsynced: unsynced.length },
         products: (tab === "synced" ? synced : unsynced).map(withVariants),
@@ -97,11 +96,10 @@ exports.getProducts = async (req, res) => {
     const requested = req.query.tab === "shared" ? "shared" : req.query.tab;
     const tab = requested || (unshared.length ? "unshared" : "shared");
 
-    res.render("products", {
+    res.render("source/products", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isSource: true,
       tab,
       counts: { shared: shared.length, unshared: unshared.length },
       products: (tab === "shared" ? shared : unshared).map(withVariants),
@@ -253,11 +251,10 @@ exports.getProduct = async (req, res) => {
         offered.mapping_id,
       ]);
 
-      return res.render("productDetail", {
+      return res.render("destination/productDetail", {
         shop: req.shop,
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
-        isSource: false,
         product: offered,
         shared: variants.get(offered.mapping_id) || [],
         totalVariants: offered.offered_variant_count,
@@ -283,11 +280,10 @@ exports.getProduct = async (req, res) => {
     const live = mappings.find((mapping) => mapping.sync_status !== "deleted");
     const picked = live ? live.allowed_variant_ids : product.selected_variant_ids;
 
-    res.render("productDetail", {
+    res.render("source/productDetail", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isSource: true,
       product,
       shared: picked
         ? variants.filter((variant) => picked.indexOf(variant.id) !== -1)

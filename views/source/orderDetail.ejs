@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title><%= order.destination_order_name || "Order" %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <button class="link link--back" type="button" id="back">&larr; Orders</button>
+        <h1><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></h1>
+        <p class="shell__sub">
+          Sold by
+          <strong><%= order.destination_store_name || order.destination_shop_domain %></strong>,
+          supplied by
+          <strong><%= order.source_store_name || order.source_shop_domain %></strong>
+        </p>
+      </div>
+      <span class="pill pill--<%= order.sync_status %>">
+        <%= order.sync_status === "synced" ? "placed" : order.sync_status %>
+      </span>
+    </header>
+
+    <% if (order.sync_status !== "synced" && order.error_message) { %>
+      <p class="notice notice--error"><%= order.error_message %></p>
+    <% } %>
+
+    <section class="panel">
+      <h2 class="panel__title">What was bought</h2>
+
+      <p class="panel__copy">
+        <%# The whole point of the two price columns. Saying it once here is
+            cheaper than a merchant working it out from the numbers. %>
+        This order is placed here at your own prices. The margin between the
+        two columns belongs to the destination store.
+      </p>
+
+      <%# The table keeps its columns when it is empty and says so in a row of
+          its own: a table that vanishes reads as a screen that failed. %>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>SKU</th>
+            <th>Qty</th>
+            <th>Your price</th>
+            <th>Customer paid</th>
+            <th>Your total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% var sourceTotal = 0; var paidTotal = 0; %>
+          <% if (!lines.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="6">
+                <strong>No records found</strong>
+                <span>
+                  None of the products on this order are synced from this store any
+                  more, so there is nothing left to charge for.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% lines.forEach(function (line) { %>
+            <%
+              var lineSource = (line.source_price || 0) * line.quantity;
+              var linePaid = (line.destination_price || 0) * line.quantity;
+              sourceTotal += lineSource;
+              paidTotal += linePaid;
+            %>
+            <tr>
+              <td>
+                <span class="media__body">
+                  <span class="table__title"><%= line.source_product_title || line.title %></span>
+                  <% if (line.source_variant_title) { %>
+                    <span class="muted"><%= line.source_variant_title %></span>
+                  <% } %>
+                </span>
+              </td>
+              <td class="muted"><%= line.source_sku || line.destination_sku || "—" %></td>
+              <td><%= line.quantity %></td>
+              <td>
+                <%= order.currency %>
+                <%= line.source_price === null ? "—" : line.source_price.toFixed(2) %>
+              </td>
+              <td class="muted">
+                <%= order.currency %>
+                <%= line.destination_price === null ? "—" : line.destination_price.toFixed(2) %>
+              </td>
+              <td><strong><%= order.currency %> <%= lineSource.toFixed(2) %></strong></td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+        <%# Nothing to total when there are no lines. %>
+        <% if (lines.length) { %>
+        <tfoot>
+          <tr>
+            <td colspan="3"></td>
+            <td class="muted">Totals</td>
+            <td class="muted"><%= order.currency %> <%= paidTotal.toFixed(2) %></td>
+            <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
+          </tr>
+        </tfoot>
+        <% } %>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Order</h2>
+      <dl class="facts">
+        <div class="facts__row">
+          <dt>Sale</dt>
+          <dd><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Order here</dt>
+          <dd>
+            <%# Named only once it has been placed here; until then this row
+                is the honest answer to "where is my order?". %>
+            <%= order.source_order_name || "not placed yet" %>
+          </dd>
+        </div>
+        <div class="facts__row">
+          <dt>Payment</dt>
+          <dd><%= order.financial_status || "—" %></dd>
+        </div>
+        <div class="facts__row">
+          <dt>Fulfillment</dt>
+          <dd><%= order.fulfillment_status || "unfulfilled" %></dd>
+        </div>
+        <% if (order.cancelled_at) { %>
+          <div class="facts__row">
+            <dt>Cancelled</dt>
+            <%# Cancelling the sale does NOT cancel the order raised here. That
+                needs a decision about refunds, so it is left to a human. %>
+            <dd>yes &mdash; this order was not cancelled automatically</dd>
+          </div>
+        <% } %>
+      </dl>
+    </section>
+
+  </main>
+
+  <script>
+    document.getElementById("back").addEventListener("click", function () {
+      window.appNavigate("/orders");
+    });
+  </script>
+
+</body>
+
+</html>

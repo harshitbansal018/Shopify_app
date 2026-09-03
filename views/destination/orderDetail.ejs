@@ -2,14 +2,14 @@
 <html lang="en">
 
 <head>
-  <%- include("partials/head") %>
+  <%- include("../partials/head") %>
   <title><%= order.destination_order_name || "Order" %></title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 
 <body>
 
-  <%- include("partials/nav") %>
+  <%- include("../partials/nav") %>
 
   <main class="shell">
 
@@ -40,19 +40,12 @@
         <%# The whole point of the two price columns. Saying it once here is
             cheaper than a merchant working it out from the numbers. %>
         The source store is charged its own price for each line. The margin
-        between the two columns is the destination's, set under
+        between the two columns is yours, set under
         <s-link href="/settings">Settings</s-link>.
       </p>
 
-      <% if (!lines.length) { %>
-
-        <p class="panel__copy">
-          None of the products on this order are synced from this source any
-          more, so there is nothing left to charge for.
-        </p>
-
-      <% } else { %>
-
+      <%# The table keeps its columns when it is empty and says so in a row of
+          its own: a table that vanishes reads as a screen that failed. %>
       <table class="table">
         <thead>
           <tr>
@@ -66,6 +59,17 @@
         </thead>
         <tbody>
           <% var sourceTotal = 0; var paidTotal = 0; %>
+          <% if (!lines.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="6">
+                <strong>No records found</strong>
+                <span>
+                  None of the products on this order are synced from this source any
+                  more, so there is nothing left to charge for.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
           <% lines.forEach(function (line) { %>
             <%
               var lineSource = (line.source_price || 0) * line.quantity;
@@ -95,7 +99,10 @@
               <td><strong><%= order.currency %> <%= lineSource.toFixed(2) %></strong></td>
             </tr>
           <% }); %>
+          <% } %>
         </tbody>
+        <%# Nothing to total when there are no lines. %>
+        <% if (lines.length) { %>
         <tfoot>
           <tr>
             <td colspan="3"></td>
@@ -104,8 +111,8 @@
             <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
           </tr>
         </tfoot>
+        <% } %>
       </table>
-      <% } %>
     </section>
 
     <section class="panel">
@@ -116,7 +123,7 @@
           <dd><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></dd>
         </div>
         <div class="facts__row">
-          <dt>Order here</dt>
+          <dt>Order at source</dt>
           <dd>
             <%# Named only once the source has accepted it; until then this row
                 is the honest answer to "where is my order?". %>
@@ -134,9 +141,9 @@
         <% if (order.cancelled_at) { %>
           <div class="facts__row">
             <dt>Cancelled</dt>
-            <%# Cancelling the sale does NOT cancel the order raised here. That
-                needs a decision about refunds, so it is left to a human. %>
-            <dd>yes &mdash; this order was not cancelled automatically</dd>
+            <%# Cancelling the sale does NOT cancel the order at the source.
+                That needs a decision about refunds, so it is left to a human. %>
+            <dd>yes &mdash; the source order was not cancelled automatically</dd>
           </div>
         <% } %>
       </dl>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title><%= product.title %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <button class="link link--back" type="button" id="back">&larr; Products</button>
+        <h1><%= product.title %></h1>
+        <p class="shell__sub">
+          <%= shared.length %> of <%= totalVariants %>
+          variant<%= totalVariants === 1 ? "" : "s" %> shared
+          <% if (product.vendor) { %> &mdash; <%= product.vendor %><% } %>
+        </p>
+      </div>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <% if (!isShared) { %>
+      <p class="notice notice--warn">
+        These variants are on offer from
+        <strong><%= product.source_store_name || product.source_shop_domain %></strong>.
+        Nothing has been added to your store yet &mdash; tick the product on the
+        Products list and press <strong>Sync selected</strong>.
+      </p>
+    <% } %>
+
+    <!-- <section class="panel">
+      <h2 class="panel__title">Variants in this product</h2> -->
+
+        <%# Read-only: this store cannot change what it was sent, so there is
+            no actions column at all rather than a row of dead buttons. The
+            columns stay when the table is empty; a table that vanishes reads
+            as a screen that failed. %>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <th>SKU</th>
+              <th>Price</th>
+              <th>Stock</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!shared.length) { %>
+              <tr class="row--empty">
+                <td class="table__empty" colspan="4">
+                  <strong>No records found</strong>
+                  <span>This product has no variants yet.</span>
+                </td>
+              </tr>
+            <% } else { %>
+            <% shared.forEach(function (variant) { %>
+              <tr>
+                <td>
+                  <span class="table__title">
+                    <%# Shopify calls a single default variant "Default Title",
+                        which means nothing to a merchant. These rows carry the
+                        name under source_title. %>
+                    <% var name = [variant.option1, variant.option2, variant.option3]
+                         .filter(Boolean).join(" / ")
+                       || variant.source_title; %>
+                    <%= name === "Default Title" ? "Single variant" : (name || "—") %>
+                  </span>
+                </td>
+                <td>
+                  <% if (variant.sku) { %>
+                    <span class="variants__sku"><%= variant.sku %></span>
+                  <% } else { %>
+                    <span class="muted">—</span>
+                  <% } %>
+                </td>
+                <td>
+                  <%= variant.source_price === null || variant.source_price === undefined
+                      ? "—" : variant.source_price %>
+                </td>
+                <td class="muted">
+                  <%= variant.inventory_quantity === null ||
+                      variant.inventory_quantity === undefined
+                      ? "—" : variant.inventory_quantity %>
+                </td>
+              </tr>
+            <% }); %>
+            <% } %>
+          </tbody>
+        </table>
+
+    </section>
+
+  </main>
+
+  <script>
+    document.getElementById("back").addEventListener("click", function () {
+      window.appNavigate("/products");
+    });
+  </script>
+
+</body>
+
+</html>
