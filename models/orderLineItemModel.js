@@ -167,7 +167,9 @@ async function sourceLinesForOrder(orderId) {
             svm.price  AS source_price,
             svm.sku    AS source_sku,
             svm.title  AS source_variant_title,
-            sp.title   AS source_product_title
+            sp.title   AS source_product_title,
+            sp.shopify_product_id AS source_shopify_product_id,
+            pm.destination_shopify_product_id
        FROM order_line_items li
        JOIN mapping_variant_products mvp ON mvp.id  = li.mapped_variant_id
        JOIN product_mappings pm          ON pm.id  = mvp.product_mapping_id
@@ -247,6 +249,9 @@ async function topSellingProducts(storeId, { limit = 5 } = {}) {
     `SELECT sp.id AS source_product_id,
             MAX(COALESCE(sp.title, li.title, 'Deleted product')) AS title,
             MAX(COALESCE(source_store.store_name, source_store.shop_domain)) AS source,
+            MAX(source_store.shop_domain) AS source_shop_domain,
+            MAX(sp.shopify_product_id) AS source_shopify_product_id,
+            MAX(pm.destination_shopify_product_id) AS destination_shopify_product_id,
             MAX(o.currency) AS currency,
             SUM(li.quantity) AS units,
             SUM((li.quantity * li.price) - COALESCE(li.total_discount, 0)) AS revenue
@@ -273,6 +278,50 @@ async function topSellingProducts(storeId, { limit = 5 } = {}) {
   }));
 }
 
+/** Highest-selling products owned by one source store, across every connected
+ * destination. Revenue uses the source variant price because that is what the
+ * source is owed; destination markups belong to the receiving store. */
+async function topSellingSourceProducts(sourceStoreId, { limit = 5 } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 50));
+
+  const rows = await query(
+    `SELECT sp.id AS source_product_id,
+            MAX(COALESCE(sp.title, li.title, 'Deleted product')) AS title,
+            MAX(sp.shopify_product_id) AS source_shopify_product_id,
+            MAX(source_store.currency) AS currency,
+            COUNT(DISTINCT o.id) AS orders,
+            COUNT(DISTINCT connection.destination_store_id) AS stores,
+            SUM(li.quantity) AS units,
+            SUM(li.quantity * COALESCE(source_variant.price, 0)) AS revenue
+       FROM order_line_items li
+       JOIN orders o ON o.id = li.order_id
+       JOIN mapping_variant_products mapped_variant
+         ON mapped_variant.id = li.mapped_variant_id
+       JOIN source_variant_mappings source_variant
+         ON source_variant.id = mapped_variant.source_variant_mapping_id
+       JOIN product_mappings mapping
+         ON mapping.id = mapped_variant.product_mapping_id
+       JOIN source_products sp ON sp.id = mapping.source_product_id
+       JOIN store_connections connection ON connection.id = mapping.connection_id
+       JOIN stores source_store ON source_store.id = connection.source_store_id
+      WHERE connection.source_store_id = ?
+        AND o.test = 0
+        AND o.cancelled_at IS NULL
+      GROUP BY sp.id
+      ORDER BY units DESC, revenue DESC, title ASC
+      LIMIT ?`,
+    [sourceStoreId, safeLimit]
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    orders: Number(row.orders || 0),
+    stores: Number(row.stores || 0),
+    units: Number(row.units || 0),
+    revenue: Number(row.revenue || 0),
+  }));
+}
+
 module.exports = {
   resolveMappedVariants,
   syncForOrder,
@@ -282,5 +331,6 @@ module.exports = {
   destinationLinesForConnection,
   unitsSoldByVariant,
   topSellingProducts,
+  topSellingSourceProducts,
   toMoney,
 };

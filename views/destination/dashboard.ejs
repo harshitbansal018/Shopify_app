@@ -207,7 +207,15 @@
           <% } else { %>
           <% stats.topSellers.forEach(function (row) { %>
             <tr>
-              <td><span class="table__title"><%= row.title %></span></td>
+              <td>
+                <% if (row.destination_shopify_product_id) { %>
+                  <a class="table__title record-link"
+                     href="<%= shopifyAdminUrl(shop, 'products', row.destination_shopify_product_id) %>"
+                     target="_blank" rel="noopener noreferrer"><%= row.title %></a>
+                <% } else { %>
+                  <span class="table__title"><%= row.title %></span>
+                <% } %>
+              </td>
               <td class="muted"><%= row.source %></td>
               <td><%= row.units %></td>
               <td><%= row.currency || store.currency || "" %> <%= Number(row.revenue).toFixed(2) %></td>

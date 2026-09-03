@@ -15,6 +15,7 @@ process.env.SHOPIFY_API_SECRET = "test_api_secret";
 process.env.HOST = "https://app.example.com";
 
 const { serializeForScript } = require(path.join(SERVER, "utils/html"));
+const { shopifyAdminUrl } = require(path.join(SERVER, "utils/shop"));
 
 let passed = 0;
 let failed = 0;
@@ -33,6 +34,7 @@ function check(name, condition, detail) {
 function render(view, locals) {
   return ejs.renderFile(path.join(VIEWS, `${view}.ejs`), {
     json: serializeForScript,
+    shopifyAdminUrl,
     ...locals,
   });
 }
@@ -74,34 +76,66 @@ const STORE_ROW = {
       units: 3,
       revenue: 120,
       currency: "USD",
+      destination_shopify_product_id: 9001,
     }];
 
-    // SOURCE: the plain store summary. Its own work is on Products.
-    await expectRenders(
-      "source sees the store summary",
-      "source/dashboard",
-      { ...BASE, store: STORE_ROW, stats: null },
-      ["Demo Store", "demo.myshopify.com", "Dashboard"]
-    );
+    const source = (stats) =>
+      render("source/dashboard", { ...BASE, store: STORE_ROW, stats });
 
-    // A freshly installed shop can be missing most of these.
-    await expectRenders(
-      "renders with sparse store details",
-      "source/dashboard",
-      {
-        ...BASE,
-        store: {
-          id: 1,
-          shop_domain: "demo.myshopify.com",
-          store_name: null,
-          store_type: "source",
-          currency: null,
-          api_version: "2025-01",
+    const sourceBusy = await source({
+      cards: { staged: 10, shared: 8, unshared: 2, stores: 2 },
+      byDestination: [
+        {
+          domain: "retail.myshopify.com", name: "Retail",
+          status: "active", active: true, synced: 6, unsynced: 1,
         },
-        stats: null,
-      },
-      ["—"] // falls back to an em-dash rather than printing "null"
-    );
+        {
+          domain: "outlet.myshopify.com", name: "Outlet",
+          status: "paused", active: false, synced: 2, unsynced: 1,
+        },
+      ],
+      topSellers: [{
+        title: "Blue Shirt",
+        source_shopify_product_id: "7001",
+        stores: 2,
+        orders: 3,
+        units: 5,
+        revenue: 62.5,
+        currency: "USD",
+      }],
+    });
+
+    check("source gets the full dashboard",
+        sourceBusy.includes("Products staged") &&
+        sourceBusy.includes("Sharing status") &&
+        sourceBusy.includes("Connected destination stores") &&
+        sourceBusy.includes("Top selling products"));
+    check("source cards use real product counts",
+      sourceBusy.includes(">10<") && sourceBusy.includes(">8<") &&
+        sourceBusy.includes("2 ready on"));
+    check("source lists every destination",
+      sourceBusy.includes("retail.myshopify.com") &&
+        sourceBusy.includes("outlet.myshopify.com"));
+    check("source flags a paused destination",
+      sourceBusy.includes("pill--paused") && sourceBusy.includes(">paused<"));
+    check("source top products use order totals",
+      sourceBusy.includes("Blue Shirt") && sourceBusy.includes("USD 62.50") &&
+        sourceBusy.includes(">5<"));
+    check("source top products open Shopify",
+      sourceBusy.includes("https://demo.myshopify.com/admin/products/7001"));
+
+    const sourceEmpty = await source({
+      cards: { staged: 0, shared: 0, unshared: 0, stores: 0 },
+      byDestination: [],
+      topSellers: [],
+    });
+
+    check("an empty source explains its next steps",
+        sourceEmpty.includes("No products staged yet") &&
+        sourceEmpty.includes("No destination store is connected") &&
+        sourceEmpty.includes("None of your synced products have sold yet"));
+    check("an empty source has no invalid chart values",
+      !sourceEmpty.includes("NaN") && !sourceEmpty.includes("stroke-dasharray"));
 
     const destination = (stats) =>
       render("destination/dashboard", {
@@ -188,6 +222,8 @@ const STORE_ROW = {
     check("the top sellers table uses real records",
       busy.includes("Top selling products") &&
         busy.includes("Magnetic Filter Rod") && busy.includes("USD 120.00"));
+    check("top-selling product names open Shopify",
+      busy.includes("https://demo.myshopify.com/admin/products/9001"));
     check("the dashboard contains no sample sales",
       !busy.includes("Sample data") && !busy.includes("Sample product"));
 
@@ -523,6 +559,8 @@ const STORE_ROW = {
     });
 
     check("source lists every product", sourceHtml.includes("Black Shoes"));
+    check("source product names open Shopify",
+      sourceHtml.includes("https://demo.myshopify.com/admin/products/900"));
     check("unshared product says so", sourceHtml.includes("Not shared"));
     check("pending is shown", sourceHtml.includes("1 pending"));
     check("synced is shown", sourceHtml.includes("1 synced"));
@@ -840,6 +878,8 @@ const STORE_ROW = {
       /view-product"[\s\S]{0,60}data-product="6"/.test(unsynced) &&
         /view-product"[\s\S]{0,60}data-product="5"/.test(synced),
       "a destination only knows a product through its mapping");
+    check("synced destination product names open Shopify",
+      synced.includes("https://demo.myshopify.com/admin/products/700"));
 
     /* ---- Destination never gets source controls ---- */
     check("no source-side controls anywhere",
@@ -1163,9 +1203,17 @@ const STORE_ROW = {
     const open = await orders("destination", "open", [ROW]);
 
     check("both tabs are shown with their counts",
+<<<<<<< HEAD
       open.includes("Awaiting supplier (1)") && open.includes("Done (1)"));
     check("the sale is named", open.includes("#2001"));
     check("and so is the store that supplies it", open.includes("Warehouse"));
+=======
+      waiting.includes("Placed (1)") && waiting.includes("Waiting (1)"));
+    check("the sale is named", waiting.includes("#2001"));
+    check("order numbers open the destination Shopify order",
+      waiting.includes("https://dst.myshopify.com/admin/orders/900001"));
+    check("and so is the store that supplied it", waiting.includes("Warehouse"));
+>>>>>>> 7ba6bacf227fd7b64d955575e5bde21934ed409b
 
     // The two totals side by side ARE the feature: the gap is the markup.
     check("the destination sees what the shopper paid", open.includes("30.00"));
@@ -1307,17 +1355,26 @@ const STORE_ROW = {
     const detail = await render("destination/orderDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      order: { ...ROW, sync_status: "synced", source_order_name: "#5005" },
+      order: {
+        ...ROW,
+        sync_status: "synced",
+        source_order_name: "#5005",
+        source_shopify_order_id: "500005",
+      },
       lines: [
         {
           line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
           title: "Blue Shirt", source_product_title: "Blue Shirt",
           source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
+          source_shopify_product_id: "900",
+          destination_shopify_product_id: "700",
         },
       ],
     });
 
     check("the detail lists the line", detail.includes("Blue Shirt"));
+    check("order line product names open Shopify",
+      detail.includes("https://dst.myshopify.com/admin/products/700"));
     check("with both unit prices",
       detail.includes("10.00") && detail.includes("12.50"));
     check("and the source total for the line",
@@ -1344,10 +1401,16 @@ const STORE_ROW = {
 
   console.log("\nPartials");
   {
-    await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
+    await expectRenders("nav renders", "partials/nav", {}, [
+      "s-app-nav",
+      "/images/product-sync-logo-256.png",
+      "Product Sync",
+    ]);
     await expectRenders("head renders", "partials/head", BASE, [
       "shopify-api-key",
       "app-bridge.js",
+      "/images/favicon-32.png",
+      "/images/apple-touch-icon.png",
     ]);
   }
 

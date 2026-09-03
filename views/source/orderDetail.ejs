@@ -16,7 +16,11 @@
     <header class="shell__header">
       <div>
         <button class="link link--back" type="button" id="back">&larr; Orders</button>
-        <h1><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></h1>
+        <h1>
+          <a class="record-link"
+             href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
+             target="_blank" rel="noopener noreferrer"><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></a>
+        </h1>
         <p class="shell__sub">
           Sold by
           <strong><%= order.destination_store_name || order.destination_shop_domain %></strong>,
@@ -78,7 +82,13 @@
             <tr>
               <td>
                 <span class="media__body">
-                  <span class="table__title"><%= line.source_product_title || line.title %></span>
+                  <% if (line.source_shopify_product_id) { %>
+                    <a class="table__title record-link"
+                       href="<%= shopifyAdminUrl(order.source_shop_domain, 'products', line.source_shopify_product_id) %>"
+                       target="_blank" rel="noopener noreferrer"><%= line.source_product_title || line.title %></a>
+                  <% } else { %>
+                    <span class="table__title"><%= line.source_product_title || line.title %></span>
+                  <% } %>
                   <% if (line.source_variant_title) { %>
                     <span class="muted"><%= line.source_variant_title %></span>
                   <% } %>
@@ -113,7 +123,11 @@
       <dl class="facts">
         <div class="facts__row">
           <dt>Sale</dt>
-          <dd><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></dd>
+          <dd>
+            <a class="record-link"
+               href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
+               target="_blank" rel="noopener noreferrer"><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></a>
+          </dd>
         </div>
         <div class="facts__row">
           <dt>Ship to</dt>

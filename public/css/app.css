@@ -6,9 +6,9 @@
 :root {
   /* Brand. Taken from the logo -- change these three and every button, tab,
      focus ring and chart follows. Nothing below hard-codes the blue. */
-  --brand: #0e6ebd;
-  --brand-dark: #0b5896; /* hover / pressed */
-  --brand-soft: #e8f1fa; /* tinted backgrounds */
+  --brand: #0b5368;
+  --brand-dark: #083f50; /* hover / pressed */
+  --brand-soft: #e7f2f5; /* tinted backgrounds */
 
   --bg: #f6f6f6;
   --surface: #ffffff;
@@ -49,14 +49,50 @@ body {
 
 /* ---------------- layout ---------------- */
 
-.shell {
-  max-width: 1180px;
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: calc(100% - 1.5rem);
+  margin: 1rem auto 0;
+}
+
+.shell > .app-brand {
+  width: 100%;
+  margin: 0 0 1.25rem;
+}
+
+.app-brand-shell {
+  max-width: none;
   margin: 0 auto;
-  padding: 1.75rem 1.25rem 4rem;
+  padding: 0 .75rem;
+}
+
+.app-brand-shell .app-brand {
+  width: 100%;
+}
+
+.app-brand__logo {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 8px;
+}
+
+.app-brand__name {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.shell {
+  max-width: none;
+  margin: 0 auto;
+  padding: 1.75rem 0.75rem 4rem;
 }
 
 .shell--wide {
-  max-width: 1180px;
+  max-width: none;
 }
 
 .shell__header {
@@ -297,6 +333,22 @@ body {
   margin-bottom: 0.35rem;
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.record-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.record-link:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.record-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 /* ---------------- misc ---------------- */

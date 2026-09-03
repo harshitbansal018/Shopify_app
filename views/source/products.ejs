@@ -123,7 +123,11 @@
                   <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
                 <% } %>
                 <span class="media__body">
-                  <span class="table__title"><%= product.title %></span>
+                  <a class="table__title record-link"
+                     href="<%= shopifyAdminUrl(shop, 'products', product.shopify_product_id) %>"
+                     target="_blank" rel="noopener noreferrer">
+                    <%= product.title %>
+                  </a>
                   <% if (product.vendor) { %>
                     <span class="muted"><%= product.vendor %></span>
                   <% } %>
