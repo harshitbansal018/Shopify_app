@@ -11,6 +11,7 @@ const { serializeForScript } = require("./utils/html");
 const authRoutes = require("./routes/authRoute");
 const storeRoutes = require("./routes/storeRoute");
 const productRoutes = require("./routes/productRoute");
+const orderRoutes = require("./routes/orderRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
 const webhookRoutes = require("./routes/webhookRoute");
 
@@ -68,6 +69,7 @@ app.use(noStore);
    Mount them ABOVE dashboardRoutes, which owns "/". */
 app.use("/api/auth", authRoutes);
 app.use("/products", productRoutes);
+app.use("/orders", orderRoutes);
 app.use("/", storeRoutes);
 app.use("/", dashboardRoutes);
 
@@ -109,6 +111,11 @@ const PORT = process.env.PORT || 3000;
   // Started after the database is confirmed, so a failed boot does not leave a
   // timer running against a pool that never connected.
   require("./services/productSync").startAutoSync();
+
+  // Places the source-store order for each destination sale. Separate from the
+  // product loop on purpose: a slow catalogue push must not hold up a sale, and
+  // an order that keeps failing must not stall the catalogue.
+  require("./services/orderSync").startOrderSync();
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

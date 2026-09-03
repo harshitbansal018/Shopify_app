@@ -735,6 +735,76 @@ const CREATE_SYNC_SETTINGS = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 `;
 
+/* ------------------------------------------------------------------ */
+/* 11. order_mappings                                                  */
+/* ------------------------------------------------------------------ */
+/*
+ * A sale in a destination store, and the order it became in the source store
+ * that supplied the goods.
+ *
+ * Keyed by CONNECTION, not by store: one basket can hold products from two
+ * different source stores, and each source must get an order containing only
+ * its own lines. That is why a destination order can have several rows here.
+ *
+ * The money is recorded on both sides because the two totals are genuinely
+ * different and both are needed to reason about a sale: destination_total is
+ * what the shopper paid, source_total is what the source store is owed. The
+ * gap between them is the markup in sync_settings.
+ *
+ * Same queue shape as product_mappings -- pending/synced/failed, an attempt
+ * count and the last error -- because the push has the same problem: a webhook
+ * may not call Shopify, so the work has to be picked up later.
+ */
+const CREATE_ORDER_MAPPINGS = `
+  CREATE TABLE IF NOT EXISTS order_mappings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- Our orders row for the DESTINATION sale, not a Shopify id: the order is
+    -- already cached, and pointing at the cache keeps the two in step.
+    destination_order_id INT NOT NULL,
+
+    -- Filled in once the source store has accepted the order.
+    source_shopify_order_id BIGINT UNSIGNED DEFAULT NULL,
+    source_order_name       VARCHAR(50) DEFAULT NULL,
+
+    -- What the shopper paid, and what the source is owed at its own prices.
+    -- DECIMAL, never FLOAT: these are money.
+    destination_total DECIMAL(12,2) DEFAULT NULL,
+    source_total      DECIMAL(12,2) DEFAULT NULL,
+    currency          VARCHAR(3) DEFAULT NULL,
+
+    -- How many of the order's lines belong to THIS source. A destination order
+    -- with lines from two sources has a different count on each row.
+    line_count INT NOT NULL DEFAULT 0,
+
+    sync_status ENUM('pending','synced','failed','skipped')
+      NOT NULL DEFAULT 'pending',
+    error_message VARCHAR(512) DEFAULT NULL,
+    attempts      INT NOT NULL DEFAULT 0,
+    last_synced_at DATETIME DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- One row per source per destination order. This is what makes the webhook
+    -- idempotent: Shopify retries orders/create, and the second delivery must
+    -- not place a second order at the source.
+    UNIQUE KEY uniq_order_mapping (connection_id, destination_order_id),
+    KEY idx_order_mapping_status (sync_status),
+
+    CONSTRAINT fk_order_mapping_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id)
+        ON DELETE CASCADE,
+
+    -- CASCADE is right here, unlike on a product: this row describes one
+    -- specific sale, so without that sale it means nothing.
+    CONSTRAINT fk_order_mapping_order
+      FOREIGN KEY (destination_order_id) REFERENCES orders(id)
+        ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
 /**
  * Destination-side acceptance.
  *
@@ -788,6 +858,8 @@ async function runMigrations() {
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
   await backfillSyncSettings();
+  // After BOTH store_connections and orders -- it has a foreign key onto each.
+  await query(CREATE_ORDER_MAPPINGS);
 }
 
 /**

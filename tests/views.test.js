@@ -1050,6 +1050,123 @@ const STORE_ROW = {
       syncSettingsModel.TOGGLES.filter((f) => !controller.FIELD_LABELS[f]).join(", "));
   }
 
+  console.log("\nOrders");
+  {
+    const ROW = {
+      id: 11,
+      connection_id: 3,
+      destination_order_id: 77,
+      destination_shopify_order_id: "900001",
+      destination_order_name: "#2001",
+      destination_order_number: 2001,
+      source_shopify_order_id: null,
+      source_order_name: null,
+      // 24.00 owed to the source, 30.00 paid by the shopper: the 25% markup.
+      source_total: 24,
+      destination_total: 30,
+      currency: "USD",
+      line_count: 2,
+      sync_status: "pending",
+      error_message: null,
+      financial_status: "paid",
+      fulfillment_status: null,
+      cancelled_at: null,
+      source_shop_domain: "src.myshopify.com",
+      source_store_name: "Warehouse",
+      destination_shop_domain: "dst.myshopify.com",
+      destination_store_name: "Front Shop",
+    };
+
+    const orders = (role, tab, rows) =>
+      render("orders", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: role },
+        isSource: role === "source",
+        tab,
+        counts: { placed: 1, waiting: 1 },
+        orders: rows,
+        statusCounts: { pending: 1, synced: 1, failed: 0, skipped: 0 },
+      });
+
+    const waiting = await orders("destination", "waiting", [ROW]);
+
+    check("both tabs are shown with their counts",
+      waiting.includes("Placed (1)") && waiting.includes("Waiting (1)"));
+    check("the sale is named", waiting.includes("#2001"));
+    check("and so is the store that supplied it", waiting.includes("Warehouse"));
+
+    // The two totals side by side ARE the feature: the gap is the markup.
+    check("the destination sees what the shopper paid",
+      waiting.includes("30.00"));
+    check("beside what the source is owed",
+      waiting.includes("24.00"),
+      "the source price is the whole point of forwarding the order");
+
+    check("an unplaced order says so", waiting.includes("not yet placed"));
+    check("and can be placed by hand",
+      /class="[^"]*retry-order"[^>]*data-order="11"/.test(waiting));
+    check("every row opens", /class="[^"]*view-order"[^>]*data-order="11"/.test(waiting));
+
+    const placed = await orders("destination", "placed", [
+      { ...ROW, sync_status: "synced", source_order_name: "#5005" },
+    ]);
+
+    check("a placed order names the source order", placed.includes("#5005"));
+    // The class attribute, not the word: the page script names it too, so a
+    // bare includes() would find it whether or not a button rendered.
+    check("and offers no retry",
+      !/class="[^"]*retry-order"/.test(placed),
+      "placing it twice would order the same goods again");
+
+    // A source reads its own money first, in the same column position.
+    const asSource = await orders("source", "waiting", [ROW]);
+
+    check("the source column is labelled for a source",
+      asSource.includes("You are owed") && !asSource.includes("Source price"));
+    check("a source cannot place the order itself",
+      !/class="[^"]*retry-order"/.test(asSource),
+      "the sale that raised it belongs to the destination");
+
+    const none = await orders("destination", "placed", []);
+    check("an empty screen explains itself",
+      none.includes("No orders yet") && !none.includes("<table"));
+
+    // Detail: the per-line price comparison.
+    const detail = await render("orderDetail", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      isSource: false,
+      order: { ...ROW, sync_status: "synced", source_order_name: "#5005" },
+      lines: [
+        {
+          line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
+          title: "Blue Shirt", source_product_title: "Blue Shirt",
+          source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
+        },
+      ],
+    });
+
+    check("the detail lists the line", detail.includes("Blue Shirt"));
+    check("with both unit prices",
+      detail.includes("10.00") && detail.includes("12.50"));
+    check("and the source total for the line",
+      detail.includes("20.00"),
+      "2 x 10.00, which is what the source invoices");
+    check("it says where the margin is set",
+      detail.includes("/settings"));
+
+    const emptyDetail = await render("orderDetail", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      isSource: true,
+      order: ROW,
+      lines: [],
+    });
+
+    check("a detail with no lines left explains why",
+      emptyDetail.includes("nothing left to charge for"));
+  }
+
   console.log("\nPartials");
   {
     await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);

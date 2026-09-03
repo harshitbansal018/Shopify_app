@@ -11,6 +11,9 @@
 <s-app-nav>
   <s-link href="/dashboard" rel="home">Dashboard</s-link>
   <s-link href="/products">Products</s-link>
+  <%# Both roles: a destination sees the sales it made, a source sees the
+      orders those sales raised here. %>
+  <s-link href="/orders">Orders</s-link>
   <s-link href="/stores">Stores</s-link>
   <% if(typeof store!== 'undefined' && store && store.store_type==="destination" ) { %>
     <s-link href="/settings">Settings</s-link>

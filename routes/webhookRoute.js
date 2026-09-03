@@ -29,6 +29,21 @@ router.post(
   webhookController.productsDelete
 );
 
+/* Sales. Both cache the order; only orders/create queues it for the source. */
+router.post(
+  "/orders/create",
+  rawBody,
+  verifyWebhook,
+  webhookController.ordersCreate
+);
+
+router.post(
+  "/orders/updated",
+  rawBody,
+  verifyWebhook,
+  webhookController.ordersUpdated
+);
+
 /* Mandatory privacy webhooks, configured in the Partner Dashboard. */
 router.post(
   "/customers/data_request",
