@@ -646,6 +646,17 @@ async function pushOne(connection, mapping) {
   const destinationProduct = result.product;
   const destinationId = numericId(destinationProduct.id);
 
+  // First time this product has landed over there. productSet attaches it to
+  // no sales channel, so without this it exists in the admin and nowhere on
+  // the storefront. An update is left alone: the destination may have
+  // unpublished it on purpose.
+  if (!mapping.destination_shopify_product_id) {
+    await publishToOnlineStore(
+      connection.destination.shop_domain,
+      destinationProduct.id
+    );
+  }
+
   await productMappingModel.markSynced(mapping.id, {
     destinationProductId: destinationId,
     sourceUpdatedAt: product.shopify_updated_at,
@@ -819,6 +830,95 @@ async function destinationLocationId(shop) {
     // the product still syncs.
     console.warn(`Could not read a location for ${shop}:`, err.message);
     return null;
+  }
+}
+
+/**
+ * The store's Online Store sales channel.
+ *
+ * Cached per shop for the life of the process, for the same reason as the
+ * location: it is a fixed fact about the store, and reading it per product
+ * would cost an API call on every push.
+ *
+ * Null when the store has no online storefront at all -- a POS-only shop is a
+ * real thing, and it is not an error.
+ */
+const PUBLICATION_CACHE = new Map();
+
+async function onlineStorePublicationId(shop) {
+  if (PUBLICATION_CACHE.has(shop)) return PUBLICATION_CACHE.get(shop);
+
+  try {
+    const data = await shopify.forShop(shop, {
+      query: "{ publications(first: 25) { nodes { id name } } }",
+    });
+
+    const nodes = data.publications?.nodes || [];
+    // Matched on the catalog's own name because there is no typed field for
+    // "this one is the storefront"; every Shopify store calls it this.
+    const online = nodes.find((node) => node.name === "Online Store");
+
+    const id = online ? online.id : null;
+    PUBLICATION_CACHE.set(shop, id);
+
+    if (!id) {
+      console.warn(`No Online Store channel on ${shop}; nothing to publish to`);
+    }
+
+    return id;
+  } catch (err) {
+    // Not fatal. The product is already in the store; it is simply not on the
+    // storefront, and the merchant can publish it by hand.
+    console.warn(`Could not read publications for ${shop}:`, err.message);
+    return null;
+  }
+}
+
+const PUBLISH_MUTATION = `
+  mutation PublishProduct($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * Put a newly created product on the destination's storefront.
+ *
+ * productSet creates the product but attaches it to NO sales channel, so an
+ * ACTIVE product with stock still does not appear in the online store. This is
+ * the step that makes it visible.
+ *
+ * Called only on CREATE. Running it on every update would undo a destination
+ * merchant deliberately unpublishing a product -- their store, their decision.
+ *
+ * Never throws: the product itself synced fine, and failing the whole push
+ * because a sales channel could not be reached would be worse than a product
+ * that has to be published by hand.
+ */
+async function publishToOnlineStore(shop, productGid) {
+  const publicationId = await onlineStorePublicationId(shop);
+
+  if (!publicationId) return { published: false, reason: "no online store" };
+
+  try {
+    const data = await shopify.forShop(shop, {
+      query: PUBLISH_MUTATION,
+      variables: { id: productGid, input: [{ publicationId }] },
+    });
+
+    const userErrors = data.publishablePublish?.userErrors || [];
+
+    if (userErrors.length) {
+      const reason = userErrors.map((e) => e.message).join("; ");
+      console.warn(`Could not publish ${productGid} on ${shop}: ${reason}`);
+      return { published: false, reason };
+    }
+
+    return { published: true };
+  } catch (err) {
+    console.warn(`Publishing ${productGid} on ${shop} failed:`, err.message);
+    return { published: false, reason: err.message };
   }
 }
 
@@ -1000,6 +1100,8 @@ module.exports = {
   withMarkup,
   optionKey,
   identityOf,
+  publishToOnlineStore,
+  onlineStorePublicationId,
   numericId,
   flatten,
 };
