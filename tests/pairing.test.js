@@ -188,48 +188,48 @@ async function makeStore(name) {
 
   console.log("\nCodes are role-specific");
   {
-    // Only a destination hands a code out, and only a source may redeem it.
+    // Only a SOURCE hands a code out, and only a DESTINATION may redeem it.
     // The check lives inside redeemCode's transaction, so a code aimed at the
     // wrong kind of store must be left UNSPENT and no groups merged.
-    const dest = await makeStore("roledest");
     const src = await makeStore("rolesrc");
+    const dest = await makeStore("roledest");
     const other = await makeStore("roleother");
 
-    await storeModel.chooseStoreType(dest.id, "destination");
     await storeModel.chooseStoreType(src.id, "source");
-    await storeModel.chooseStoreType(other.id, "source");
+    await storeModel.chooseStoreType(dest.id, "destination");
+    await storeModel.chooseStoreType(other.id, "destination");
 
-    // A source store's code offered to another source: refused.
-    const { code: sourceCode } = await pairing.issueCode(src.id);
+    // A destination store's code offered to another destination: refused.
+    const { code: destCode } = await pairing.issueCode(dest.id);
 
     const wrongWay = await expectRejection(() =>
-      pairing.redeemCode(other.id, sourceCode, { expectIssuerType: "destination" })
+      pairing.redeemCode(other.id, destCode, { expectIssuerType: "source" })
     );
-    check("a source store's code is refused",
+    check("a destination store's code is refused",
       wrongWay && wrongWay.name === "PairingError", wrongWay && wrongWay.name);
     check("the refusal says what kind of code is wanted",
-      wrongWay && /destination/.test(wrongWay.message), wrongWay && wrongWay.message);
+      wrongWay && /source/.test(wrongWay.message), wrongWay && wrongWay.message);
 
     const stillGrouped = await storeModel.findById(other.id);
     check("the rejected redeem did NOT merge the groups",
-      stillGrouped.store_group_id !== (await storeModel.findById(src.id)).store_group_id);
+      stillGrouped.store_group_id !== (await storeModel.findById(dest.id)).store_group_id);
 
     const unspent = await query(
-      "SELECT pairing_code FROM stores WHERE id = ?", [src.id]
+      "SELECT pairing_code FROM stores WHERE id = ?", [dest.id]
     );
     check("the rejected code is NOT spent",
       unspent[0].pairing_code !== null, String(unspent[0].pairing_code));
 
-    // The right way round: a destination's code, redeemed by a source.
-    const { code: destCode } = await pairing.issueCode(dest.id);
+    // The right way round: a SOURCE's code, redeemed by a DESTINATION.
+    const { code: sourceCode } = await pairing.issueCode(src.id);
 
-    const ok = await pairing.redeemCode(src.id, destCode, {
-      expectIssuerType: "destination",
+    const ok = await pairing.redeemCode(dest.id, sourceCode, {
+      expectIssuerType: "source",
     });
-    check("a destination's code is accepted by a source",
-      ok && ok.linkedWith.id === dest.id);
+    check("a source's code is accepted by a destination",
+      ok && ok.linkedWith.id === src.id);
     check("redeemCode reports the issuer's type",
-      ok.linkedWith.store_type === "destination", ok.linkedWith.store_type);
+      ok.linkedWith.store_type === "source", ok.linkedWith.store_type);
 
     // And the connection that follows goes live with nothing to approve.
     const connection = await connectionModel.createConnection({

@@ -31,8 +31,26 @@ function fromShopify(sourceProductId, variant, index = 0) {
       variant.inventory_item_id || variant.inventoryItem?.id
     ),
     sku: variant.sku ? String(variant.sku).slice(0, 255) : null,
+    barcode: variant.barcode ? String(variant.barcode).slice(0, 255) : null,
     title: variant.title ? String(variant.title).slice(0, 255) : null,
     price: price === undefined || price === null ? null : Number(price),
+    // Checked before Number(): Number(null) is 0, which would record a free
+    // item as costing nothing rather than as unknown.
+    cost:
+      variant.cost === undefined || variant.cost === null || variant.cost === ""
+        ? null
+        : Number(variant.cost),
+    // Tri-state: null means the source never told us, which is not the same
+    // as "not taxable".
+    taxable:
+      variant.taxable === undefined || variant.taxable === null
+        ? null
+        : variant.taxable
+        ? 1
+        : 0,
+    inventory_policy: variant.inventory_policy
+      ? String(variant.inventory_policy).toUpperCase().slice(0, 16)
+      : null,
     compare_at_price:
       variant.compare_at_price === undefined || variant.compare_at_price === null
         ? null
@@ -53,15 +71,21 @@ function fromShopify(sourceProductId, variant, index = 0) {
 const UPSERT_SQL = `
   INSERT INTO source_variant_mappings
     (source_product_id, shopify_variant_id, shopify_inventory_item_id,
-     sku, title, price, compare_at_price,
-     option1, option2, option3, inventory_quantity, position)
+     sku, barcode, title, price, compare_at_price, cost, taxable,
+     inventory_policy, option1, option2, option3, inventory_quantity, position)
   VALUES ?
   ON DUPLICATE KEY UPDATE
     shopify_inventory_item_id = VALUES(shopify_inventory_item_id),
     sku = VALUES(sku),
+    barcode = VALUES(barcode),
     title = VALUES(title),
     price = VALUES(price),
     compare_at_price = VALUES(compare_at_price),
+    -- COALESCE: a webhook payload does not carry cost, and an update that
+    -- does not know it must not erase what a full fetch recorded.
+    cost = COALESCE(VALUES(cost), cost),
+    taxable = COALESCE(VALUES(taxable), taxable),
+    inventory_policy = COALESCE(VALUES(inventory_policy), inventory_policy),
     option1 = VALUES(option1),
     option2 = VALUES(option2),
     option3 = VALUES(option3),
@@ -75,9 +99,13 @@ function toRow(record) {
     record.shopify_variant_id,
     record.shopify_inventory_item_id,
     record.sku,
+    record.barcode,
     record.title,
     record.price,
     record.compare_at_price,
+    record.cost,
+    record.taxable,
+    record.inventory_policy,
     record.option1,
     record.option2,
     record.option3,
@@ -121,6 +149,34 @@ async function listForProduct(sourceProductId) {
       ORDER BY position, id`,
     [sourceProductId]
   );
+}
+
+/**
+ * Variants for a whole page of products at once, grouped by product id.
+ *
+ * The Products table renders every product's variants underneath it, so the
+ * alternative is one query per row -- a hundred products would be a hundred
+ * round trips to render one screen.
+ */
+async function mapForProducts(sourceProductIds) {
+  const ids = [...new Set((sourceProductIds || []).map(Number).filter(Boolean))];
+  const grouped = new Map();
+
+  if (!ids.length) return grouped;
+
+  const rows = await query(
+    `SELECT * FROM source_variant_mappings
+      WHERE source_product_id IN (?)
+      ORDER BY source_product_id, position, id`,
+    [ids]
+  );
+
+  rows.forEach((row) => {
+    if (!grouped.has(row.source_product_id)) grouped.set(row.source_product_id, []);
+    grouped.get(row.source_product_id).push(row);
+  });
+
+  return grouped;
 }
 
 async function findByShopifyId(sourceProductId, shopifyVariantId) {
@@ -181,6 +237,7 @@ module.exports = {
   fromShopify,
   syncForProduct,
   listForProduct,
+  mapForProducts,
   findByShopifyId,
   findById,
   mapByShopifyId,

@@ -6,9 +6,73 @@ const storeModel = require("../models/storeModel");
 
 const DEFAULT_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
 
+const MAX_ATTEMPTS = Number(process.env.SHOPIFY_MAX_ATTEMPTS || 5);
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 16000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Shopify throttles two different ways, and both have to be caught:
+ *
+ *   - REST-style: HTTP 429, usually with a Retry-After header.
+ *   - GraphQL: HTTP 200 with a THROTTLED error in the body, because the query
+ *     cost exceeded the leaky bucket. Treating that as success would silently
+ *     return no data.
+ */
+function isThrottledBody(body) {
+  const errors = body && body.errors;
+  if (!Array.isArray(errors)) return false;
+
+  return errors.some(
+    (error) =>
+      error?.extensions?.code === "THROTTLED" ||
+      /throttle/i.test(error?.message || "")
+  );
+}
+
+/** Retry only what a retry can actually fix. */
+function isRetryable(error) {
+  if (error.throttled) return true;
+
+  const status = error.response?.status;
+
+  if (status === 429) return true;
+  // 5xx is Shopify having a bad moment, not a bad request.
+  if (status >= 500 && status < 600) return true;
+  // No response at all: timeout, DNS, connection reset.
+  if (!error.response && !error.status) return true;
+
+  return false;
+}
+
+/**
+ * How long to wait before attempt N.
+ *
+ * Retry-After is authoritative when Shopify sends it. Otherwise exponential
+ * backoff with FULL JITTER: without the jitter, fifty products failing at the
+ * same moment would all retry at the same moment and throttle again together.
+ */
+function backoffMs(attempt, error) {
+  const retryAfter = Number(error.response?.headers?.["retry-after"]);
+
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1000, MAX_BACKOFF_MS);
+  }
+
+  const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
+  return Math.round(Math.random() * ceiling);
+}
+
 /**
  * Single entry point for Shopify Admin GraphQL calls.
  * Never logs the access token.
+ *
+ * Retries throttling and transient failures with exponential backoff. A
+ * GraphQL userError is NOT retried -- that is a bad request, and sending it
+ * again five times just wastes the rate limit.
  */
 async function shopifyRequest(shop, accessToken, apiVersion, queryData) {
   const shopDomain = normalizeShopDomain(shop);
@@ -22,39 +86,66 @@ async function shopifyRequest(shop, accessToken, apiVersion, queryData) {
   }
 
   const version = apiVersion || DEFAULT_API_VERSION;
+  let lastError;
 
-  try {
-    const response = await axios({
-      method: "POST",
-      url: `https://${shopDomain}/admin/api/${version}/graphql.json`,
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      data: queryData,
-      timeout: Number(process.env.SHOPIFY_TIMEOUT_MS || 15000),
-    });
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await axios({
+        method: "POST",
+        url: `https://${shopDomain}/admin/api/${version}/graphql.json`,
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        data: queryData,
+        timeout: Number(process.env.SHOPIFY_TIMEOUT_MS || 15000),
+      });
 
-    if (response.data.errors) {
-      const message = response.data.errors[0]?.message || "Shopify GraphQL error";
-      console.error("Shopify GraphQL errors:", JSON.stringify(response.data.errors));
-      throw new Error(message);
-    }
+      if (isThrottledBody(response.data)) {
+        const throttled = new Error("Shopify throttled this query");
+        throttled.throttled = true;
+        throw throttled;
+      }
 
-    return response.data.data;
-  } catch (error) {
-    if (error.response) {
-      console.error(
-        `Shopify API error (${error.response.status}) for ${shopDomain}:`,
-        typeof error.response.data === "string"
-          ? error.response.data.slice(0, 500)
-          : JSON.stringify(error.response.data).slice(0, 500)
+      if (response.data.errors) {
+        const message =
+          response.data.errors[0]?.message || "Shopify GraphQL error";
+        console.error(
+          "Shopify GraphQL errors:",
+          JSON.stringify(response.data.errors)
+        );
+        throw new Error(message);
+      }
+
+      return response.data.data;
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || attempt === MAX_ATTEMPTS - 1) break;
+
+      const wait = backoffMs(attempt, error);
+
+      console.warn(
+        `Shopify ${error.throttled ? "throttled" : error.response?.status || "network error"} ` +
+          `for ${shopDomain}; retrying in ${wait}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`
       );
-    } else {
-      console.error(`Shopify API error for ${shopDomain}:`, error.message);
+
+      await sleep(wait);
     }
-    throw error;
   }
+
+  if (lastError.response) {
+    console.error(
+      `Shopify API error (${lastError.response.status}) for ${shopDomain}:`,
+      typeof lastError.response.data === "string"
+        ? lastError.response.data.slice(0, 500)
+        : JSON.stringify(lastError.response.data).slice(0, 500)
+    );
+  } else {
+    console.error(`Shopify API error for ${shopDomain}:`, lastError.message);
+  }
+
+  throw lastError;
 }
 
 /**
@@ -97,3 +188,8 @@ async function shopifyRequestForShop(shop, queryData, options = {}) {
 module.exports = shopifyRequest;
 module.exports.forShop = shopifyRequestForShop;
 module.exports.DEFAULT_API_VERSION = DEFAULT_API_VERSION;
+// Exported for the retry tests.
+module.exports.isRetryable = isRetryable;
+module.exports.isThrottledBody = isThrottledBody;
+module.exports.backoffMs = backoffMs;
+module.exports.MAX_ATTEMPTS = MAX_ATTEMPTS;

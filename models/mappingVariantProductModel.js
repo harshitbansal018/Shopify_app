@@ -59,6 +59,39 @@ async function upsertMany(productMappingId, pairs, { markSynced = true } = {}) {
   return rows.length;
 }
 
+/**
+ * Synced variants for a whole page of mappings at once, grouped by mapping id,
+ * joined to the source variant so the destination table can show what each row
+ * originally was. One query per screen rather than one per product.
+ */
+async function mapForMappings(productMappingIds) {
+  const ids = [...new Set((productMappingIds || []).map(Number).filter(Boolean))];
+  const grouped = new Map();
+
+  if (!ids.length) return grouped;
+
+  const rows = await query(
+    `SELECT mvp.*,
+            svm.title AS source_title,
+            svm.price AS source_price,
+            svm.option1, svm.option2, svm.option3,
+            svm.inventory_quantity
+       FROM mapping_variant_products mvp
+       LEFT JOIN source_variant_mappings svm
+              ON svm.id = mvp.source_variant_mapping_id
+      WHERE mvp.product_mapping_id IN (?)
+      ORDER BY mvp.product_mapping_id, svm.position, mvp.id`,
+    [ids]
+  );
+
+  rows.forEach((row) => {
+    if (!grouped.has(row.product_mapping_id)) grouped.set(row.product_mapping_id, []);
+    grouped.get(row.product_mapping_id).push(row);
+  });
+
+  return grouped;
+}
+
 async function listForMapping(productMappingId) {
   return query(
     `SELECT * FROM mapping_variant_products
@@ -107,6 +140,21 @@ async function mapBySourceVariant(productMappingId) {
   return index;
 }
 
+/**
+ * Drop one link because the variant is gone from the DESTINATION store.
+ *
+ * Keyed on the destination id, not the source one: the merchant deleted a
+ * variant in their own admin, and that id is all the webhook tells us.
+ */
+async function removeByDestinationVariant(productMappingId, destinationVariantId) {
+  const [result] = await pool.query(
+    `DELETE FROM mapping_variant_products
+      WHERE product_mapping_id = ? AND destination_variant_id = ?`,
+    [productMappingId, toShopifyId(destinationVariantId)]
+  );
+  return result.affectedRows;
+}
+
 /** Link rows whose source variant has gone; their pairs are meaningless now. */
 async function removeMissing(productMappingId, keepSourceShopifyVariantIds) {
   const keep = (keepSourceShopifyVariantIds || []).map(toShopifyId).filter(Boolean);
@@ -148,9 +196,11 @@ async function listUnsynced(productMappingId) {
 module.exports = {
   upsertMany,
   listForMapping,
+  mapForMappings,
   listWithSourceVariants,
   findBySourceVariant,
   mapBySourceVariant,
+  removeByDestinationVariant,
   removeMissing,
   countForMapping,
   listUnsynced,
