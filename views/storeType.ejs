@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title>Store type</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%# Before the choice there is nowhere else to go, so the nav is noise. %>
+  <% if (chosen) { %>
+    <%- include("partials/nav") %>
+  <% } %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1><%= chosen ? "Store type" : "How will you use this store?" %></h1>
+        <p class="shell__sub"><%= store.store_name || shop %></p>
+      </div>
+    </header>
+
+    <% if (chosen) { %>
+
+      <%# Already decided. Shown read-only: there is no route that changes it. %>
+      <section class="panel">
+        <p class="chosen">
+          <span class="chosen__badge"><%= copy.title %></span>
+          <span class="chosen__summary"><%= copy.summary %></span>
+        </p>
+        <p class="panel__copy"><%= copy.detail %></p>
+        <p class="notice notice--warn">
+          A store's type is chosen once, when the app is installed, and cannot
+          be changed. To use this store the other way round, uninstall the app
+          and install it again.
+        </p>
+        <div class="shell__actions">
+          <button class="btn btn--primary" type="button" onclick="window.appNavigate('/stores')">
+            Go to Stores
+          </button>
+        </div>
+      </section>
+
+    <% } else { %>
+
+      <form class="panel" id="role-form">
+
+        <p class="panel__copy">
+          A store either <strong>sends</strong> products or <strong>receives</strong>
+          them &mdash; never both. Choose carefully: this is set once and
+          <strong>cannot be changed later</strong>.
+        </p>
+
+        <div class="choices">
+          <% roles.forEach(function (role) { %>
+            <label class="choice">
+              <input class="choice__input" type="radio" name="store_type" value="<%= role.value %>">
+              <span class="choice__body">
+                <span class="choice__title"><%= role.title %></span>
+                <span class="choice__summary"><%= role.summary %></span>
+                <span class="choice__copy"><%= role.detail %></span>
+              </span>
+            </label>
+          <% }); %>
+        </div>
+
+        <p class="notice notice--error" id="role-error" hidden></p>
+
+        <div class="shell__actions">
+          <button class="btn btn--primary" type="submit" id="role-save">Continue</button>
+        </div>
+
+      </form>
+
+    <% } %>
+
+  </main>
+
+  <script>
+    (function () {
+      var form = document.getElementById("role-form");
+
+      if (!form) return; // read-only state: nothing to submit
+
+      var button = document.getElementById("role-save");
+      var error = document.getElementById("role-error");
+
+      function showError(message) {
+        error.textContent = message;
+        error.hidden = false;
+      }
+
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        error.hidden = true;
+
+        var picked = form.querySelector("input[name=store_type]:checked");
+
+        if (!picked) {
+          return showError("Pick Source or Destination to continue.");
+        }
+
+        if (!window.confirm(
+          "Set this store up as \"" + picked.value + "\"?\n\n" +
+          "This cannot be changed later."
+        )) return;
+
+        button.disabled = true;
+
+        try {
+          // appFetch attaches the session token; a plain fetch would 401.
+          var response = await window.appFetch("/store-type", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ store_type: picked.value })
+          });
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) {
+            button.disabled = false;
+            return showError(data.error || "Could not save the store type.");
+          }
+
+          window.appToast("Store set up as " + data.store_type);
+          window.appNavigate("/stores");
+        } catch (err) {
+          button.disabled = false;
+          showError("Could not reach the app. Check your connection and retry.");
+        }
+      });
+    })();
+  </script>
+
+</body>
+
+</html>

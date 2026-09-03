@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title><%= product.title %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <button class="link link--back" type="button" id="back">&larr; Products</button>
+        <h1><%= product.title %></h1>
+        <p class="shell__sub">
+          <%= shared.length %> of <%= totalVariants %>
+          variant<%= totalVariants === 1 ? "" : "s" %> shared
+          <% if (product.vendor) { %> &mdash; <%= product.vendor %><% } %>
+        </p>
+      </div>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <!-- <% if (isSource && !isShared) { %>
+      <p class="notice notice--warn">
+        These are the variants you picked when you added this product. Nothing
+        has been offered to a destination store yet &mdash; tick the product on
+        the Products list and press <strong>Allow selected</strong> when you are
+        happy with this list.
+      </p>
+    <% } %> -->
+
+    <% if (!isSource && !isShared) { %>
+      <p class="notice notice--warn">
+        These variants are on offer from
+        <strong><%= product.source_store_name || product.source_shop_domain %></strong>.
+        Nothing has been added to your store yet &mdash; tick the product on the
+        Products list and press <strong>Sync selected</strong>.
+      </p>
+    <% } %>
+
+    <!-- <section class="panel">
+      <h2 class="panel__title">
+        <%= isSource
+            ? "Variants going to your destination stores"
+            : "Variants in this product" %>
+      </h2> -->
+
+      <% if (!shared.length) { %>
+        <p class="panel__copy">
+          <%= isSource
+              ? "No variants are being shared."
+              : "This product has no variants yet." %>
+        </p>
+      <% } else { %>
+
+        <!-- <% if (isSource) { %>
+          <p class="panel__copy">
+            Delete a variant to stop sending it. The destination store keeps
+            whatever it already has until the next sync, which then removes it
+            there too.
+          </p>
+        <% } %> -->
+
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <th>SKU</th>
+              <th>Price</th>
+              <th>Stock</th>
+              <%# The destination cannot change what it was sent, so it gets no
+                  actions column at all rather than a row of dead buttons. %>
+              <% if (isSource) { %><th></th><% } %>
+            </tr>
+          </thead>
+          <tbody>
+            <% shared.forEach(function (variant) { %>
+              <tr>
+                <td>
+                  <span class="table__title">
+                    <%# Shopify calls a single default variant "Default Title",
+                        which means nothing to a merchant. The destination's
+                        rows carry the name under source_title. %>
+                    <% var name = [variant.option1, variant.option2, variant.option3]
+                         .filter(Boolean).join(" / ")
+                       || variant.title || variant.source_title; %>
+                    <%= name === "Default Title" ? "Single variant" : (name || "—") %>
+                  </span>
+                </td>
+                <td>
+                  <% if (variant.sku) { %>
+                    <span class="variants__sku"><%= variant.sku %></span>
+                  <% } else { %>
+                    <span class="muted">—</span>
+                  <% } %>
+                </td>
+                <td>
+                  <% var price = variant.price === null || variant.price === undefined
+                       ? variant.source_price : variant.price; %>
+                  <%= price === null || price === undefined ? "—" : price %>
+                </td>
+                <td class="muted">
+                  <%= variant.inventory_quantity === null ||
+                      variant.inventory_quantity === undefined
+                      ? "—" : variant.inventory_quantity %>
+                </td>
+                <% if (isSource) { %>
+                  <td class="table__actions">
+                    <button
+                      class="btn btn--small btn--danger remove-variant"
+                      type="button"
+                      data-variant="<%= variant.id %>"
+                      <%= shared.length === 1 ? "disabled" : "" %>
+                      title="<%= shared.length === 1
+                          ? 'The last shared variant cannot be removed. Delete the product instead.'
+                          : 'Stop sharing this variant' %>">
+                      Delete
+                    </button>
+                  </td>
+                <% } %>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+
+        <% if (isSource && shared.length < totalVariants) { %>
+          <p class="muted">
+            <%= totalVariants - shared.length %> variant<%= totalVariants - shared.length === 1 ? " is" : "s are" %> not being shared.
+          </p>
+          <div class="shell__actions">
+            <button class="btn btn--small" type="button" id="reset-variants">
+              Share all <%= totalVariants %> variants
+            </button>
+          </div>
+        <% } %>
+
+      <% } %>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      var pageError = document.getElementById("page-error");
+      var productId = <%- json(String(product.id)) %>;
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      async function post(url, body) {
+        var response = await window.appFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {})
+        });
+        var data = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(data.error || "Request failed");
+        return data;
+      }
+
+      document.getElementById("back").addEventListener("click", function () {
+        window.appNavigate("/products");
+      });
+
+      Array.prototype.slice.call(document.querySelectorAll(".remove-variant"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            pageError.hidden = true;
+            button.disabled = true;
+
+            try {
+              await post("/products/" + productId + "/variants/remove", {
+                variant_id: button.dataset.variant
+              });
+              window.appToast("Variant removed from the offer");
+              window.appNavigate("/products/" + productId);
+            } catch (err) {
+              button.disabled = false;
+              fail(err.message);
+            }
+          });
+        });
+
+      var resetButton = document.getElementById("reset-variants");
+
+      if (resetButton) {
+        resetButton.addEventListener("click", async function () {
+          pageError.hidden = true;
+          resetButton.disabled = true;
+
+          try {
+            await post("/products/reset-variants", {
+              source_product_ids: [productId]
+            });
+            window.appToast("All variants are shared again");
+            window.appNavigate("/products/" + productId);
+          } catch (err) {
+            resetButton.disabled = false;
+            fail(err.message);
+          }
+        });
+      }
+    })();
+  </script>
+
+</body>
+
+</html>

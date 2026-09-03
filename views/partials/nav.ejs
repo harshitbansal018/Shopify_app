@@ -1,0 +1,21 @@
+<!-- App Bridge renders this as the app's admin nav and keeps the session
+     token on each navigation. No JS wiring is needed.
+
+     /store-type is deliberately absent: it is chosen once at install and can
+     never be changed, so a permanent link to it would only invite confusion.
+
+     Add a feature screen by adding a route, a controller, a view, and one
+     more <s-link> here:
+       <s-link href="/products">Products</s-link>
+-->
+<s-app-nav>
+  <s-link href="/dashboard" rel="home">Dashboard</s-link>
+  <s-link href="/products">Products</s-link>
+  <%# Both roles: a destination sees the sales it made, a source sees the
+      orders those sales raised here. %>
+  <s-link href="/orders">Orders</s-link>
+  <s-link href="/stores">Stores</s-link>
+  <% if(typeof store!== 'undefined' && store && store.store_type==="destination" ) { %>
+    <s-link href="/settings">Settings</s-link>
+  <% } %>
+</s-app-nav>

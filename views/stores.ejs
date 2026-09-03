@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title>Stores</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Stores</h1>
+        <!-- <p class="shell__sub">
+          <%= store.store_name || shop %> &mdash;
+          <strong><%= store.store_type %></strong> store
+        </p> -->
+      </div>
+    </header>
+
+    <% if (isSource) { %>
+
+      <%# A source hands its code out; the destination types it in. %>
+      <section class="panel">
+        <h2 class="panel__title">Your pairing code</h2>
+        <p class="panel__copy">
+          Give this code to the destination store. Someone with admin access
+          there enters it to start receiving your products. It lasts
+          <%= codeTtlMinutes %> minutes and can only be used once.
+        </p>
+
+        <div class="code" id="code-box" <%= pairingCode ? "" : "hidden" %>>
+          <span class="code__value" id="code-value"><%= pairingCode ? pairingCode.code : "" %></span>
+          <span class="code__meta" id="code-meta">
+            <% if (pairingCode && pairingCode.expiresAt) { %>
+              expires <%= new Date(pairingCode.expiresAt).toISOString().slice(11, 16) %> UTC
+            <% } %>
+          </span>
+        </div>
+
+        <p class="notice notice--error" id="code-error" hidden></p>
+
+        <div class="shell__actions">
+          <button class="btn btn--primary" type="button" id="code-button">
+            <%= pairingCode ? "Generate a new code" : "Generate a code" %>
+          </button>
+        </div>
+
+        <% if (pairingCode) { %>
+          <p class="muted">Generating a new code makes the one above stop working.</p>
+        <% } %>
+      </section>
+
+    <% } else { %>
+
+      <%# A destination enters the source's code. %>
+      <section class="panel">
+        <h2 class="panel__title">Connect a source store</h2>
+        <p class="panel__copy">
+          Open this app on the source store, generate its pairing code, and
+          enter it here. The connection goes live straight away.
+        </p>
+
+        <form id="connect-form">
+          <label class="field">
+            <span class="field__label">Source pairing code</span>
+            <input
+              class="field__input field__input--compact"
+              type="text"
+              id="connect-code"
+              name="code"
+              placeholder="ABCD-1234"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="9">
+          </label>
+
+          <p class="notice notice--error" id="connect-error" hidden></p>
+
+          <div class="shell__actions">
+            <button class="btn btn--primary" type="submit" id="connect-button">Connect</button>
+          </div>
+        </form>
+      </section>
+
+    <% } %>
+
+    <section class="panel">
+      <h2 class="panel__title">
+        <%= isSource ? "Destination stores receiving from here" : "Source stores sending here" %>
+      </h2>
+
+      <% if (!connections.length) { %>
+        <p class="panel__copy">
+          <%= isSource
+              ? "No destination store is connected yet. Share your code above."
+              : "No source store is connected yet. Enter a code above." %>
+        </p>
+      <% } else { %>
+        <ul class="stores">
+          <% connections.forEach(function (connection) { %>
+            <% var other = isSource ? connection.destination : connection.source; %>
+            <li class="stores__row">
+              <span class="stores__name">
+                <%= other.store_name || other.shop_domain %>
+                <% if (other.store_name) { %>
+                  <span class="muted"><%= other.shop_domain %></span>
+                <% } %>
+              </span>
+              <span class="stores__meta">
+                <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+                <span class="muted"><%= connection.sync_mode %> sync</span>
+              </span>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      function showError(node, message) {
+        node.textContent = message;
+        node.hidden = false;
+      }
+
+      /* ---------------- source: generate a code ---------------- */
+      var codeButton = document.getElementById("code-button");
+
+      if (codeButton) {
+        var codeBox = document.getElementById("code-box");
+        var codeValue = document.getElementById("code-value");
+        var codeMeta = document.getElementById("code-meta");
+        var codeError = document.getElementById("code-error");
+
+        codeButton.addEventListener("click", async function () {
+          codeError.hidden = true;
+          codeButton.disabled = true;
+
+          try {
+            var response = await window.appFetch("/stores/code", { method: "POST" });
+            var data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok) {
+              return showError(codeError, data.error || "Could not generate a code.");
+            }
+
+            codeValue.textContent = data.code;
+            codeMeta.textContent = "expires " +
+              new Date(data.expiresAt).toISOString().slice(11, 16) + " UTC";
+            codeBox.hidden = false;
+            codeButton.textContent = "Generate a new code";
+            window.appToast("New pairing code ready");
+          } catch (err) {
+            showError(codeError, "Could not reach the app. Try again.");
+          } finally {
+            codeButton.disabled = false;
+          }
+        });
+      }
+
+      /* ---------------- source: redeem a code ---------------- */
+      var connectForm = document.getElementById("connect-form");
+
+      if (connectForm) {
+        var connectInput = document.getElementById("connect-code");
+        var connectButton = document.getElementById("connect-button");
+        var connectError = document.getElementById("connect-error");
+
+        connectForm.addEventListener("submit", async function (event) {
+          event.preventDefault();
+          connectError.hidden = true;
+
+          var code = connectInput.value.trim();
+
+          if (!code) {
+            return showError(connectError, "Enter the source store's code.");
+          }
+
+          connectButton.disabled = true;
+
+          try {
+            var response = await window.appFetch("/stores/connect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: code })
+            });
+
+            var data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok) {
+              connectButton.disabled = false;
+              return showError(connectError, data.error || "Could not connect.");
+            }
+
+            window.appToast("Connected to " + data.connection.source);
+            window.appNavigate("/stores");
+          } catch (err) {
+            connectButton.disabled = false;
+            showError(connectError, "Could not reach the app. Try again.");
+          }
+        });
+      }
+    })();
+  </script>
+
+</body>
+
+</html>
