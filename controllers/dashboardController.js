@@ -1,12 +1,61 @@
 // controllers/dashboardController.js
 //
-// The landing screen. A DESTINATION gets the numbers that matter to it -- what
-// has arrived, what is still waiting, and who it is receiving from. A SOURCE
-// keeps the plain store summary, because its own work is on Products.
+// The landing screen. Each role gets the same useful overview shape, with the
+// labels reversed to match the direction products and orders move.
 const sourceProductModel = require("../models/sourceProductModel");
 const connectionModel = require("../models/connectionModel");
+const productMappingModel = require("../models/productMappingModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const { renderStoreType } = require("./storeController");
+
+/** Products sent out, destinations receiving them, and orders coming back. */
+async function sourceStats(storeId) {
+  const [products, connections, topSellers] = await Promise.all([
+    // The largest seeded plan currently allows 1,000 products; keep the
+    // dashboard comfortably above that so its totals do not stop at one page.
+    sourceProductModel.listWithMappingStatus(storeId, { limit: 5000 }),
+    connectionModel.listForSource(storeId),
+    orderLineItemModel.topSellingSourceProducts(storeId, { limit: 5 }),
+  ]);
+
+  const shared = products.filter((product) => product.allowed > 0);
+  const unshared = products.filter((product) => !product.allowed);
+
+  const byDestination = await Promise.all(
+    connections.map(async (connection) => {
+      const status = await productMappingModel.statusBreakdown(connection.id);
+
+      return {
+        domain: connection.destination.shop_domain,
+        name:
+          connection.destination.store_name || connection.destination.shop_domain,
+        status: connection.status,
+        active:
+          connection.status === "active" && connection.destination.is_active,
+        synced: status.synced,
+        unsynced: status.pending + status.failed + status.skipped + status.deleted,
+      };
+    })
+  );
+
+  return {
+    cards: {
+      staged: products.length,
+      shared: shared.length,
+      unshared: unshared.length,
+      stores: connections.filter(
+        (connection) =>
+          connection.status === "active" && connection.destination.is_active
+      ).length,
+    },
+    byDestination: byDestination.sort(
+      (a, b) =>
+        b.synced + b.unsynced - (a.synced + a.unsynced) ||
+        a.name.localeCompare(b.name)
+    ),
+    topSellers,
+  };
+}
 
 /** Everything the destination dashboard shows, from one read of the mappings. */
 async function destinationStats(storeId) {
@@ -83,14 +132,15 @@ exports.getDashboard = async (req, res) => {
       return renderStoreType(req, res);
     }
 
-    const isDestination = req.store.store_type === "destination";
-
     // Each role has its own screen under views/<role>/.
     res.render(`${req.store.store_type}/dashboard`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      stats: isDestination ? await destinationStats(req.storeId) : null,
+      stats:
+        req.store.store_type === "destination"
+          ? await destinationStats(req.storeId)
+          : await sourceStats(req.storeId),
     });
   } catch (err) {
     console.error("Dashboard load failed:", err.message);

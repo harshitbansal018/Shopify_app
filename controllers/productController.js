@@ -40,10 +40,9 @@ exports.getProducts = async (req, res) => {
       const synced = offered.filter((product) => !product.awaiting);
       const unsynced = offered.filter((product) => product.awaiting);
 
-      // Land on whichever tab has something to do. A merchant opening this
-      // screen almost always came because something is waiting.
-      const requested = req.query.tab === "synced" ? "synced" : req.query.tab;
-      const tab = requested || (unsynced.length ? "unsynced" : "synced");
+      // A destination opens on its established catalogue. Unsynced remains
+      // available explicitly when the merchant wants to review new offers.
+      const tab = req.query.tab === "unsynced" ? "unsynced" : "synced";
 
       // One batched query for the whole page, not one per product.
       const variants = await mappingVariantProductModel.mapForMappings(

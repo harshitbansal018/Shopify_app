@@ -306,7 +306,7 @@ function shopifyOrder(overrides = {}) {
     const product = await sourceProductModel.upsert(src.id, {
       id: 1001,
       title: "Merino Beanie",
-      variants: [{ id: 5001, sku: "BEANIE-S" }],
+      variants: [{ id: 5001, sku: "BEANIE-S", price: "12.50" }],
     });
 
     const sourceVariant = await sourceVariantModel.findByShopifyId(product.id, 5001);
@@ -372,6 +372,17 @@ function shopifyOrder(overrides = {}) {
     check("top sellers total units and revenue",
       top && top.units === 3 && top.revenue === 60,
       JSON.stringify(top));
+
+    const sourceTopSellers = await orderLineItemModel.topSellingSourceProducts(src.id);
+    const sourceTop = sourceTopSellers.find((item) => item.title === "Merino Beanie");
+
+    check("source dashboard ranks products from destination orders", Boolean(sourceTop));
+    check("source top sellers count stores, orders and units",
+      sourceTop && sourceTop.stores === 1 && sourceTop.orders === 1 && sourceTop.units === 3,
+      JSON.stringify(sourceTop));
+    check("source top sellers use the source price",
+      sourceTop && sourceTop.revenue === 37.5,
+      JSON.stringify(sourceTop));
 
     // Deleting the mapping must not delete the sale.
     await connectionModel.deleteConnection(conn.id);
