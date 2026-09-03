@@ -1255,10 +1255,16 @@ const STORE_ROW = {
 
   console.log("\nPartials");
   {
-    await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
+    await expectRenders("nav renders", "partials/nav", {}, [
+      "s-app-nav",
+      "/images/product-sync-logo-256.png",
+      "Product Sync",
+    ]);
     await expectRenders("head renders", "partials/head", BASE, [
       "shopify-api-key",
       "app-bridge.js",
+      "/images/favicon-32.png",
+      "/images/apple-touch-icon.png",
     ]);
   }
 
