@@ -81,10 +81,19 @@
               <td>
                 <span class="media__body">
                   <span class="table__title">
-                    <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
+                    <a class="record-link"
+                       href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
+                       target="_blank" rel="noopener noreferrer">
+                      <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
+                    </a>
                   </span>
                   <span class="muted">
-                    <% if (order.source_order_name) { %>
+                    <% if (order.source_order_name && order.source_shopify_order_id) { %>
+                      &rarr;
+                      <a class="record-link"
+                         href="<%= shopifyAdminUrl(order.source_shop_domain, 'orders', order.source_shopify_order_id) %>"
+                         target="_blank" rel="noopener noreferrer"><%= order.source_order_name %> at the source</a>
+                    <% } else if (order.source_order_name) { %>
                       &rarr; <%= order.source_order_name %> at the source
                     <% } else { %>
                       not yet placed

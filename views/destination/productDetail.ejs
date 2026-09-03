@@ -16,7 +16,15 @@
     <header class="shell__header">
       <div>
         <button class="link link--back" type="button" id="back">&larr; Products</button>
-        <h1><%= product.title %></h1>
+        <h1>
+          <% if (product.destination_shopify_product_id) { %>
+            <a class="record-link"
+               href="<%= shopifyAdminUrl(shop, 'products', product.destination_shopify_product_id) %>"
+               target="_blank" rel="noopener noreferrer"><%= product.title %></a>
+          <% } else { %>
+            <%= product.title %>
+          <% } %>
+        </h1>
         <p class="shell__sub">
           <%= shared.length %> of <%= totalVariants %>
           variant<%= totalVariants === 1 ? "" : "s" %> shared

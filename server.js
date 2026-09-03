@@ -7,6 +7,7 @@ const { assertConnection } = require("./config/db");
 const { runMigrations } = require("./config/migrate");
 const { frameAncestors, noStore } = require("./middleware/security");
 const { serializeForScript } = require("./utils/html");
+const { shopifyAdminUrl } = require("./utils/shop");
 
 const authRoutes = require("./routes/authRoute");
 const storeRoutes = require("./routes/storeRoute");
@@ -52,6 +53,7 @@ app.set("views", path.join(__dirname, "views"));
 // <%- json(value) %> embeds data in a <script> block without letting a stray
 // </script> in the data break out of it.
 app.locals.json = serializeForScript;
+app.locals.shopifyAdminUrl = shopifyAdminUrl;
 
 /* ---------------- SECURITY HEADERS ----------------
    Required for the app to render inside the Shopify admin iframe. */

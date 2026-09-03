@@ -58,9 +58,21 @@ function isValidShopDomain(value) {
   return normalizeShopDomain(value) !== null;
 }
 
+/** Safe direct URL to a record in a specific Shopify Admin. */
+function shopifyAdminUrl(shopDomain, resource, id) {
+  const shop = normalizeShopDomain(shopDomain);
+  const allowed = new Set(["products", "orders"]);
+  const resourceName = String(resource || "").toLowerCase();
+  const recordId = String(id || "").split("/").pop();
+
+  if (!shop || !allowed.has(resourceName) || !/^\d+$/.test(recordId)) return null;
+  return `https://${shop}/admin/${resourceName}/${recordId}`;
+}
+
 module.exports = {
   normalizeShopDomain,
   coerceShopDomain,
   isValidShopDomain,
+  shopifyAdminUrl,
   SHOP_DOMAIN_REGEX,
 };
