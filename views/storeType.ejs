@@ -12,6 +12,10 @@
   <%# Before the choice there is nowhere else to go, so the nav is noise. %>
   <% if (chosen) { %>
     <%- include("partials/nav") %>
+  <% } else { %>
+    <div class="app-brand-shell">
+      <%- include("partials/brand") %>
+    </div>
   <% } %>
 
   <main class="shell">

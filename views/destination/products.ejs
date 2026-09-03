@@ -122,7 +122,15 @@
                       <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
                     <% } %>
                     <span class="media__body">
-                      <span class="table__title"><%= product.title %></span>
+                      <% if (product.destination_shopify_product_id) { %>
+                        <a class="table__title record-link"
+                           href="<%= shopifyAdminUrl(shop, 'products', product.destination_shopify_product_id) %>"
+                           target="_blank" rel="noopener noreferrer">
+                          <%= product.title %>
+                        </a>
+                      <% } else { %>
+                        <span class="table__title"><%= product.title %></span>
+                      <% } %>
                       <span class="muted">
                         <%# The product's own state at the source. It used to
                             sit under Status, which now means the sync. %>

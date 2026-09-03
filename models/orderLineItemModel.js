@@ -167,7 +167,9 @@ async function sourceLinesForOrder(orderId) {
             svm.price  AS source_price,
             svm.sku    AS source_sku,
             svm.title  AS source_variant_title,
-            sp.title   AS source_product_title
+            sp.title   AS source_product_title,
+            sp.shopify_product_id AS source_shopify_product_id,
+            pm.destination_shopify_product_id
        FROM order_line_items li
        JOIN mapping_variant_products mvp ON mvp.id  = li.mapped_variant_id
        JOIN product_mappings pm          ON pm.id  = mvp.product_mapping_id
@@ -222,6 +224,9 @@ async function topSellingProducts(storeId, { limit = 5 } = {}) {
     `SELECT sp.id AS source_product_id,
             MAX(COALESCE(sp.title, li.title, 'Deleted product')) AS title,
             MAX(COALESCE(source_store.store_name, source_store.shop_domain)) AS source,
+            MAX(source_store.shop_domain) AS source_shop_domain,
+            MAX(sp.shopify_product_id) AS source_shopify_product_id,
+            MAX(pm.destination_shopify_product_id) AS destination_shopify_product_id,
             MAX(o.currency) AS currency,
             SUM(li.quantity) AS units,
             SUM((li.quantity * li.price) - COALESCE(li.total_discount, 0)) AS revenue
