@@ -764,10 +764,6 @@ const CREATE_ORDER_MAPPINGS = `
     -- already cached, and pointing at the cache keeps the two in step.
     destination_order_id INT NOT NULL,
 
-    -- Filled in once the source store has accepted the order.
-    source_shopify_order_id BIGINT UNSIGNED DEFAULT NULL,
-    source_order_name       VARCHAR(50) DEFAULT NULL,
-
     -- What the shopper paid, and what the source is owed at its own prices.
     -- DECIMAL, never FLOAT: these are money.
     destination_total DECIMAL(12,2) DEFAULT NULL,
@@ -778,12 +774,6 @@ const CREATE_ORDER_MAPPINGS = `
     -- with lines from two sources has a different count on each row.
     line_count INT NOT NULL DEFAULT 0,
 
-    sync_status ENUM('pending','synced','failed','skipped')
-      NOT NULL DEFAULT 'pending',
-    error_message VARCHAR(512) DEFAULT NULL,
-    attempts      INT NOT NULL DEFAULT 0,
-    last_synced_at DATETIME DEFAULT NULL,
-
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -791,7 +781,6 @@ const CREATE_ORDER_MAPPINGS = `
     -- idempotent: Shopify retries orders/create, and the second delivery must
     -- not place a second order at the source.
     UNIQUE KEY uniq_order_mapping (connection_id, destination_order_id),
-    KEY idx_order_mapping_status (sync_status),
 
     CONSTRAINT fk_order_mapping_connection
       FOREIGN KEY (connection_id) REFERENCES store_connections(id)
@@ -957,6 +946,190 @@ async function runMigrations() {
   await backfillSyncSettings();
   // After BOTH store_connections and orders -- it has a foreign key onto each.
   await query(CREATE_ORDER_MAPPINGS);
+  await addSourceOrderStatus();
+  await dropOrderPushColumns();
+  await dropSourceOrderSettings();
+}
+
+/**
+ * A source store has nothing to configure.
+ *
+ * This table briefly held two switches: whether an order was placed in the
+ * source's Shopify admin, and whether the sale was listed in the app. Nothing
+ * is written to that admin any more, and a supplier hiding the only list of
+ * work it has been given is not a setting worth keeping -- so the screen went,
+ * and with no screen the row could never be changed again.
+ */
+async function dropSourceOrderSettings() {
+  // Asked first, because DROP TABLE IF EXISTS succeeds whether or not the
+  // table is there -- so dropping unconditionally would announce a migration
+  // on every single boot for the rest of the app's life.
+  const [rows] = await require("./db").pool.query(
+    `SELECT COUNT(*) AS present
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'source_order_settings'`
+  );
+
+  if (!Number(rows[0].present)) return;
+
+  await query("DROP TABLE source_order_settings");
+  console.log("Migration applied: dropped source_order_settings");
+}
+
+/**
+ * Trim the columns that described PUSHING an order into the source store.
+ *
+ * That whole path is gone: the sale lives in this app and the source works it
+ * here, so there is no order id over there to record, no queue to retry, and
+ * no failure to report. What is left describes the job itself -- who owes what,
+ * whether it shipped, and where the parcel is.
+ *
+ * Dropped rather than left behind: a column nobody writes reads as data that
+ * has stopped updating, which is worse than one that is plainly absent.
+ */
+async function dropOrderPushColumns() {
+  const gone = [
+    // The order that used to be created in the source's store.
+    "source_shopify_order_id",
+    "source_order_name",
+    // Its payment state over there, which no longer exists.
+    "source_financial_status",
+    // The push queue: status, retries and the last error.
+    "sync_status",
+    "error_message",
+    "attempts",
+    "last_synced_at",
+  ];
+
+  // The index rode on a column that is going with it.
+  await safeDrop(
+    "order_mappings.idx_order_mapping_status",
+    "ALTER TABLE order_mappings DROP INDEX idx_order_mapping_status"
+  );
+  await safeDrop(
+    "order_mappings.idx_order_mapping_source_order",
+    "ALTER TABLE order_mappings DROP INDEX idx_order_mapping_source_order"
+  );
+
+  for (const column of gone) {
+    await safeDrop(
+      `order_mappings.${column}`,
+      `ALTER TABLE order_mappings DROP COLUMN ${column}`
+    );
+  }
+
+  // The tabs on both Orders screens group by this, so it needs its own index
+  // now that sync_status is not carrying that job.
+  await safeAlter(
+    "order_mappings.idx_order_mapping_fulfilment",
+    `ALTER TABLE order_mappings
+       ADD INDEX idx_order_mapping_fulfilment (source_fulfillment_status)`
+  );
+}
+
+/**
+ * The order's journey BACK: what the source store did with it.
+ *
+ * Until now order_mappings only described the outbound trip -- destination sale
+ * to source order. But the source is the one that actually ships, so its
+ * fulfillment state is the answer to "where is my order?" and the destination
+ * has no other way to see it.
+ *
+ * Two different things live here, and they behave differently on purpose:
+ *
+ *   source_* columns   A MIRROR. Read-only bookkeeping shown on the Orders
+ *                      screens. Nothing is written to anyone's Shopify store.
+ *
+ *   cancel_*  columns  A QUEUE, like sync_status above it. Cancelling is the
+ *                      one thing that must reach the destination's real order:
+ *                      a shopper should not stay charged for goods the source
+ *                      has decided will never ship.
+ */
+async function addSourceOrderStatus() {
+  await safeAlter(
+    "order_mappings.source_fulfillment_status",
+    `ALTER TABLE order_mappings ADD COLUMN source_fulfillment_status
+       VARCHAR(32) NOT NULL DEFAULT 'unfulfilled'`
+  );
+  // Rows written before this column existed, or while it still allowed NULL,
+  // would fall out of the tab counts entirely -- present in the list but in
+  // none of the groups above it.
+  await require("./db").pool.query(
+    `UPDATE order_mappings
+        SET source_fulfillment_status = 'unfulfilled'
+      WHERE source_fulfillment_status IS NULL
+         OR source_fulfillment_status = ''`
+  );
+  await safeAlter(
+    "order_mappings.source_cancelled_at",
+    "ALTER TABLE order_mappings ADD COLUMN source_cancelled_at DATETIME DEFAULT NULL"
+  );
+  await safeAlter(
+    "order_mappings.source_cancel_reason",
+    "ALTER TABLE order_mappings ADD COLUMN source_cancel_reason VARCHAR(64) DEFAULT NULL"
+  );
+  // [{ number, company, url }] -- a parcel can ship in several boxes, and the
+  // shopper needs every tracking number, not the first one.
+  await safeAlter(
+    "order_mappings.source_tracking",
+    "ALTER TABLE order_mappings ADD COLUMN source_tracking JSON DEFAULT NULL"
+  );
+  // When the mirror was last refreshed, so a stale row is visibly stale rather
+  // than silently claiming the source has done nothing.
+  await safeAlter(
+    "order_mappings.source_status_at",
+    "ALTER TABLE order_mappings ADD COLUMN source_status_at DATETIME DEFAULT NULL"
+  );
+
+  await safeAlter(
+    "order_mappings.cancel_status",
+    `ALTER TABLE order_mappings ADD COLUMN cancel_status
+       ENUM('none','pending','cancelled','failed') NOT NULL DEFAULT 'none'`
+  );
+  await safeAlter(
+    "order_mappings.cancel_error",
+    "ALTER TABLE order_mappings ADD COLUMN cancel_error VARCHAR(512) DEFAULT NULL"
+  );
+  await safeAlter(
+    "order_mappings.cancel_attempts",
+    "ALTER TABLE order_mappings ADD COLUMN cancel_attempts INT NOT NULL DEFAULT 0"
+  );
+
+  /* The other direction the source's decision travels: marking a sale shipped
+     here also fulfils the buyer's REAL order, so the shopper is told and can
+     track it. Same queue shape as the cancellation above it, and separate from
+     source_fulfillment_status on purpose -- that is what the source said, this
+     is whether Shopify has been told. */
+  await safeAlter(
+    "order_mappings.fulfil_status",
+    `ALTER TABLE order_mappings ADD COLUMN fulfil_status
+       ENUM('none','pending','fulfilled','failed') NOT NULL DEFAULT 'none'`
+  );
+  await safeAlter(
+    "order_mappings.fulfil_error",
+    "ALTER TABLE order_mappings ADD COLUMN fulfil_error VARCHAR(512) DEFAULT NULL"
+  );
+  await safeAlter(
+    "order_mappings.fulfil_attempts",
+    "ALTER TABLE order_mappings ADD COLUMN fulfil_attempts INT NOT NULL DEFAULT 0"
+  );
+  // Kept so undoing can cancel the fulfillment that was actually created,
+  // rather than guessing which of the order's fulfillments was ours.
+  await safeAlter(
+    "order_mappings.destination_fulfillment_id",
+    `ALTER TABLE order_mappings ADD COLUMN destination_fulfillment_id
+       BIGINT UNSIGNED DEFAULT NULL`
+  );
+  await safeAlter(
+    "order_mappings.idx_order_mapping_fulfil",
+    "ALTER TABLE order_mappings ADD INDEX idx_order_mapping_fulfil (fulfil_status)"
+  );
+  // The background round asks for pending cancellations across every
+  // connection, so this is the index that query rides.
+  await safeAlter(
+    "order_mappings.idx_order_mapping_cancel",
+    "ALTER TABLE order_mappings ADD INDEX idx_order_mapping_cancel (cancel_status)"
+  );
 }
 
 /**

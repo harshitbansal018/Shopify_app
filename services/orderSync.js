@@ -1,25 +1,34 @@
 // services/orderSync.js
 //
-// A sale in a destination store becomes an order in the source store that
-// supplied the goods -- at the SOURCE's own prices, never the marked-up ones
-// the shopper paid.
+// A sale in a destination store becomes a job for the source store that
+// supplied the goods -- priced at the SOURCE's own prices, never the marked-up
+// ones the shopper paid.
 //
-// The two halves, and why they are separate:
+// The job lives in this app, not in the source's Shopify admin. Nothing is
+// written to that store: no order, no stock movement, no picking paperwork it
+// did not ask for. The source works the sale on its Orders screen here.
 //
-//   queueForSources()  runs from the orders/create webhook. It reads our own
-//                      tables only. A webhook must never call Shopify: an
-//                      outbound call from inside one is what makes Shopify
-//                      time the request out, retry it, and eventually
-//                      unsubscribe the topic.
+// What the source decides DOES reach the buyer's store, because that is where
+// the shopper is waiting:
 //
-//   pushPending()      runs from the background loop and does the calling.
+//   marked fulfilled     the destination's real order is fulfilled with the
+//                        same tracking, so Shopify emails the shopper and they
+//                        can follow the parcel.
 //
-// Everything in between is order_mappings, which is the queue.
+//   cannot supply        the destination's real order is cancelled and the
+//                        shopper refunded. Leaving them charged for something
+//                        nobody will send is worse than writing to a store we
+//                        do not own.
+//
+// Both go through a queue rather than being sent inline, for the usual reason:
+// a webhook or a screen must not wait on Shopify.
+//
+// Everything in between is order_mappings, which is the shared record.
 const shopifyRequest = require("./shopify");
-const connectionModel = require("../models/connectionModel");
 const orderModel = require("../models/orderModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const orderMappingModel = require("../models/orderMappingModel");
+const customerModel = require("../models/customerModel");
 
 const ORDER_SYNC_INTERVAL_MS = Number(
   process.env.ORDER_SYNC_INTERVAL_MS || 60000
@@ -28,36 +37,6 @@ const ORDER_SYNC_INTERVAL_MS = Number(
 let orderSyncTimer = null;
 let orderSyncRunning = false;
 
-/*
- * The source order carries a note and a tag saying where it came from. Both
- * are for the merchant standing in the source admin: without them the order
- * looks like it appeared from nowhere, and there is no way to tell an order
- * this app placed from one a human did.
- */
-const SOURCE_ORDER_TAG = "product-sync";
-
-const ORDER_CREATE_MUTATION = `
-  mutation CreateSourceOrder(
-    $order: OrderCreateOrderInput!
-    $options: OrderCreateOptionsInput
-  ) {
-    orderCreate(order: $order, options: $options) {
-      order {
-        id
-        name
-        totalPriceSet { shopMoney { amount currencyCode } }
-      }
-      userErrors { field message }
-    }
-  }
-`;
-
-/** "gid://shopify/ProductVariant/123" for a raw id, passed through if already a gid. */
-function variantGid(id) {
-  const value = String(id);
-  return value.startsWith("gid://") ? value : `gid://shopify/ProductVariant/${value}`;
-}
-
 /** Shopify returns gids; our columns hold the numeric id. */
 function numericId(gid) {
   if (gid === null || gid === undefined) return null;
@@ -65,7 +44,7 @@ function numericId(gid) {
   return match ? match[1] : null;
 }
 
-/** Money as a fixed-2 string, or null. Never Number() on its own: Number(null) is 0. */
+/** Money as a number to two places, or null. Never Number() alone: Number(null) is 0. */
 function money(value) {
   if (value === null || value === undefined || value === "") return null;
   const amount = Number(value);
@@ -73,26 +52,25 @@ function money(value) {
 }
 
 /**
- * Split one destination order into the source orders it implies.
+ * Split one destination order into the jobs it implies for each source.
  *
  * A basket can hold products from two source stores, so this groups by
  * connection and gives each source only its own lines. Lines the destination
  * sells itself have no mapping and are simply absent -- sourceLinesForOrder
  * has already dropped them.
  *
- * Nothing here talks to Shopify. It only writes the queue.
+ * Nothing here talks to Shopify. It runs from the orders/create webhook, and a
+ * webhook that calls out is what makes Shopify time the request out, retry it,
+ * and eventually unsubscribe the topic.
+ *
+ * A test order is recorded like any other. Nothing is placed in anybody's
+ * store any more, so a test checkout can no longer cause real work anywhere --
+ * which is what the guard here used to be protecting against.
  */
 async function queueForSources(destinationStoreId, order) {
   const lines = await orderLineItemModel.sourceLinesForOrder(order.id);
 
   if (!lines.length) return { connections: 0, lines: 0 };
-
-  // A test order is a merchant trying the checkout out. Placing a real order
-  // at the source for one would put real stock on a real invoice.
-  if (order.test) {
-    console.log(`Order ${order.name || order.id} is a test order; not forwarded`);
-    return { connections: 0, lines: 0, skipped: "test" };
-  }
 
   const byConnection = new Map();
 
@@ -106,7 +84,7 @@ async function queueForSources(destinationStoreId, order) {
   let queued = 0;
 
   for (const [connectionId, group] of byConnection) {
-    // Totals for the row, so the screen can show what the shopper paid beside
+    // Totals for the row, so a screen can show what the shopper paid beside
     // what the source is owed without re-reading every line.
     const sourceTotal = group.reduce(
       (sum, line) => sum + (money(line.source_price) || 0) * line.quantity,
@@ -130,194 +108,383 @@ async function queueForSources(destinationStoreId, order) {
   return { connections: queued, lines: lines.length };
 }
 
-/**
- * Build the orderCreate input for one source store.
+/*
+ * Shopify does not fulfil an order directly: it fulfils FULFILMENT ORDERS,
+ * which are the order's lines grouped by who is expected to ship them. So the
+ * line ids we hold have to be translated into fulfilment-order line ids first,
+ * and that is what this query is for.
  *
- * priceSet is the whole point of this function. Without it Shopify would price
- * each line at whatever the variant currently costs IN THE SOURCE STORE, which
- * happens to be right today -- but it would also silently follow a later price
- * change, so the order would stop matching what was actually agreed. Sending
- * the price explicitly pins it.
- *
- * The marked-up price the shopper paid is never sent. That margin is the
- * destination's, not the source's.
+ * remainingQuantity is the number that still needs shipping. Asking for more
+ * than that is rejected, and asking for a line already shipped would create a
+ * second fulfillment for goods that have gone once.
  */
-function buildOrderInput(mapping, lines, currency) {
-  const lineItems = lines.map((line) => {
-    const price = money(line.source_price);
+const FULFILLMENT_ORDERS_QUERY = `
+  query FulfillmentOrders($id: ID!) {
+    order(id: $id) {
+      fulfillmentOrders(first: 20) {
+        nodes {
+          id
+          status
+          lineItems(first: 100) {
+            nodes {
+              id
+              remainingQuantity
+              lineItem { id }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
-    const item = {
-      variantId: variantGid(line.source_shopify_variant_id),
-      quantity: Number(line.quantity) || 1,
-      requiresShipping: line.requires_shipping !== 0,
-    };
+const FULFILLMENT_CREATE_MUTATION = `
+  mutation FulfilDestinationOrder($fulfillment: FulfillmentInput!) {
+    fulfillmentCreate(fulfillment: $fulfillment) {
+      fulfillment { id status }
+      userErrors { field message }
+    }
+  }
+`;
 
-    // A variant with no cached price is sent without one, so Shopify falls
-    // back to the live price rather than the order being created as free.
-    if (price !== null) {
-      item.priceSet = { shopMoney: { amount: price.toFixed(2), currencyCode: currency } };
+const FULFILLMENT_CANCEL_MUTATION = `
+  mutation UnfulfilDestinationOrder($id: ID!) {
+    fulfillmentCancel(id: $id) {
+      fulfillment { id status }
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * Which fulfilment-order lines cover THIS source's part of the sale.
+ *
+ * A basket can hold products from two suppliers and some of the destination's
+ * own; fulfilling all of it because one supplier shipped its share would tell
+ * the shopper their whole order is on its way when most of it is not. So the
+ * destination's line ids are matched one by one, and only ours are sent.
+ *
+ * Lines with nothing left to ship are skipped, which is also what makes a
+ * retry safe after a partial success.
+ */
+function fulfilmentLinesFor(fulfillmentOrders, wanted) {
+  const groups = [];
+
+  (fulfillmentOrders || []).forEach((fulfillmentOrder) => {
+    // CLOSED and CANCELLED fulfilment orders cannot be fulfilled, and asking
+    // fails the whole mutation rather than just that group.
+    if (fulfillmentOrder.status !== "OPEN" && fulfillmentOrder.status !== "IN_PROGRESS") {
+      return;
     }
 
-    return item;
+    const lines = (fulfillmentOrder.lineItems?.nodes || [])
+      .filter((node) => {
+        const orderLineId = numericId(node.lineItem?.id);
+        return orderLineId && wanted.has(orderLineId) && node.remainingQuantity > 0;
+      })
+      .map((node) => ({
+        id: node.id,
+        // Never more than is left, however many the sale was for: a partial
+        // shipment already gone would make the rest of the request invalid.
+        quantity: Math.min(node.remainingQuantity, wanted.get(numericId(node.lineItem.id))),
+      }));
+
+    if (lines.length) {
+      groups.push({
+        fulfillmentOrderId: fulfillmentOrder.id,
+        fulfillmentOrderLineItems: lines,
+      });
+    }
   });
 
-  const reference =
-    mapping.destination_order_name ||
-    `#${mapping.destination_order_number || mapping.destination_shopify_order_id}`;
+  return groups;
+}
+
+/** Every parcel's number, url and carrier, in the shape the input wants. */
+function trackingInput(parcels) {
+  const list = (parcels || []).filter((parcel) => parcel && parcel.number);
+
+  if (!list.length) return null;
 
   return {
-    order: {
-      currency,
-      lineItems,
-      tags: [SOURCE_ORDER_TAG],
-      // The destination store and its order number, so a human in the source
-      // admin can trace this back to the sale that caused it.
-      note:
-        `Product Sync: ${reference} at ` +
-        `${mapping.destination_store_name || mapping.destination_shop_domain}. ` +
-        `Priced at this store's own prices, without the destination's margin.`,
-    },
-    options: {
-      // The destination store already decremented its own stock when the
-      // shopper checked out. Whether the source's stock should move too is the
-      // source merchant's call, and DECREMENT_OBEYING_POLICY is the same rule
-      // Shopify applies to an order placed by hand.
-      inventoryBehaviour: "DECREMENT_OBEYING_POLICY",
-      // No shopper email is attached to this order, and the source's customer
-      // is the destination store rather than a person. A receipt would go
-      // nowhere useful.
-      sendReceipt: false,
-    },
+    // numbers/urls rather than number/url: one order can ship in several
+    // parcels, and the singular fields would keep only the first.
+    numbers: list.map((parcel) => String(parcel.number)),
+    urls: list.map((parcel) => parcel.url).filter(Boolean),
+    // Shopify takes ONE carrier for the whole fulfillment. In practice a
+    // merchant ships an order with one carrier, so the first is right; if it
+    // is ever wrong it is cosmetic, and the numbers are still correct.
+    company: list.find((parcel) => parcel.company)?.company || null,
   };
 }
 
 /**
- * Place one queued order at its source store.
+ * Tell the buyer's store that the goods have shipped.
  *
- * Returns { ok } or { ok: false, reason }. Never throws for a bad order: a
- * single broken line must not stop the rest of the queue.
+ * This is what makes the source's "Mark fulfilled" real: the destination's own
+ * Shopify order is fulfilled with the same tracking, so the shopper sees it in
+ * their account and Shopify emails them the shipping confirmation.
+ *
+ * Only this source's lines are fulfilled. Never throws: a fulfilment that
+ * cannot be sent must not stop the rest of the queue.
  */
-async function pushOne(mapping) {
-  const lines = (
-    await orderLineItemModel.sourceLinesForOrder(mapping.destination_order_id)
-  ).filter((line) => line.connection_id === mapping.connection_id);
-
-  if (!lines.length) {
-    // Every product on this order has been unshared or deleted since the sale.
-    // There is nothing left to order, and retrying will not change that.
-    await orderMappingModel.markSkipped(
-      mapping.id,
-      "No synced products from this source are left on the order"
-    );
-    return { ok: false, reason: "nothing to order" };
-  }
-
-  const currency = mapping.currency || "USD";
-  const variables = buildOrderInput(mapping, lines, currency);
-
+async function fulfilOne(mapping) {
   try {
-    const data = await shopifyRequest.forShop(mapping.source_shop_domain, {
-      query: ORDER_CREATE_MUTATION,
-      variables,
+    // The destination's own line ids for this source's share, and how many of
+    // each. sourceLinesForOrder gives us our rows; the ids Shopify knows are
+    // on order_line_items.
+    const lines = await orderLineItemModel.destinationLinesForConnection(
+      mapping.destination_order_id,
+      mapping.connection_id
+    );
+
+    if (!lines.length) {
+      await orderMappingModel.markFulfilFailed(
+        mapping.id,
+        "None of this order's lines belong to this source any more"
+      );
+      return { ok: false, reason: "nothing to fulfil" };
+    }
+
+    const wanted = new Map(
+      lines.map((line) => [String(line.shopify_line_item_id), line.quantity])
+    );
+
+    const read = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+      query: FULFILLMENT_ORDERS_QUERY,
+      variables: {
+        id: `gid://shopify/Order/${mapping.destination_shopify_order_id}`,
+      },
     });
 
-    const result = data.orderCreate || {};
+    const groups = fulfilmentLinesFor(
+      read.order?.fulfillmentOrders?.nodes || [],
+      wanted
+    );
+
+    if (!groups.length) {
+      // Already shipped by the destination itself, or the order was cancelled.
+      // Not a failure to retry: nothing will change on its own.
+      await orderMappingModel.markFulfilSent(mapping.id, null);
+      return { ok: true, alreadyFulfilled: true };
+    }
+
+    const fulfillment = { lineItemsByFulfillmentOrder: groups, notifyCustomer: true };
+    const tracking = trackingInput(mapping.source_tracking);
+
+    if (tracking) fulfillment.trackingInfo = tracking;
+
+    const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+      query: FULFILLMENT_CREATE_MUTATION,
+      variables: { fulfillment },
+    });
+
+    const result = data.fulfillmentCreate || {};
     const userErrors = result.userErrors || [];
 
     if (userErrors.length) {
-      const reason = userErrors
-        .map((error) => `${(error.field || []).join(".")}: ${error.message}`)
-        .join("; ");
-
-      await orderMappingModel.markFailed(mapping.id, reason);
+      const reason = userErrors.map((e) => e.message).join("; ");
+      await orderMappingModel.markFulfilFailed(mapping.id, reason);
       return { ok: false, reason };
     }
 
-    if (!result.order) {
-      await orderMappingModel.markFailed(mapping.id, "Shopify returned no order");
-      return { ok: false, reason: "no order returned" };
-    }
+    await orderMappingModel.markFulfilSent(
+      mapping.id,
+      numericId(result.fulfillment?.id)
+    );
 
-    await orderMappingModel.markSynced(mapping.id, {
-      sourceShopifyOrderId: numericId(result.order.id),
-      sourceOrderName: result.order.name,
-    });
-
-    return { ok: true, name: result.order.name };
+    return { ok: true, fulfillmentId: numericId(result.fulfillment?.id) };
   } catch (err) {
-    // A dead token needs a reinstall and will keep failing until then, but the
-    // attempt counter is what eventually stops it rather than a special case.
-    await orderMappingModel.markFailed(mapping.id, err.message);
+    await orderMappingModel.markFulfilFailed(mapping.id, err.message);
     return { ok: false, reason: err.message };
   }
 }
 
-/** Place everything queued on one connection. */
-async function pushPending(connectionId, { limit = 50 } = {}) {
-  const pending = await orderMappingModel.listPending(connectionId, { limit });
-  const totals = { placed: 0, failed: 0 };
+/** Send every queued fulfilment. */
+async function pushFulfilments({ limit = 50 } = {}) {
+  const pending = await orderMappingModel.listPendingFulfilments({ limit });
+  const totals = { fulfilled: 0, failed: 0 };
 
   for (const mapping of pending) {
-    // The connection was paused or disconnected after the sale. Do not place
-    // orders into a store the merchant has stopped trading with.
-    if (mapping.connection_status !== "active") {
-      await orderMappingModel.markSkipped(
-        mapping.id,
-        `Connection is ${mapping.connection_status}`
-      );
-      continue;
-    }
+    const result = await fulfilOne(mapping);
 
-    const result = await pushOne(mapping);
-
-    if (result.ok) totals.placed += 1;
-    else if (result.reason !== "nothing to order") totals.failed += 1;
+    if (result.ok) totals.fulfilled += 1;
+    else totals.failed += 1;
   }
 
   return totals;
 }
 
-/** One round over every active connection. */
+/**
+ * Undo a fulfilment that has already reached the buyer's store.
+ *
+ * Cancelling the Shopify fulfillment is what puts the order back to
+ * unfulfilled there, so the shopper is not left with a shipping notice for a
+ * parcel that is not coming.
+ *
+ * Called from the request rather than the queue: the merchant pressed Undo and
+ * is waiting to be told whether it worked.
+ */
+async function cancelDestinationFulfilment(mapping) {
+  if (!mapping.destination_fulfillment_id) return { ok: true, nothingToDo: true };
+
+  try {
+    const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+      query: FULFILLMENT_CANCEL_MUTATION,
+      variables: {
+        id: `gid://shopify/Fulfillment/${mapping.destination_fulfillment_id}`,
+      },
+    });
+
+    const userErrors = data.fulfillmentCancel?.userErrors || [];
+
+    if (userErrors.length) {
+      return { ok: false, reason: userErrors.map((e) => e.message).join("; ") };
+    }
+
+    await orderMappingModel.clearDestinationFulfilment(mapping.id);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
+const ORDER_CANCEL_MUTATION = `
+  mutation CancelDestinationOrder(
+    $orderId: ID!
+    $reason: OrderCancelReason!
+    $restock: Boolean!
+    $refundMethod: OrderCancelRefundMethodInput
+    $staffNote: String
+    $notifyCustomer: Boolean
+  ) {
+    orderCancel(
+      orderId: $orderId
+      reason: $reason
+      restock: $restock
+      refundMethod: $refundMethod
+      staffNote: $staffNote
+      notifyCustomer: $notifyCustomer
+    ) {
+      job { id done }
+      orderCancelUserErrors { field message code }
+    }
+  }
+`;
+
+/**
+ * Cancel the destination's own order because the source says it cannot ship.
+ *
+ * The only place this app writes into a store it does not own, and it is
+ * deliberate: leaving a shopper charged for goods nobody will send is worse
+ * than the write.
+ *
+ * Shopify runs this as a background job, so a clean return means "accepted",
+ * not "done". The destination's own orders/updated webhook is what confirms
+ * it happened, which is also what keeps the two in step.
+ *
+ * Irreversible, so it is guarded twice: queueCancellation only fires on
+ * 'none', and the attempt counter stops a loop.
+ */
+async function cancelOne(mapping) {
+  try {
+    const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+      query: ORDER_CANCEL_MUTATION,
+      variables: {
+        orderId: `gid://shopify/Order/${mapping.destination_shopify_order_id}`,
+        // OTHER, not CUSTOMER: the shopper did not cancel this, the supplier
+        // did, and recording it as the customer's doing would be a lie in the
+        // destination's own reporting.
+        reason: "OTHER",
+        // The destination's stock went down when the shopper checked out, so
+        // it has to come back or the store is short by one forever.
+        restock: true,
+        refundMethod: { originalPaymentMethodsRefund: true },
+        staffNote: `Cannot be supplied by ${
+          mapping.source_store_name || mapping.source_shop_domain
+        }`,
+        // The shopper is losing an order they paid for; they have to be told.
+        notifyCustomer: true,
+      },
+    });
+
+    const result = data.orderCancel || {};
+    const userErrors = result.orderCancelUserErrors || [];
+
+    if (userErrors.length) {
+      const reason = userErrors.map((e) => e.message).join("; ");
+      await orderMappingModel.markCancelFailed(mapping.id, reason);
+      return { ok: false, reason };
+    }
+
+    await orderMappingModel.markCancelSent(mapping.id);
+    return { ok: true };
+  } catch (err) {
+    await orderMappingModel.markCancelFailed(mapping.id, err.message);
+    return { ok: false, reason: err.message };
+  }
+}
+
+/** Send every queued cancellation. */
+async function pushCancellations({ limit = 50 } = {}) {
+  const pending = await orderMappingModel.listPendingCancellations({ limit });
+  const totals = { cancelled: 0, failed: 0 };
+
+  for (const mapping of pending) {
+    const result = await cancelOne(mapping);
+
+    if (result.ok) totals.cancelled += 1;
+    else totals.failed += 1;
+  }
+
+  return totals;
+}
+
+/**
+ * One background round: everything the source has decided, sent to the buyer's
+ * store. Marking a sale shipped fulfils their real order; saying it cannot be
+ * supplied cancels and refunds it.
+ */
 async function runOrderSync() {
-  // A slow round must not overlap the next tick: two rounds pushing the same
-  // queued order would place it twice at the source.
+  // A slow round must not overlap the next tick and send the same fulfilment
+  // or cancellation twice.
   if (orderSyncRunning) return { skipped: true };
 
   orderSyncRunning = true;
 
-  const totals = { placed: 0, failed: 0, connections: 0 };
+  const totals = { fulfilled: 0, cancelled: 0, failed: 0 };
 
   try {
-    for (const connection of await connectionModel.listAutoSync()) {
-      totals.connections += 1;
+    // Fulfilments first: they are the common case, and a stuck cancellation
+    // must not hold up telling shoppers their parcels are on the way.
+    const shipped = await pushFulfilments();
+    totals.fulfilled += shipped.fulfilled;
+    totals.failed += shipped.failed;
+  } catch (err) {
+    console.warn("Fulfilment round failed:", err.message);
+  }
 
-      try {
-        const result = await pushPending(connection.id);
-        totals.placed += result.placed;
-        totals.failed += result.failed;
-      } catch (err) {
-        // One broken connection must not stop every other merchant's orders.
-        console.warn(
-          `Order sync failed for connection ${connection.id}:`,
-          err.message
-        );
-      }
-    }
+  try {
+    const cancelled = await pushCancellations();
+    totals.cancelled += cancelled.cancelled;
+    totals.failed += cancelled.failed;
+  } catch (err) {
+    console.warn("Cancellation round failed:", err.message);
   } finally {
     orderSyncRunning = false;
   }
 
-  if (totals.placed || totals.failed) {
+  if (totals.fulfilled || totals.cancelled || totals.failed) {
     console.log(
-      `Order sync: ${totals.placed} placed, ${totals.failed} failed ` +
-        `across ${totals.connections} connection(s)`
+      `Order sync: ${totals.fulfilled} fulfilled, ` +
+        `${totals.cancelled} cancelled, ${totals.failed} failed`
     );
   }
 
   return totals;
 }
 
-/** Start the background push. Safe to call twice; the second call is a no-op. */
+/** Start the background round. Safe to call twice; the second call is a no-op. */
 function startOrderSync() {
   if (orderSyncTimer) return orderSyncTimer;
 
@@ -358,19 +525,34 @@ async function cacheOrder(storeId, payload) {
 
   await orderLineItemModel.syncForOrder(order.id, payload.line_items || []);
 
+  // The order row keeps only customer_shopify_id; the identity behind it lives
+  // in `customers`. Storing it is what lets the source store be shown who to
+  // ship to, and it is also what makes customers/data_request and
+  // customers/redact mean anything for a shopper who only ever ordered.
+  if (payload.customer && payload.customer.id) {
+    await customerModel.upsert(storeId, {
+      ...payload.customer,
+      // The webhook puts the contact details at the top level as well, and on
+      // a guest checkout that is the only place they appear.
+      email: payload.customer.email || payload.email || null,
+      phone: payload.customer.phone || payload.phone || null,
+    });
+  }
+
   return order;
 }
 
 module.exports = {
   cacheOrder,
   queueForSources,
-  buildOrderInput,
-  pushOne,
-  pushPending,
+  fulfilOne,
+  pushFulfilments,
+  cancelDestinationFulfilment,
+  fulfilmentLinesFor,
+  trackingInput,
+  cancelOne,
+  pushCancellations,
   runOrderSync,
   startOrderSync,
   stopOrderSync,
-  variantGid,
-  numericId,
-  SOURCE_ORDER_TAG,
 };

@@ -321,9 +321,9 @@ exports.getSettings = async (req, res) => {
  * next changed the product.
  */
 exports.postSettings = async (req, res) => {
-  if (!destinationOnly(req, res)) return;
-
   const connectionId = Number(req.body.connection_id);
+
+  if (!destinationOnly(req, res)) return;
 
   try {
     // The id came from a browser. Prove it belongs to THIS store before

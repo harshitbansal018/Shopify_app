@@ -1114,18 +1114,36 @@ const STORE_ROW = {
       destination_shopify_order_id: "900001",
       destination_order_name: "#2001",
       destination_order_number: 2001,
-      source_shopify_order_id: null,
-      source_order_name: null,
       // 24.00 owed to the source, 30.00 paid by the shopper: the 25% markup.
       source_total: 24,
       destination_total: 30,
       currency: "USD",
       line_count: 2,
-      sync_status: "pending",
-      error_message: null,
       financial_status: "paid",
       fulfillment_status: null,
       cancelled_at: null,
+      shipping_address: {
+        first_name: "Steve",
+        last_name: "Shopper",
+        address1: "1 Test Street",
+        city: "Mohali",
+        country_code: "US",
+      },
+      // What the source has done with it. source_tracking is always an array
+      // -- the model hydrates the JSON column to [] -- and a fixture that
+      // omitted it would hide a real crash in the template.
+      source_fulfillment_status: "unfulfilled",
+      source_cancelled_at: null,
+      source_cancel_reason: null,
+      source_tracking: [],
+      source_status_at: null,
+      cancel_status: "none",
+      cancel_error: null,
+      // Whether the BUYER's Shopify order has been told, which is a different
+      // thing from what the source says it did.
+      fulfil_status: "none",
+      fulfil_error: null,
+      destination_fulfillment_id: null,
       source_shop_domain: "src.myshopify.com",
       source_store_name: "Warehouse",
       destination_shop_domain: "dst.myshopify.com",
@@ -1137,49 +1155,147 @@ const STORE_ROW = {
         ...BASE,
         store: { ...STORE_ROW, store_type: role },
         tab,
-        counts: { placed: 1, waiting: 1 },
+        counts: { open: 1, done: 1 },
         orders: rows,
-        statusCounts: { pending: 1, synced: 1, failed: 0, skipped: 0 },
+        statusCounts: { unfulfilled: 1, fulfilled: 1, cancelled: 0 },
       });
 
-    const waiting = await orders("destination", "waiting", [ROW]);
+    const open = await orders("destination", "open", [ROW]);
 
     check("both tabs are shown with their counts",
-      waiting.includes("Placed (1)") && waiting.includes("Waiting (1)"));
-    check("the sale is named", waiting.includes("#2001"));
-    check("and so is the store that supplied it", waiting.includes("Warehouse"));
+      open.includes("Awaiting supplier (1)") && open.includes("Done (1)"));
+    check("the sale is named", open.includes("#2001"));
+    check("and so is the store that supplies it", open.includes("Warehouse"));
 
     // The two totals side by side ARE the feature: the gap is the markup.
-    check("the destination sees what the shopper paid",
-      waiting.includes("30.00"));
+    check("the destination sees what the shopper paid", open.includes("30.00"));
     check("beside what the source is owed",
-      waiting.includes("24.00"),
-      "the source price is the whole point of forwarding the order");
+      open.includes("24.00"),
+      "the source price is the whole point of the arrangement");
 
-    check("an unplaced order says so", waiting.includes("not yet placed"));
-    check("and can be placed by hand",
-      /class="[^"]*retry-order"[^>]*data-order="11"/.test(waiting));
-    check("every row opens", /class="[^"]*view-order"[^>]*data-order="11"/.test(waiting));
-
-    const placed = await orders("destination", "placed", [
-      { ...ROW, sync_status: "synced", source_order_name: "#5005" },
-    ]);
-
-    check("a placed order names the source order", placed.includes("#5005"));
-    // The class attribute, not the word: the page script names it too, so a
-    // bare includes() would find it whether or not a button rendered.
-    check("and offers no retry",
-      !/class="[^"]*retry-order"/.test(placed),
-      "placing it twice would order the same goods again");
+    check("an outstanding sale says it is with the supplier",
+      open.includes("awaiting supplier"));
+    check("every row opens", /class="[^"]*view-order"[^>]*data-order="11"/.test(open));
+    check("and the destination has nothing to do here",
+      !/class="[^"]*btn--primary"/.test(open),
+      "the supplier does the work; this screen is a window onto it");
 
     // A source reads its own money first, in the same column position.
-    const asSource = await orders("source", "waiting", [ROW]);
+    const asSource = await orders("source", "open", [ROW]);
 
     check("the source column is labelled for a source",
-      asSource.includes("You are owed") && !asSource.includes("Source price"));
-    check("a source cannot place the order itself",
-      !/class="[^"]*retry-order"/.test(asSource),
-      "the sale that raised it belongs to the destination");
+      asSource.includes("You are owed") && !asSource.includes("Customer paid"));
+    check("and the source gets the address it has to ship to",
+      asSource.includes("Steve Shopper") && asSource.includes("Mohali"),
+      "without it the row is a number and no job");
+    check("the source can act on it",
+      /class="[^"]*fulfil-order"[^>]*data-order="11"/.test(asSource) &&
+        /class="[^"]*cancel-order"[^>]*data-order="11"/.test(asSource),
+      "this screen IS the fulfilment surface; nothing reaches its Shopify admin");
+
+    /* ---- the return leg: what the source did with it ---- */
+    const SHIPPED = {
+      ...ROW,
+      sync_status: "synced",
+      source_order_name: "#5005",
+      source_fulfillment_status: "fulfilled",
+      source_tracking: [
+        { number: "TRACK-1", company: "DHL", url: "https://dhl.test/1" },
+      ],
+      source_status_at: "2026-09-04T09:00:00Z",
+      fulfil_status: "fulfilled",
+      destination_fulfillment_id: "970055",
+    };
+
+    const shipped = await orders("destination", "placed", [SHIPPED]);
+
+    check("the destination sees the source's fulfilment",
+      shipped.includes("fulfilled"),
+      "the source is the store that actually ships");
+    check("and the tracking number",
+      shipped.includes("DHL") && shipped.includes("TRACK-1"));
+    check("with nothing said once its own order is updated",
+      !shipped.includes("updating your Shopify order"),
+      "a permanent 'updating...' would read as stuck");
+
+    /* ---- the buyer's real order follows, and says so while it lags ---- */
+    const landing = { ...SHIPPED, fulfil_status: "pending" };
+
+    check("a destination waiting on its own order is told",
+      (await orders("destination", "done", [landing]))
+        .includes("updating your Shopify order"),
+      "otherwise the row claims shipped while Shopify still says unfulfilled");
+    check("and the source is told the buyer has not heard yet",
+      (await orders("source", "done", [landing])).includes("telling the buyer"));
+
+    const stuck = {
+      ...SHIPPED,
+      fulfil_status: "failed",
+      fulfil_error: "Order already fulfilled",
+    };
+
+    check("a failure to update the buyer's order is visible to both",
+      (await orders("destination", "done", [stuck]))
+        .includes("could not be updated") &&
+        (await orders("source", "done", [stuck]))
+          .includes("Order already fulfilled"),
+      "the shopper is not being told, and somebody has to know");
+
+    // The boundary matters: "unfulfil-order" contains "fulfil-order", so a
+    // loose match would find the undo button and call it a fulfil button.
+    const fulfilButton = /class="[^"]*[\s"]fulfil-order"/;
+    const shippedAtSource = await orders("source", "done", [SHIPPED]);
+
+    check("a fulfilled sale offers an undo, not another fulfil",
+      /class="[^"]*unfulfil-order"/.test(shippedAtSource) &&
+        !fulfilButton.test(shippedAtSource));
+
+    const CANCELLED = {
+      ...SHIPPED,
+      source_fulfillment_status: "cancelled",
+      source_cancelled_at: "2026-09-04T09:00:00Z",
+      source_cancel_reason: "out of stock",
+      cancel_status: "cancelled",
+    };
+
+    const cancelled = await orders("destination", "done", [CANCELLED]);
+
+    check("the destination is told the supplier cannot supply it",
+      cancelled.includes("supplier cannot supply"));
+    check("and that the shopper was refunded",
+      cancelled.includes("cancelled and refunded"),
+      "it moves the shopper's money, so it cannot be implied");
+
+    const cancelledAtSource = await orders("source", "done", [CANCELLED]);
+
+    check("the source screen warns it reached the buyer",
+      cancelledAtSource.includes("the buyer was refunded"),
+      "not obvious from the source's side of the connection");
+    check("and a cancelled sale offers no further action",
+      !/class="[^"]*fulfil-order"/.test(cancelledAtSource) &&
+        !/class="[^"]*cancel-order"/.test(cancelledAtSource),
+      "the buyer has already been refunded; there is nothing left to decide");
+
+    // Detail: the tracking link and the refund line.
+    const shippedDetail = await render("destination/orderDetail", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      order: SHIPPED,
+      lines: [
+        {
+          line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
+          title: "Blue Shirt", source_product_title: "Blue Shirt",
+          source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
+        },
+      ],
+    });
+
+    check("the detail links the tracking",
+      shippedDetail.includes("https://dhl.test/1") &&
+        shippedDetail.includes("TRACK-1"));
+    check("and dates the mirrored status",
+      shippedDetail.includes("2026-09-04 09:00") && shippedDetail.includes("UTC"),
+      "a stale mirror must look stale, not like the source has done nothing");
 
     const none = await orders("destination", "placed", []);
     check("an empty screen explains itself",

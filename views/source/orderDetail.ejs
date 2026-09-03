@@ -24,23 +24,25 @@
           <strong><%= order.source_store_name || order.source_shop_domain %></strong>
         </p>
       </div>
-      <span class="pill pill--<%= order.sync_status %>">
-        <%= order.sync_status === "synced" ? "placed" : order.sync_status %>
+      <span class="pill pill--<%=
+        order.source_fulfillment_status === "fulfilled" ? "synced"
+        : order.source_fulfillment_status === "cancelled" ? "failed" : "pending" %>">
+        <%= order.source_fulfillment_status === "unfulfilled"
+            ? "to fulfil" : order.source_fulfillment_status %>
       </span>
     </header>
 
-    <% if (order.sync_status !== "synced" && order.error_message) { %>
-      <p class="notice notice--error"><%= order.error_message %></p>
-    <% } %>
+    <p class="notice notice--error" id="page-error" hidden></p>
 
     <section class="panel">
       <h2 class="panel__title">What was bought</h2>
 
       <p class="panel__copy">
-        <%# The whole point of the two price columns. Saying it once here is
-            cheaper than a merchant working it out from the numbers. %>
-        This order is placed here at your own prices. The margin between the
-        two columns belongs to the destination store.
+        <%# What the shopper paid is deliberately absent: that is the
+            destination's retail price, and their margin is not this store's
+            business. Only this store's own money is shown. %>
+        You are owed your own price for each line, whatever the destination
+        store sold it for.
       </p>
 
       <%# The table keeps its columns when it is empty and says so in a row of
@@ -52,15 +54,14 @@
             <th>SKU</th>
             <th>Qty</th>
             <th>Your price</th>
-            <th>Customer paid</th>
             <th>Your total</th>
           </tr>
         </thead>
         <tbody>
-          <% var sourceTotal = 0; var paidTotal = 0; %>
+          <% var sourceTotal = 0; %>
           <% if (!lines.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="6">
+              <td class="table__empty" colspan="5">
                 <strong>No records found</strong>
                 <span>
                   None of the products on this order are synced from this store any
@@ -72,9 +73,7 @@
           <% lines.forEach(function (line) { %>
             <%
               var lineSource = (line.source_price || 0) * line.quantity;
-              var linePaid = (line.destination_price || 0) * line.quantity;
               sourceTotal += lineSource;
-              paidTotal += linePaid;
             %>
             <tr>
               <td>
@@ -91,10 +90,6 @@
                 <%= order.currency %>
                 <%= line.source_price === null ? "—" : line.source_price.toFixed(2) %>
               </td>
-              <td class="muted">
-                <%= order.currency %>
-                <%= line.destination_price === null ? "—" : line.destination_price.toFixed(2) %>
-              </td>
               <td><strong><%= order.currency %> <%= lineSource.toFixed(2) %></strong></td>
             </tr>
           <% }); %>
@@ -105,8 +100,7 @@
         <tfoot>
           <tr>
             <td colspan="3"></td>
-            <td class="muted">Totals</td>
-            <td class="muted"><%= order.currency %> <%= paidTotal.toFixed(2) %></td>
+            <td class="muted">Total</td>
             <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
           </tr>
         </tfoot>
@@ -122,38 +116,259 @@
           <dd><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></dd>
         </div>
         <div class="facts__row">
-          <dt>Order here</dt>
+          <dt>Ship to</dt>
           <dd>
-            <%# Named only once it has been placed here; until then this row
-                is the honest answer to "where is my order?". %>
-            <%= order.source_order_name || "not placed yet" %>
+            <%# The job, in one place. Without it this page is just a number. %>
+            <% if (order.shipping_address) { %>
+              <% var a = order.shipping_address; %>
+              <div><%= [a.first_name, a.last_name].filter(Boolean).join(" ") %></div>
+              <% if (a.company) { %><div><%= a.company %></div><% } %>
+              <div><%= a.address1 %></div>
+              <% if (a.address2) { %><div><%= a.address2 %></div><% } %>
+              <div>
+                <%= [a.city, a.province_code, a.zip, a.country_code]
+                    .filter(Boolean).join(", ") %>
+              </div>
+              <% if (a.phone) { %><div class="muted"><%= a.phone %></div><% } %>
+            <% } else { %>
+              <span class="muted">
+                No address on this sale. Ask
+                <%= order.destination_store_name || order.destination_shop_domain %>
+                before shipping.
+              </span>
+            <% } %>
           </dd>
         </div>
         <div class="facts__row">
-          <dt>Payment</dt>
-          <dd><%= order.financial_status || "—" %></dd>
+          <dt>Status</dt>
+          <dd>
+            <% if (order.source_cancelled_at) { %>
+              cannot supply<%= order.source_cancel_reason ? ` (${order.source_cancel_reason})` : "" %>
+            <% } else { %>
+              <%= order.source_fulfillment_status %>
+            <% } %>
+          </dd>
         </div>
-        <div class="facts__row">
-          <dt>Fulfillment</dt>
-          <dd><%= order.fulfillment_status || "unfulfilled" %></dd>
-        </div>
-        <% if (order.cancelled_at) { %>
+
+        <% if (order.source_tracking.length) { %>
           <div class="facts__row">
-            <dt>Cancelled</dt>
-            <%# Cancelling the sale does NOT cancel the order raised here. That
-                needs a decision about refunds, so it is left to a human. %>
-            <dd>yes &mdash; this order was not cancelled automatically</dd>
+            <dt>Tracking</dt>
+            <dd>
+              <% order.source_tracking.forEach(function (parcel) { %>
+                <div>
+                  <%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong>
+                </div>
+              <% }); %>
+              <%# Says out loud that this reaches another merchant's screen. %>
+              <span class="muted">
+                shown to <%= order.destination_store_name || order.destination_shop_domain %>
+              </span>
+            </dd>
+          </div>
+        <% } %>
+
+        <% if (order.source_cancelled_at) { %>
+          <div class="facts__row">
+            <dt>The buyer's order</dt>
+            <dd>
+              <%# Cancelling here refunds a real shopper in the destination
+                  store. That is not obvious from this side, so it is said. %>
+              <% if (order.cancel_status === "cancelled") { %>
+                cancelled and refunded too
+              <% } else if (order.cancel_status === "failed") { %>
+                could not be cancelled &mdash; <%= order.cancel_error %>
+              <% } else { %>
+                being cancelled and refunded&hellip;
+              <% } %>
+            </dd>
           </div>
         <% } %>
       </dl>
     </section>
 
+    <%# Only while there is something to do. Buttons over a settled order are
+        just dead controls. %>
+    <% if (order.source_fulfillment_status !== "cancelled") { %>
+      <section class="panel">
+        <h2 class="panel__title">
+          <%= order.source_fulfillment_status === "fulfilled"
+              ? "Shipped" : "When you have shipped it" %>
+        </h2>
+
+        <% if (order.source_fulfillment_status === "fulfilled") { %>
+
+          <p class="panel__copy">
+            <% if (order.fulfil_status === "fulfilled") { %>
+              Done. <%= order.destination_store_name || order.destination_shop_domain %>'s
+              order is marked fulfilled with this tracking, and the buyer has
+              been emailed.
+            <% } else if (order.fulfil_status === "failed") { %>
+              Marked fulfilled here, but
+              <%= order.destination_store_name || order.destination_shop_domain %>'s
+              order could not be updated &mdash; <%= order.fulfil_error %>.
+              It will be retried.
+            <% } else { %>
+              Marked fulfilled. Updating
+              <%= order.destination_store_name || order.destination_shop_domain %>'s
+              order and emailing the buyer&hellip;
+            <% } %>
+          </p>
+
+          <div class="shell__actions">
+            <%# Undoing cancels the fulfillment in the buyer's store too, or
+                they are left with a shipping notice for a parcel that is not
+                coming. %>
+            <button class="btn" type="button" id="unfulfil">
+              Undo &mdash; put it back on the list
+            </button>
+          </div>
+
+        <% } else { %>
+
+          <p class="panel__copy">
+            Add a tracking number if you have one, then mark it fulfilled. Your
+            own Shopify admin is not touched. The buyer's order is marked
+            fulfilled with this tracking and Shopify emails them about it, so
+            put the real number in.
+          </p>
+
+          <div class="toggles">
+            <label class="field">
+              <span class="field__label">Carrier</span>
+              <input class="field__input" type="text" id="carrier"
+                     placeholder="DHL" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field__label">Tracking number</span>
+              <input class="field__input" type="text" id="tracking-number"
+                     placeholder="Optional" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field__label">Tracking link</span>
+              <input class="field__input" type="url" id="tracking-url"
+                     placeholder="Optional" autocomplete="off">
+            </label>
+          </div>
+
+          <div class="shell__actions">
+            <button class="btn btn--primary" type="button" id="fulfil">
+              Mark fulfilled
+            </button>
+            <%# Refunds the buyer, so it is kept away from the primary action
+                and coloured as the exit it is. %>
+            <button class="btn btn--danger" type="button" id="cannot-supply">
+              Cannot supply this
+            </button>
+          </div>
+
+        <% } %>
+      </section>
+    <% } %>
+
   </main>
 
   <script>
-    document.getElementById("back").addEventListener("click", function () {
-      window.appNavigate("/orders");
-    });
+    (function () {
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      document.getElementById("back").addEventListener("click", function () {
+        window.appNavigate("/orders");
+      });
+
+      async function post(button, path, body, busyLabel) {
+        pageError.hidden = true;
+
+        var label = button.textContent;
+        button.disabled = true;
+        button.textContent = busyLabel;
+
+        try {
+          var response = await window.appFetch(
+            "/orders/<%= order.id %>/" + path,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body || {})
+            }
+          );
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) throw new Error(data.error || "Request failed");
+
+          return data;
+        } catch (err) {
+          button.disabled = false;
+          button.textContent = label;
+          fail(err.message);
+          return null;
+        }
+      }
+
+      var fulfil = document.getElementById("fulfil");
+
+      if (fulfil) {
+        fulfil.addEventListener("click", async function () {
+          var number = document.getElementById("tracking-number").value.trim();
+
+          // No number means nothing to track, which is allowed: plenty of
+          // shipping has no tracking, and refusing would leave the merchant
+          // unable to mark anything done.
+          var tracking = number
+            ? [{
+                number: number,
+                company: document.getElementById("carrier").value.trim() || null,
+                url: document.getElementById("tracking-url").value.trim() || null
+              }]
+            : [];
+
+          var data = await post(fulfil, "fulfil", { tracking: tracking }, "Saving…");
+
+          if (!data) return;
+
+          window.appToast("Marked fulfilled");
+          window.appNavigate("/orders?tab=done");
+        });
+      }
+
+      var undo = document.getElementById("unfulfil");
+
+      if (undo) {
+        undo.addEventListener("click", async function () {
+          var data = await post(undo, "unfulfil", {}, "Saving…");
+
+          if (!data) return;
+
+          window.appToast("Back on the To fulfil list");
+          window.appNavigate("/orders");
+        });
+      }
+
+      var cannot = document.getElementById("cannot-supply");
+
+      if (cannot) {
+        cannot.addEventListener("click", async function () {
+          // This one spends someone else's money, so it says so plainly.
+          if (!window.confirm(
+            "Cannot supply this order?\n\n" +
+            "The buyer's order will be CANCELLED and REFUNDED, and they will " +
+            "be emailed about it. This cannot be undone."
+          )) return;
+
+          var data = await post(cannot, "cancel", {}, "Cancelling…");
+
+          if (!data) return;
+
+          window.appToast("The buyer's order is being cancelled");
+          window.appNavigate("/orders?tab=done");
+        });
+      }
+    })();
   </script>
 
 </body>
