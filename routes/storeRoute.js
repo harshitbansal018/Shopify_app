@@ -18,7 +18,6 @@ router.use(requireSession);
 // Chosen once at install, then read-only. There is no route that changes it.
 router.get("/store-type", getStoreType);
 router.post("/store-type", postStoreType);
-
 router.get("/stores", getStores);
 router.post("/stores/code", postPairingCode); // destination: show a code
 router.post("/stores/connect", postConnect); // source: enter a code
