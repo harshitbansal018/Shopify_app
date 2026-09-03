@@ -20,14 +20,11 @@ router.use(requireSession);
 // Chosen once at install, then read-only. There is no route that changes it.
 router.get("/store-type", getStoreType);
 router.post("/store-type", postStoreType);
-<<<<<<< HEAD
-=======
 // Destination-only: everything on this screen is about what THIS store
 // accepts, which a source has no say in. The handlers re-check the role.
 router.get("/settings", getSettings);
 router.post("/settings", postSettings);
 
->>>>>>> a6f3faabaf07ccf3ed51c3bd1c50c89970d2db77
 router.get("/stores", getStores);
 router.post("/stores/code", postPairingCode); // destination: show a code
 router.post("/stores/connect", postConnect); // source: enter a code
