@@ -45,25 +45,8 @@ router.post(
 );
 
 /* Mandatory privacy webhooks, configured in the Partner Dashboard. */
-router.post(
-  "/customers/data_request",
-  rawBody,
-  verifyWebhook,
-  webhookController.customersDataRequest
-);
-
-router.post(
-  "/customers/redact",
-  rawBody,
-  verifyWebhook,
-  webhookController.customersRedact
-);
-
-router.post(
-  "/shop/redact",
-  rawBody,
-  verifyWebhook,
-  webhookController.shopRedact
-);
+router.post("/customers/data_request",rawBody,verifyWebhook,webhookController.customersDataRequest);
+router.post("/customers/redact",rawBody,verifyWebhook,webhookController.customersRedact);
+router.post("/shop/redact",rawBody,verifyWebhook,webhookController.shopRedact);
 
 module.exports = router;

@@ -77,7 +77,7 @@
       </nav>
 
 
-      <section class="panel">
+
         <% if (tab === "unshared" && products.length) { %>
         <div class="panel__header">
           <h2 class="panel__title"><%= products.length %> product<%= products.length === 1 ? "" : "s" %></h2>
@@ -195,8 +195,6 @@
           </tbody>
         </table>
         <% } %>
-      </section>
-
     <% } else { %>
 
       <%# One table, two tabs. "Unsynced" is what a source has offered and this
@@ -214,7 +212,7 @@
         </button>
       </nav>
 
-      <section class="panel">
+
 
         <%# Only when there is something to act on: buttons over an empty list
             are just dead controls. %>
@@ -351,8 +349,6 @@
           </tbody>
         </table>
         <% } %>
-      </section>
-
     <% } %>
 
   </main>
