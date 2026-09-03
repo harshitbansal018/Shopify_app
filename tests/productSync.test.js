@@ -454,5 +454,129 @@ console.log("\nGraphQL id handling");
   check("a variant with no position gets one", flat.variants[0].position === 1);
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exitCode = failed ? 1 : 0;
+/* ------------------------------------------------------------------ */
+/* Publishing to the storefront                                        */
+/* ------------------------------------------------------------------ */
+/*
+ * productSet creates a product attached to NO sales channel, so an ACTIVE
+ * product with stock still does not appear in the online store. This is the
+ * step that makes it visible, and its absence is why synced products were
+ * invisible on the storefront.
+ */
+console.log("\nPublishing to the online store");
+{
+  const { publishToOnlineStore } = productSync;
+
+  // Everything reaches Shopify through shopify.forShop, so swapping that out
+  // is enough to drive this without touching a real store.
+  const realForShop = shopify.forShop;
+  const calls = [];
+
+  function fakeShopify(handler) {
+    shopify.forShop = async (shop, body) => {
+      calls.push({ shop, body });
+      return handler(shop, body);
+    };
+  }
+
+  (async () => {
+    /* ---- the happy path ---- */
+    fakeShopify((shop, body) => {
+      if (body.query.includes("publications(first")) {
+        return {
+          publications: {
+            nodes: [
+              { id: "gid://shopify/Publication/1", name: "Point of Sale" },
+              { id: "gid://shopify/Publication/2", name: "Online Store" },
+            ],
+          },
+        };
+      }
+      return { publishablePublish: { userErrors: [] } };
+    });
+
+    const ok = await publishToOnlineStore(
+      "pub-a.myshopify.com",
+      "gid://shopify/Product/500"
+    );
+
+    check("a new product is published", ok.published === true);
+
+    const publish = calls.find((c) => c.body.query.includes("publishablePublish"));
+
+    check("to the Online Store channel, not the first one listed",
+      publish.body.variables.input[0].publicationId ===
+        "gid://shopify/Publication/2",
+      "Point of Sale is a sales channel too, and publishing there shows nothing");
+    check("and it names the product",
+      publish.body.variables.id === "gid://shopify/Product/500");
+
+    /* ---- the channel id is cached per shop ---- */
+    calls.length = 0;
+    await publishToOnlineStore("pub-a.myshopify.com", "gid://shopify/Product/501");
+
+    check("the channel is looked up once per shop",
+      calls.filter((c) => c.body.query.includes("publications(first")).length === 0,
+      "otherwise every single product push costs an extra API call");
+
+    /* ---- a store with no storefront ---- */
+    fakeShopify(() => ({
+      publications: {
+        nodes: [{ id: "gid://shopify/Publication/9", name: "Point of Sale" }],
+      },
+    }));
+
+    const none = await publishToOnlineStore(
+      "pub-b.myshopify.com",
+      "gid://shopify/Product/600"
+    );
+
+    check("a POS-only store is not an error",
+      none.published === false && none.reason === "no online store",
+      "a store with no online storefront is a real thing");
+
+    /* ---- a failure must not take the whole push down ---- */
+    fakeShopify((shop, body) => {
+      if (body.query.includes("publications(first")) {
+        return {
+          publications: {
+            nodes: [{ id: "gid://shopify/Publication/3", name: "Online Store" }],
+          },
+        };
+      }
+      return {
+        publishablePublish: {
+          userErrors: [{ field: ["id"], message: "Product is not publishable" }],
+        },
+      };
+    });
+
+    const refused = await publishToOnlineStore(
+      "pub-c.myshopify.com",
+      "gid://shopify/Product/700"
+    );
+
+    check("a refusal is reported, not thrown",
+      refused.published === false &&
+        refused.reason === "Product is not publishable",
+      "the product itself synced fine; only the storefront listing failed");
+
+    fakeShopify(() => {
+      throw new Error("403 Forbidden");
+    });
+
+    const denied = await publishToOnlineStore(
+      "pub-d.myshopify.com",
+      "gid://shopify/Product/800"
+    );
+
+    check("and so is a missing scope",
+      denied.published === false,
+      "without write_publications this is exactly what comes back");
+
+    shopify.forShop = realForShop;
+
+    console.log(`\n${passed} passed, ${failed} failed`);
+    process.exitCode = failed ? 1 : 0;
+  })();
+}
