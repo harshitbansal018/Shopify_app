@@ -805,6 +805,98 @@ const CREATE_ORDER_MAPPINGS = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 `;
 
+/* ------------------------------------------------------------------ */
+/* 11. plans and memberships                                           */
+/* ------------------------------------------------------------------ */
+// Imported membership structure. In this app `user_id` identifies the
+// destination store that owns the subscription.
+const CREATE_PLANS = `
+  CREATE TABLE IF NOT EXISTS plans (
+    id                      INT AUTO_INCREMENT PRIMARY KEY,
+    name                    VARCHAR(255) NOT NULL,
+    price                   DOUBLE NOT NULL DEFAULT 0,
+    is_popular              TINYINT(1) NULL DEFAULT 0,
+    is_active               TINYINT(1) NULL DEFAULT 1,
+    created_at              DATETIME NULL,
+    updated_at              DATETIME NULL,
+    days                    INT NULL,
+    status                  TINYINT(1) NULL DEFAULT 0,
+    plan_for                INT NULL,
+    plan_content            LONGTEXT NULL,
+    max_limit               INT NULL,
+    mail_customization      TINYINT(1) NULL DEFAULT 0,
+    template_limit          INT NULL,
+    template_customization  TINYINT(1) NULL DEFAULT 0,
+    UNIQUE KEY uniq_plan_name (name)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+const CREATE_DUMMY_SHOPS = `
+  CREATE TABLE IF NOT EXISTS dummy_shops (
+    id        INT AUTO_INCREMENT PRIMARY KEY,
+    shop_name VARCHAR(255) NULL,
+    status    TINYINT(1) NULL DEFAULT 1,
+    KEY idx_dummy_shop_active (shop_name, status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+const CREATE_USER_MEMBERSHIPS = `
+  CREATE TABLE IF NOT EXISTS user_memberships (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT NULL,
+    membership_id INT NULL,
+    created_at    DATETIME NULL,
+    updated_at    DATETIME NULL,
+    status        TINYINT(1) NULL DEFAULT 1,
+    KEY idx_membership_store (user_id, status),
+    CONSTRAINT fk_membership_store FOREIGN KEY (user_id)
+      REFERENCES stores(id) ON DELETE CASCADE,
+    CONSTRAINT fk_membership_plan FOREIGN KEY (membership_id)
+      REFERENCES plans(id) ON DELETE RESTRICT
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+const CREATE_MEMBERSHIP_PAYMENTS = `
+  CREATE TABLE IF NOT EXISTS membership_payments (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    membership_id INT NULL,
+    user_id       INT NULL,
+    api_client_id BIGINT NULL,
+    charge_id     BIGINT NULL,
+    date_add      DATETIME NULL,
+    date_update   DATETIME NULL,
+    status        INT NULL,
+    KEY idx_payment_membership (membership_id),
+    KEY idx_payment_store (user_id),
+    CONSTRAINT fk_payment_membership FOREIGN KEY (membership_id)
+      REFERENCES user_memberships(id) ON DELETE CASCADE,
+    CONSTRAINT fk_payment_store FOREIGN KEY (user_id)
+      REFERENCES stores(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+async function seedPlans() {
+  const plans = [
+    ["Free", 0, 0, 25, JSON.stringify(["Up to 25 synced products", "1 source store", "Manual product sync", "Community support"])],
+    ["Basic", 10, 0, 250, JSON.stringify(["Up to 250 synced products", "Up to 3 source stores", "Automatic product sync", "Email support"])],
+    ["Pro", 25, 1, 1000, JSON.stringify(["Up to 1,000 synced products", "Unlimited source stores", "Automatic product sync", "Priority support"])],
+  ];
+
+  for (const [name, price, isPopular, maxLimit, content] of plans) {
+    await query(
+      `INSERT INTO plans
+        (name, price, is_popular, is_active, created_at, updated_at, days, status, plan_for, plan_content, max_limit)
+       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         price = VALUES(price), is_popular = VALUES(is_popular), is_active = 1,
+         updated_at = NOW(), days = VALUES(days), status = VALUES(status),
+         plan_for = VALUES(plan_for), plan_content = VALUES(plan_content),
+         max_limit = VALUES(max_limit)`,
+      [name, price, isPopular, content, maxLimit]
+    );
+  }
+}
+
 /**
  * Destination-side acceptance.
  *
@@ -855,6 +947,11 @@ async function runMigrations() {
   await query(CREATE_ORDER_LINE_ITEMS);
   await linkLineItemsToMappedVariants();
   await query(CREATE_CUSTOMERS);
+  await query(CREATE_DUMMY_SHOPS);
+  await query(CREATE_PLANS);
+  await query(CREATE_USER_MEMBERSHIPS);
+  await query(CREATE_MEMBERSHIP_PAYMENTS);
+  await seedPlans();
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
   await backfillSyncSettings();

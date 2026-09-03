@@ -213,6 +213,41 @@ async function unitsSoldByVariant(storeId, { since = null } = {}) {
   );
 }
 
+/** Highest-selling synced products for one destination store.
+ * Revenue is what the destination customer paid, less line discounts. */
+async function topSellingProducts(storeId, { limit = 5 } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 50));
+
+  const rows = await query(
+    `SELECT sp.id AS source_product_id,
+            MAX(COALESCE(sp.title, li.title, 'Deleted product')) AS title,
+            MAX(COALESCE(source_store.store_name, source_store.shop_domain)) AS source,
+            MAX(o.currency) AS currency,
+            SUM(li.quantity) AS units,
+            SUM((li.quantity * li.price) - COALESCE(li.total_discount, 0)) AS revenue
+       FROM order_line_items li
+       JOIN orders o ON o.id = li.order_id
+       JOIN mapping_variant_products mvp ON mvp.id = li.mapped_variant_id
+       JOIN product_mappings pm ON pm.id = mvp.product_mapping_id
+       JOIN source_products sp ON sp.id = pm.source_product_id
+       JOIN store_connections connection ON connection.id = pm.connection_id
+       JOIN stores source_store ON source_store.id = connection.source_store_id
+      WHERE o.store_id = ?
+        AND o.test = 0
+        AND o.cancelled_at IS NULL
+      GROUP BY sp.id
+      ORDER BY units DESC, revenue DESC, title ASC
+      LIMIT ?`,
+    [storeId, safeLimit]
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    units: Number(row.units || 0),
+    revenue: Number(row.revenue || 0),
+  }));
+}
+
 module.exports = {
   resolveMappedVariants,
   syncForOrder,
@@ -220,5 +255,6 @@ module.exports = {
   countForOrder,
   sourceLinesForOrder,
   unitsSoldByVariant,
+  topSellingProducts,
   toMoney,
 };

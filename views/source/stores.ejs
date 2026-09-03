@@ -54,33 +54,46 @@
       <% } %>
     </section>
 
-    <section class="panel">
       <h2 class="panel__title">Destination stores receiving from here</h2>
 
-      <% if (!connections.length) { %>
-        <p class="panel__copy">
-          No destination store is connected yet. Share your code above.
-        </p>
-      <% } else { %>
-        <ul class="stores">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>Domain</th>
+            <th>Status</th>
+            <th>Sync</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!connections.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="4">
+                <strong>No records found</strong>
+                <span>
+                  No destination store is connected yet. Share your code above.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
           <% connections.forEach(function (connection) { %>
             <% var other = connection.destination; %>
-            <li class="stores__row">
-              <span class="stores__name">
-                <%= other.store_name || other.shop_domain %>
-                <% if (other.store_name) { %>
-                  <span class="muted"><%= other.shop_domain %></span>
-                <% } %>
-              </span>
-              <span class="stores__meta">
+            <tr>
+              <td>
+                <span class="table__title">
+                  <%= other.store_name || other.shop_domain %>
+                </span>
+              </td>
+              <td class="muted"><%= other.shop_domain %></td>
+              <td>
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
-                <span class="muted"><%= connection.sync_mode %> sync</span>
-              </span>
-            </li>
+              </td>
+              <td class="muted"><%= connection.sync_mode %></td>
+            </tr>
           <% }); %>
-        </ul>
-      <% } %>
-    </section>
+          <% } %>
+        </tbody>
+      </table>
 
   </main>
 

@@ -5,29 +5,15 @@
 // keeps the plain store summary, because its own work is on Products.
 const sourceProductModel = require("../models/sourceProductModel");
 const connectionModel = require("../models/connectionModel");
+const orderLineItemModel = require("../models/orderLineItemModel");
 const { renderStoreType } = require("./storeController");
-
-/**
- * Placeholder rows for the top-sellers table.
- *
- * Sales are not synced yet -- the orders tables exist but nothing fills them.
- * The table ships with obviously-fake numbers rather than an empty box so the
- * shape is agreed now, and swapping in orderLineItemModel.unitsSoldByVariant()
- * later is a one-line change in this file.
- */
-const SAMPLE_TOP_SELLERS = [
-  { title: "Sample product A", source: "—", units: 128, revenue: 4480 },
-  { title: "Sample product B", source: "—", units: 96, revenue: 3264 },
-  { title: "Sample product C", source: "—", units: 74, revenue: 2146 },
-  { title: "Sample product D", source: "—", units: 41, revenue: 1189 },
-  { title: "Sample product E", source: "—", units: 17, revenue: 493 },
-];
 
 /** Everything the destination dashboard shows, from one read of the mappings. */
 async function destinationStats(storeId) {
-  const [offered, connections] = await Promise.all([
+  const [offered, connections, topSellers] = await Promise.all([
     sourceProductModel.listSyncedIntoStore(storeId, { limit: 500 }),
     connectionModel.listForDestination(storeId),
+    orderLineItemModel.topSellingProducts(storeId, { limit: 5 }),
   ]);
 
   const synced = offered.filter((product) => !product.awaiting);
@@ -83,7 +69,7 @@ async function destinationStats(storeId) {
         b.synced + b.unsynced - (a.synced + a.unsynced) ||
         a.name.localeCompare(b.name)
     ),
-    topSellers: SAMPLE_TOP_SELLERS,
+    topSellers,
   };
 }
 
@@ -112,4 +98,3 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
-exports.SAMPLE_TOP_SELLERS = SAMPLE_TOP_SELLERS;

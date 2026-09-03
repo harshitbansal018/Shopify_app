@@ -364,6 +364,15 @@ function shopifyOrder(overrides = {}) {
       row && String(row.source_shopify_variant_id));
     check("quantities are correct", row && Number(row.units) === 3);
 
+    const topSellers = await orderLineItemModel.topSellingProducts(store.id);
+    const top = topSellers.find((item) => item.title === "Merino Beanie");
+
+    check("dashboard top sellers use real synced sales", Boolean(top));
+    check("top sellers include the source store", top && top.source === "Src");
+    check("top sellers total units and revenue",
+      top && top.units === 3 && top.revenue === 60,
+      JSON.stringify(top));
+
     // Deleting the mapping must not delete the sale.
     await connectionModel.deleteConnection(conn.id);
 

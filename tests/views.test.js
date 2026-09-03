@@ -68,9 +68,13 @@ const STORE_ROW = {
 (async () => {
   console.log("\nDashboard");
   {
-    const dashboardController = require(
-      path.join(SERVER, "controllers/dashboardController")
-    );
+    const topSellers = [{
+      title: "Magnetic Filter Rod",
+      source: "Warehouse",
+      units: 3,
+      revenue: 120,
+      currency: "USD",
+    }];
 
     // SOURCE: the plain store summary. Its own work is on Products.
     await expectRenders(
@@ -112,7 +116,7 @@ const STORE_ROW = {
         { name: "Warehouse", synced: 6, unsynced: 1 },
         { name: "Outlet", synced: 2, unsynced: 1 },
       ],
-      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+      topSellers,
     });
 
     check("all three cards are shown",
@@ -162,7 +166,7 @@ const STORE_ROW = {
           status: "paused", active: false, synced: 0, unsynced: 0,
         },
       ],
-      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+      topSellers: [],
     });
 
     check("a connected store with no products is still listed",
@@ -181,20 +185,17 @@ const STORE_ROW = {
     check("the panel links to Stores",
       idle.includes("Manage") && idle.includes("/stores"));
 
-    // Top sellers: placeholder, and it has to say so.
-    check("the top sellers table is there",
+    check("the top sellers table uses real records",
       busy.includes("Top selling products") &&
-        (busy.match(/class="row--placeholder"/g) || []).length ===
-          dashboardController.SAMPLE_TOP_SELLERS.length);
-    check("and is labelled as sample data",
-      busy.includes("Sample data") && busy.includes("not being tracked yet"),
-      "fake numbers must never read as real sales");
+        busy.includes("Magnetic Filter Rod") && busy.includes("USD 120.00"));
+    check("the dashboard contains no sample sales",
+      !busy.includes("Sample data") && !busy.includes("Sample product"));
 
     // Nothing offered yet: no divide-by-zero, no empty chart frame.
     const empty = await destination({
       cards: { synced: 0, unsynced: 0, stores: 0 },
       bySource: [],
-      topSellers: dashboardController.SAMPLE_TOP_SELLERS,
+      topSellers: [],
     });
 
     check("an empty store still renders the cards",
@@ -203,6 +204,8 @@ const STORE_ROW = {
     check("and explains both charts",
       empty.includes("Nothing has been offered") &&
         empty.includes("No source store is connected"));
+    check("and shows an empty top-sellers state",
+      empty.includes("No records found") && empty.includes("Nothing has sold yet"));
     check("no NaN anywhere",
       !empty.includes("NaN"),
       "dividing by a zero total");
@@ -373,6 +376,65 @@ const STORE_ROW = {
       "a store with no name falls back to its domain",
       !withCode.includes(">null<"),
       "a missing store_name printed as null"
+    );
+
+    /* ---- both roles list their connections in a table ---- */
+
+    check(
+      "each side lists its stores in a table",
+      withCode.includes("<table") && destinationHtml.includes("<table")
+    );
+    check(
+      "with a row per connection",
+      destinationHtml.includes("dst.myshopify.com") === false &&
+        /<td class="muted">src\.myshopify\.com<\/td>/.test(destinationHtml),
+      "a destination must see the SOURCE it receives from, and only that"
+    );
+    check(
+      "and the connection's state beside it",
+      destinationHtml.includes('pill--active') &&
+        destinationHtml.includes(">manual<")
+    );
+
+    const noConnections = await render("destination/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      connections: [],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+    });
+
+    check(
+      "an empty list keeps the columns",
+      noConnections.includes("<table") &&
+        noConnections.includes("No records found") &&
+        noConnections.includes('colspan="4"')
+    );
+
+    /* ---- the destination adds a store through a popup ---- */
+
+    check(
+      "there is a button to add a store",
+      destinationHtml.includes('id="add-store-button"')
+    );
+    check(
+      "the code form lives in a dialog, not on the page",
+      /<dialog[\s\S]*id="connect-code"[\s\S]*<\/dialog>/.test(destinationHtml),
+      "the form would sit open on every visit"
+    );
+    check(
+      "which starts closed",
+      !/<dialog[^>]*\sopen[\s>]/.test(destinationHtml),
+      "an open dialog would cover the screen on load"
+    );
+    check(
+      "and the button that submits it says what it does",
+      /id="connect-button"[\s\S]{0,40}Add store/.test(destinationHtml)
+    );
+    check(
+      "a source is offered no such button",
+      !withCode.includes('id="add-store-button"'),
+      "a source cannot redeem a code -- the server refuses it"
     );
   }
 

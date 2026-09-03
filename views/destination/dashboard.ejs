@@ -181,14 +181,10 @@
     <section class="panel">
       <div class="panel__header">
         <h2 class="panel__title">Top selling products</h2>
-        <span class="pill pill--paused">Sample data</span>
       </div>
 
       <p class="panel__copy">
-        <%# Orders are not synced yet: the tables exist but nothing fills
-            them. These rows are placeholders so the shape is settled. %>
-        Sales are not being tracked yet. Once orders are synced this will show
-        the synced products that actually sold, biggest first.
+        Synced products ranked by units sold in this store.
       </p>
 
       <table class="table">
@@ -210,11 +206,11 @@
             </tr>
           <% } else { %>
           <% stats.topSellers.forEach(function (row) { %>
-            <tr class="row--placeholder">
+            <tr>
               <td><span class="table__title"><%= row.title %></span></td>
               <td class="muted"><%= row.source %></td>
               <td><%= row.units %></td>
-              <td><%= row.revenue %></td>
+              <td><%= row.currency || store.currency || "" %> <%= Number(row.revenue).toFixed(2) %></td>
             </tr>
           <% }); %>
           <% } %>

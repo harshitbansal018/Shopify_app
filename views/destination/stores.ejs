@@ -16,97 +16,151 @@
     <header class="shell__header">
       <div>
         <h1>Stores</h1>
-        <!-- <p class="shell__sub">
-          <%= store.store_name || shop %> &mdash;
-          <strong><%= store.store_type %></strong> store
-        </p> -->
+        <p class="shell__sub">
+          The source stores sending products into this one.
+        </p>
+      </div>
+
+      <div class="shell__actions">
+        <%# A destination redeems a code; it never hands one out. The form is
+            behind a button because connecting is a one-off act, and a form
+            sitting open on every visit reads as work still to do. %>
+        <button class="btn btn--primary" type="button" id="add-store-button">
+          + Add store
+        </button>
       </div>
     </header>
 
-    <%# A destination enters the source's code; the source hands it out. %>
-    <section class="panel">
-      <h2 class="panel__title">Connect a source store</h2>
-      <p class="panel__copy">
-        Open this app on the source store, generate its pairing code, and
-        enter it here. The connection goes live straight away.
-      </p>
-
-      <form id="connect-form">
-        <label class="field">
-          <span class="field__label">Source pairing code</span>
-          <input
-            class="field__input field__input--compact"
-            type="text"
-            id="connect-code"
-            name="code"
-            placeholder="ABCD-1234"
-            autocomplete="off"
-            spellcheck="false"
-            maxlength="9">
-        </label>
-
-        <p class="notice notice--error" id="connect-error" hidden></p>
-
-        <div class="shell__actions">
-          <button class="btn btn--primary" type="submit" id="connect-button">Connect</button>
-        </div>
-      </form>
-    </section>
-
-    <section class="panel">
       <h2 class="panel__title">Source stores sending here</h2>
 
-      <% if (!connections.length) { %>
-        <p class="panel__copy">
-          No source store is connected yet. Enter a code above.
-        </p>
-      <% } else { %>
-        <ul class="stores">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>Domain</th>
+            <th>Status</th>
+            <th>Sync</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!connections.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="4">
+                <strong>No records found</strong>
+                <span>
+                  No source store is connected yet. Press <strong>Add store</strong>
+                  and enter the pairing code from the source store.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
           <% connections.forEach(function (connection) { %>
             <% var other = connection.source; %>
-            <li class="stores__row">
-              <span class="stores__name">
-                <%= other.store_name || other.shop_domain %>
-                <% if (other.store_name) { %>
-                  <span class="muted"><%= other.shop_domain %></span>
-                <% } %>
-              </span>
-              <span class="stores__meta">
+            <tr>
+              <td>
+                <span class="table__title">
+                  <%= other.store_name || other.shop_domain %>
+                </span>
+              </td>
+              <td class="muted"><%= other.shop_domain %></td>
+              <td>
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
-                <span class="muted"><%= connection.sync_mode %> sync</span>
-              </span>
-            </li>
+              </td>
+              <td class="muted"><%= connection.sync_mode %></td>
+            </tr>
           <% }); %>
-        </ul>
-      <% } %>
-    </section>
+          <% } %>
+        </tbody>
+      </table>
 
   </main>
 
+  <dialog class="modal" id="add-store-modal" aria-labelledby="add-store-title">
+    <%# Not method="dialog": submitting has to reach the server first, so the
+        handler below cancels the default and closes the dialog itself. %>
+    <form class="modal__body" id="connect-form">
+
+      <h2 class="modal__title" id="add-store-title">Add a source store</h2>
+      <p class="modal__copy">
+        Open this app on the source store, generate its pairing code, and enter
+        it here. The connection goes live straight away.
+      </p>
+
+      <label class="field">
+        <span class="field__label">Source pairing code</span>
+        <input
+          class="field__input field__input--compact"
+          type="text"
+          id="connect-code"
+          name="code"
+          placeholder="ABCD-1234"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="9">
+      </label>
+
+      <p class="notice notice--error" id="connect-error" hidden></p>
+
+      <div class="modal__actions">
+        <button class="btn" type="button" id="connect-cancel">Cancel</button>
+        <button class="btn btn--primary" type="submit" id="connect-button">Add store</button>
+      </div>
+
+    </form>
+  </dialog>
+
   <script>
     (function () {
-      var connectForm = document.getElementById("connect-form");
-      var connectInput = document.getElementById("connect-code");
-      var connectButton = document.getElementById("connect-button");
-      var connectError = document.getElementById("connect-error");
+      var openButton = document.getElementById("add-store-button");
+      var modal = document.getElementById("add-store-modal");
+      var form = document.getElementById("connect-form");
+      var input = document.getElementById("connect-code");
+      var addButton = document.getElementById("connect-button");
+      var cancelButton = document.getElementById("connect-cancel");
+      var error = document.getElementById("connect-error");
 
       function showError(message) {
-        connectError.textContent = message;
-        connectError.hidden = false;
+        error.textContent = message;
+        error.hidden = false;
       }
 
-      /* ---------------- redeem a code ---------------- */
-      connectForm.addEventListener("submit", async function (event) {
-        event.preventDefault();
-        connectError.hidden = true;
+      /* ---------------- open / close ---------------- */
 
-        var code = connectInput.value.trim();
+      function open() {
+        // Reset every time: a code that failed a moment ago must not be
+        // sitting in the box, and neither must its error.
+        error.hidden = true;
+        input.value = "";
+        addButton.disabled = false;
+
+        // showModal() brings the backdrop, Esc and the focus trap with it.
+        if (typeof modal.showModal === "function") modal.showModal();
+        else modal.setAttribute("open", "");
+
+        input.focus();
+      }
+
+      function close() {
+        if (typeof modal.close === "function") modal.close();
+        else modal.removeAttribute("open");
+      }
+
+      openButton.addEventListener("click", open);
+      cancelButton.addEventListener("click", close);
+
+      /* ---------------- redeem the code ---------------- */
+
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        error.hidden = true;
+
+        var code = input.value.trim();
 
         if (!code) {
           return showError("Enter the source store's code.");
         }
 
-        connectButton.disabled = true;
+        addButton.disabled = true;
 
         try {
           var response = await window.appFetch("/stores/connect", {
@@ -118,14 +172,17 @@
           var data = await response.json().catch(function () { return {}; });
 
           if (!response.ok) {
-            connectButton.disabled = false;
+            // Left open with the code still typed: the merchant will want to
+            // fix a mistyped character, not start again.
+            addButton.disabled = false;
             return showError(data.error || "Could not connect.");
           }
 
+          close();
           window.appToast("Connected to " + data.connection.source);
           window.appNavigate("/stores");
         } catch (err) {
-          connectButton.disabled = false;
+          addButton.disabled = false;
           showError("Could not reach the app. Try again.");
         }
       });
