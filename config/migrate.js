@@ -140,6 +140,15 @@ const CREATE_SOURCE_PRODUCTS = `
     -- Full Shopify payload, kept so a re-sync needs no extra API call.
     product_data JSON DEFAULT NULL,
 
+    -- Which variants the merchant ticked in the resource picker when they
+    -- added this product, as an array of source_variant_mappings ids.
+    -- NULL means every variant.
+    --
+    -- It lives here, not on product_mappings, because it is chosen BEFORE any
+    -- connection exists. Allowing the product copies it onto the mapping,
+    -- which is what the push actually reads.
+    selected_variant_ids JSON DEFAULT NULL,
+
     shopify_updated_at DATETIME DEFAULT NULL,
     last_fetched_at    DATETIME DEFAULT NULL,
 
@@ -167,6 +176,23 @@ const CREATE_PRODUCT_MAPPINGS = `
 
     sync_status ENUM('pending','synced','failed','skipped','deleted')
                 NOT NULL DEFAULT 'pending',
+
+    -- Which variants of this product may go to the destination, as an array of
+    -- source_variant_mappings ids.
+    --
+    -- NULL means EVERY variant, and is not the same as an empty array. A
+    -- merchant who ticks the product without narrowing it wants new variants
+    -- added at the source to flow too; a merchant who picked three specific
+    -- variants does not.
+    allowed_variant_ids JSON DEFAULT NULL,
+
+    -- When the DESTINATION store agreed to receive this product.
+    --
+    -- The source allowing a product only OFFERS it; nothing is written to the
+    -- destination until its own operator ticks it. NULL means "waiting for
+    -- them". Once set it stays set, so later updates to an accepted product
+    -- flow through without asking again -- which is the point of a sync.
+    accepted_at DATETIME DEFAULT NULL,
 
     source_updated_at DATETIME DEFAULT NULL,
     last_synced_at    DATETIME DEFAULT NULL,
@@ -208,9 +234,15 @@ const CREATE_SOURCE_VARIANT_MAPPINGS = `
     shopify_inventory_item_id BIGINT UNSIGNED DEFAULT NULL,
 
     sku              VARCHAR(255) DEFAULT NULL,
+    barcode          VARCHAR(255) DEFAULT NULL,
     title            VARCHAR(255) DEFAULT NULL,
     price            DECIMAL(12,2) DEFAULT NULL,
     compare_at_price DECIMAL(12,2) DEFAULT NULL,
+    -- Unit cost. DECIMAL like every other money column here.
+    cost             DECIMAL(12,2) DEFAULT NULL,
+    taxable          TINYINT(1) DEFAULT NULL,
+    -- CONTINUE or DENY: whether the shop keeps selling at zero stock.
+    inventory_policy VARCHAR(16) DEFAULT NULL,
 
     option1 VARCHAR(255) DEFAULT NULL,
     option2 VARCHAR(255) DEFAULT NULL,
@@ -603,6 +635,207 @@ async function linkLineItemsToMappedVariants() {
   );
 }
 
+/**
+ * Variant fields the settings screen can now switch on and off.
+ *
+ * These are DATA, not settings: the toggles decide whether they are pushed,
+ * but they have to be cached first or there is nothing to push.
+ */
+async function addVariantDetailColumns() {
+  for (const [column, type] of [
+    ["barcode", "VARCHAR(255) DEFAULT NULL"],
+    ["cost", "DECIMAL(12,2) DEFAULT NULL"],
+    ["taxable", "TINYINT(1) DEFAULT NULL"],
+    ["inventory_policy", "VARCHAR(16) DEFAULT NULL"],
+  ]) {
+    await safeAlter(
+      `source_variant_mappings.${column}`,
+      `ALTER TABLE source_variant_mappings ADD COLUMN ${column} ${type}`
+    );
+  }
+}
+
+/** The variant choice made in the resource picker at "Add products" time. */
+async function addSelectedVariants() {
+  await safeAlter(
+    "source_products.selected_variant_ids",
+    "ALTER TABLE source_products ADD COLUMN selected_variant_ids JSON DEFAULT NULL"
+  );
+}
+
+/** Variant-level selection, added after product_mappings already existed. */
+async function addAllowedVariants() {
+  await safeAlter(
+    "product_mappings.allowed_variant_ids",
+    "ALTER TABLE product_mappings ADD COLUMN allowed_variant_ids JSON DEFAULT NULL"
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 10. sync_settings                                                    */
+/* ------------------------------------------------------------------ */
+/*
+ * What each connection copies across, one row per connection.
+ *
+ * Real columns rather than a JSON blob: these are read on every push, and a
+ * column is something the database can constrain, default and index. A blob
+ * would also make "which connections stopped syncing prices?" unanswerable.
+ *
+ * Every toggle defaults to 1. A merchant who has chosen nothing wants the
+ * product as it is at the source, and a connection that predates this table
+ * gets a row of defaults rather than silently syncing nothing.
+ *
+ * Turning one OFF means the field is simply NOT SENT. productSet leaves an
+ * omitted field unchanged, so the destination keeps whatever it already has --
+ * it is not blanked.
+ */
+const CREATE_SYNC_SETTINGS = `
+  CREATE TABLE IF NOT EXISTS sync_settings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- Which field decides that two variants are the same one.
+    match_by ENUM('sku','barcode','title') NOT NULL DEFAULT 'sku',
+
+    -- Added to every price on the way across. DECIMAL, never FLOAT.
+    price_markup_percent DECIMAL(6,2) NOT NULL DEFAULT 0.00,
+
+    /* Product-level fields */
+    -- Always sent when CREATING: productSet cannot make a product with no
+    -- title. The flag only decides whether later changes to it are copied.
+    sync_title        TINYINT(1) NOT NULL DEFAULT 1,
+    sync_description  TINYINT(1) NOT NULL DEFAULT 1,
+    sync_images       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_category     TINYINT(1) NOT NULL DEFAULT 1,
+    sync_status       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_product_type TINYINT(1) NOT NULL DEFAULT 1,
+    sync_vendor       TINYINT(1) NOT NULL DEFAULT 1,
+    sync_tags         TINYINT(1) NOT NULL DEFAULT 1,
+    sync_metafields   TINYINT(1) NOT NULL DEFAULT 1,
+
+    /* Variant-level fields. sync_variants is the parent: off means the
+       destination's own variants are left alone entirely. */
+    sync_variants                 TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_sku              TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_barcode          TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_price            TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_cost             TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_taxable          TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_continue_selling TINYINT(1) NOT NULL DEFAULT 1,
+    sync_inventory                TINYINT(1) NOT NULL DEFAULT 1,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- One row per connection, so an upsert can never make a second.
+    UNIQUE KEY uniq_settings_connection (connection_id),
+
+    CONSTRAINT fk_settings_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/* ------------------------------------------------------------------ */
+/* 11. order_mappings                                                  */
+/* ------------------------------------------------------------------ */
+/*
+ * A sale in a destination store, and the order it became in the source store
+ * that supplied the goods.
+ *
+ * Keyed by CONNECTION, not by store: one basket can hold products from two
+ * different source stores, and each source must get an order containing only
+ * its own lines. That is why a destination order can have several rows here.
+ *
+ * The money is recorded on both sides because the two totals are genuinely
+ * different and both are needed to reason about a sale: destination_total is
+ * what the shopper paid, source_total is what the source store is owed. The
+ * gap between them is the markup in sync_settings.
+ *
+ * Same queue shape as product_mappings -- pending/synced/failed, an attempt
+ * count and the last error -- because the push has the same problem: a webhook
+ * may not call Shopify, so the work has to be picked up later.
+ */
+const CREATE_ORDER_MAPPINGS = `
+  CREATE TABLE IF NOT EXISTS order_mappings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- Our orders row for the DESTINATION sale, not a Shopify id: the order is
+    -- already cached, and pointing at the cache keeps the two in step.
+    destination_order_id INT NOT NULL,
+
+    -- Filled in once the source store has accepted the order.
+    source_shopify_order_id BIGINT UNSIGNED DEFAULT NULL,
+    source_order_name       VARCHAR(50) DEFAULT NULL,
+
+    -- What the shopper paid, and what the source is owed at its own prices.
+    -- DECIMAL, never FLOAT: these are money.
+    destination_total DECIMAL(12,2) DEFAULT NULL,
+    source_total      DECIMAL(12,2) DEFAULT NULL,
+    currency          VARCHAR(3) DEFAULT NULL,
+
+    -- How many of the order's lines belong to THIS source. A destination order
+    -- with lines from two sources has a different count on each row.
+    line_count INT NOT NULL DEFAULT 0,
+
+    sync_status ENUM('pending','synced','failed','skipped')
+      NOT NULL DEFAULT 'pending',
+    error_message VARCHAR(512) DEFAULT NULL,
+    attempts      INT NOT NULL DEFAULT 0,
+    last_synced_at DATETIME DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- One row per source per destination order. This is what makes the webhook
+    -- idempotent: Shopify retries orders/create, and the second delivery must
+    -- not place a second order at the source.
+    UNIQUE KEY uniq_order_mapping (connection_id, destination_order_id),
+    KEY idx_order_mapping_status (sync_status),
+
+    CONSTRAINT fk_order_mapping_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id)
+        ON DELETE CASCADE,
+
+    -- CASCADE is right here, unlike on a product: this row describes one
+    -- specific sale, so without that sale it means nothing.
+    CONSTRAINT fk_order_mapping_order
+      FOREIGN KEY (destination_order_id) REFERENCES orders(id)
+        ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/**
+ * Destination-side acceptance.
+ *
+ * Rows that predate this column were pushed under the old rule, where the
+ * source alone decided. Backfilling them as accepted keeps those products
+ * syncing instead of silently stalling until someone re-ticks them.
+ */
+async function addDestinationAcceptance() {
+  await safeAlter(
+    "product_mappings.accepted_at",
+    "ALTER TABLE product_mappings ADD COLUMN accepted_at DATETIME DEFAULT NULL"
+  );
+  await safeAlter(
+    "product_mappings.idx_mapping_accepted",
+    "ALTER TABLE product_mappings ADD INDEX idx_mapping_accepted (connection_id, accepted_at)"
+  );
+
+  const [result] = await require("./db").pool.query(
+    `UPDATE product_mappings
+        SET accepted_at = COALESCE(last_synced_at, created_at)
+      WHERE accepted_at IS NULL
+        AND sync_status IN ('synced', 'failed')`
+  );
+
+  if (result.affectedRows) {
+    console.log(
+      `Migration: marked ${result.affectedRows} already-pushed product(s) as accepted`
+    );
+  }
+}
+
 async function runMigrations() {
   // Parents before children -- a foreign key needs its target to exist.
   await query(CREATE_STORES);
@@ -610,14 +843,43 @@ async function runMigrations() {
   await addStoreGrouping();
   await query(CREATE_STORE_CONNECTIONS);
   await query(CREATE_SOURCE_PRODUCTS);
+  await addSelectedVariants();
   await query(CREATE_PRODUCT_MAPPINGS);
+  await addAllowedVariants();
+  await addDestinationAcceptance();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
+  await addVariantDetailColumns();
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
   await slimOrdersCustomerColumns();
   await query(CREATE_ORDER_LINE_ITEMS);
   await linkLineItemsToMappedVariants();
   await query(CREATE_CUSTOMERS);
+  // After store_connections: the foreign key needs its target to exist.
+  await query(CREATE_SYNC_SETTINGS);
+  await backfillSyncSettings();
+  // After BOTH store_connections and orders -- it has a foreign key onto each.
+  await query(CREATE_ORDER_MAPPINGS);
+}
+
+/**
+ * Give every existing connection a row of defaults.
+ *
+ * Without this, a connection made before this table existed would read as
+ * "nothing configured" -- and the safe reading of that is "sync everything",
+ * which is exactly what a row of 1s says explicitly.
+ */
+async function backfillSyncSettings() {
+  const [result] = await require("./db").pool.query(
+    `INSERT IGNORE INTO sync_settings (connection_id)
+     SELECT id FROM store_connections`
+  );
+
+  if (result.affectedRows) {
+    console.log(
+      `Migration: created sync settings for ${result.affectedRows} connection(s)`
+    );
+  }
 }
 
 module.exports = { runMigrations, safeAlter };

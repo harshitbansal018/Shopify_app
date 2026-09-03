@@ -139,6 +139,47 @@ async function countForOrder(orderId) {
 }
 
 /**
+ * The lines of a destination order that came from a synced product, each
+ * resolved all the way back to the SOURCE variant that supplied it.
+ *
+ * This is what lets a sale be re-placed at the source: the source's own
+ * variant id to order, and the source's own price to order it at. The price
+ * the shopper paid is returned alongside it, but only so the two can be shown
+ * next to each other -- it is the marked-up figure and must never be the one
+ * sent to the source.
+ *
+ * Every JOIN is an INNER join on purpose. A line with no mapped_variant_id was
+ * a product the destination sells itself, and a line whose source variant has
+ * since been deleted can no longer be ordered. Neither belongs to any source,
+ * so both drop out here rather than being returned for the caller to filter.
+ */
+async function sourceLinesForOrder(orderId) {
+  return query(
+    `SELECT li.id AS line_id,
+            li.quantity,
+            li.price AS destination_price,
+            li.title,
+            li.variant_title,
+            li.sku AS destination_sku,
+            li.requires_shipping,
+            pm.connection_id,
+            svm.shopify_variant_id AS source_shopify_variant_id,
+            svm.price  AS source_price,
+            svm.sku    AS source_sku,
+            svm.title  AS source_variant_title,
+            sp.title   AS source_product_title
+       FROM order_line_items li
+       JOIN mapping_variant_products mvp ON mvp.id  = li.mapped_variant_id
+       JOIN product_mappings pm          ON pm.id  = mvp.product_mapping_id
+       JOIN source_variant_mappings svm  ON svm.id = mvp.source_variant_mapping_id
+       JOIN source_products sp           ON sp.id  = svm.source_product_id
+      WHERE li.order_id = ?
+      ORDER BY li.id`,
+    [orderId]
+  );
+}
+
+/**
  * Units sold per variant, resolved back through the mapping to the source
  * variant it came from -- which is what "how much of MY product sold" means
  * when the same product is synced to several stores.
@@ -177,6 +218,7 @@ module.exports = {
   syncForOrder,
   listForOrder,
   countForOrder,
+  sourceLinesForOrder,
   unitsSoldByVariant,
   toMoney,
 };

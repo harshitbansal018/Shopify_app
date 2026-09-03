@@ -180,4 +180,6 @@ async function requireSession(req, res, next) {
   }
 }
 
-module.exports = { requireSession };
+// Shared with authController, which needs the same URL when a callback turns
+// up with no state cookie. One definition so the two cannot drift apart.
+module.exports = { requireSession, installUrlFor };

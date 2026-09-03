@@ -255,6 +255,291 @@ async function cleanup() {
     check("the role survived the rejected change",
       (await storeModel.findById(source.id)).store_type === "source");
 
+    // Which variants may go out. NULL and [] mean opposite things: NULL is
+    // "every variant, including ones added later", [] would be "none".
+    {
+      const product = await sourceProductModel.upsert(source.id, {
+        id: 5550,
+        title: "Variant Selection Shirt",
+        status: "active",
+        variants: [
+          { id: 90001, sku: "VS-S", price: "10.00", option1: "S" },
+          { id: 90002, sku: "VS-M", price: "11.00", option1: "M" },
+        ],
+      });
+
+      const variants = await sourceVariantModel.listForProduct(product.id);
+
+      const everything = await productMappingModel.ensure({
+        connectionId: connection.id,
+        sourceProductId: product.id,
+        sourceShopifyProductId: product.shopify_product_id,
+      });
+
+      check("allowing a whole product stores NULL, not a list",
+        everything.allowed_variant_ids === null,
+        JSON.stringify(everything.allowed_variant_ids));
+
+      const narrowed = await productMappingModel.setAllowedVariants(
+        everything.id,
+        [variants[1].id]
+      );
+
+      check("a narrowed selection round-trips as an array",
+        Array.isArray(narrowed.allowed_variant_ids) &&
+          narrowed.allowed_variant_ids.length === 1,
+        JSON.stringify(narrowed.allowed_variant_ids));
+      check("it holds the variant that was picked",
+        narrowed.allowed_variant_ids[0] === variants[1].id);
+
+      // Changing the selection must re-queue: a 'synced' row would otherwise
+      // keep the old variants on the destination forever.
+      await productMappingModel.markSynced(narrowed.id, {
+        destinationProductId: 777,
+        sourceUpdatedAt: null,
+      });
+      const requeued = await productMappingModel.setAllowedVariants(
+        narrowed.id,
+        [variants[0].id]
+      );
+      check("changing the selection re-queues the product",
+        requeued.sync_status === "pending", requeued.sync_status);
+
+      const widened = await productMappingModel.setAllowedVariants(narrowed.id, null);
+      check("widening back to all clears the list",
+        widened.allowed_variant_ids === null);
+
+      // Emptying the list is not a way to say "none" -- there is no such state,
+      // and storing [] would push a product with no variants.
+      const emptied = await productMappingModel.setAllowedVariants(narrowed.id, []);
+      check("an empty selection is stored as NULL, never as []",
+        emptied.allowed_variant_ids === null,
+        JSON.stringify(emptied.allowed_variant_ids));
+
+      // Re-importing a product means the destination now holds older data than
+      // we do, so anything already pushed must be queued again.
+      await productMappingModel.markSynced(narrowed.id, {
+        destinationProductId: 778,
+        sourceUpdatedAt: null,
+      });
+
+      const moved = await productMappingModel.requeueForSourceProduct(product.id);
+      check("re-importing queues the product for another push", moved === 1,
+        String(moved));
+      check("and the status really changed",
+        (await productMappingModel.findById(narrowed.id)).sync_status === "pending");
+
+      // Dropping ONE variant from the offer, which is what the product page's
+      // Delete does.
+      {
+        const every = variants.map((v) => v.id);
+
+        // Start from "all variants", the state a plain Allow leaves behind.
+        await productMappingModel.setAllowedVariants(narrowed.id, null);
+
+        const changed = await productMappingModel.removeAllowedVariant(
+          product.id,
+          variants[0].id,
+          every
+        );
+        check("removing a variant reports the change", changed === 1, String(changed));
+
+        const after = await productMappingModel.findById(narrowed.id);
+        check("'all variants' becomes an explicit list minus that one",
+          Array.isArray(after.allowed_variant_ids) &&
+            after.allowed_variant_ids.length === every.length - 1,
+          JSON.stringify(after.allowed_variant_ids));
+        check("and the removed one is gone from it",
+          after.allowed_variant_ids.indexOf(variants[0].id) === -1);
+        check("removing re-queues the product",
+          after.sync_status === "pending", after.sync_status);
+
+        // A variant that was not being shared anyway is a no-op, not an error.
+        const again = await productMappingModel.removeAllowedVariant(
+          product.id, variants[0].id, every
+        );
+        check("removing it twice changes nothing", again === 0, String(again));
+
+        // The last one cannot go: productSet would strip the destination's
+        // copy down to a product with no variants.
+        await productMappingModel.setAllowedVariants(narrowed.id, [variants[1].id]);
+
+        const lastOne = await expectRejection(() =>
+          productMappingModel.removeAllowedVariant(product.id, variants[1].id, every)
+        );
+        check("the last shared variant is refused",
+          lastOne && lastOne.statusCode === 409, lastOne && lastOne.message);
+        check("and the selection is untouched",
+          (await productMappingModel.findById(narrowed.id))
+            .allowed_variant_ids.length === 1);
+      }
+
+      // A plain Allow must not wipe out a selection made on the product page.
+      {
+        await productMappingModel.setAllowedVariants(narrowed.id, [variants[1].id]);
+
+        await productMappingModel.ensure({
+          connectionId: connection.id,
+          sourceProductId: product.id,
+          sourceShopifyProductId: product.shopify_product_id,
+          allowedVariantIds: null, // what the table sends
+        });
+
+        const kept = await productMappingModel.findById(narrowed.id);
+        check("re-allowing keeps the narrowed selection",
+          Array.isArray(kept.allowed_variant_ids) &&
+            kept.allowed_variant_ids.length === 1,
+          JSON.stringify(kept.allowed_variant_ids));
+      }
+
+      // Narrowing a product DELETES the dropped variant on the destination, so
+      // its link row has to go too -- the destination's screen reads these
+      // rows, and a stale one shows a variant that is not there any more.
+      {
+        await mappingVariantProductModel.upsertMany(
+          narrowed.id,
+          variants.map((v) => ({
+            sourceVariantMappingId: v.id,
+            sourceShopifyVariantId: v.shopify_variant_id,
+            destinationVariantId: 70000 + Number(v.id),
+          }))
+        );
+
+        check("both variants start linked",
+          (await mappingVariantProductModel.countForMapping(narrowed.id)) === 2);
+
+        // What pushOne does after productSet: keep only what was sent.
+        const dropped = await mappingVariantProductModel.removeMissing(
+          narrowed.id,
+          [variants[0].shopify_variant_id]
+        );
+
+        check("the dropped variant's link is removed", dropped === 1, String(dropped));
+        check("only the shared variant is still linked",
+          (await mappingVariantProductModel.countForMapping(narrowed.id)) === 1);
+
+        const left = await mappingVariantProductModel.listForMapping(narrowed.id);
+        check("and it is the RIGHT one",
+          String(left[0].source_shopify_variant_id) ===
+            String(variants[0].shopify_variant_id));
+      }
+
+      // Undoing a narrowed selection. Without this the hidden variants have no
+      // checkbox left and could only be recovered from the database.
+      {
+        // The checks above left it widened; narrow it again to have something
+        // to undo.
+        await productMappingModel.setAllowedVariants(narrowed.id, [variants[1].id]);
+
+        const before = await productMappingModel.findById(narrowed.id);
+        check("the selection is narrowed to start with",
+          Array.isArray(before.allowed_variant_ids));
+
+        const reset = await productMappingModel.resetAllowedVariantsForProduct(
+          product.id
+        );
+        check("resetting reports what it changed", reset === 1, String(reset));
+
+        const after = await productMappingModel.findById(narrowed.id);
+        check("every variant is on offer again",
+          after.allowed_variant_ids === null,
+          JSON.stringify(after.allowed_variant_ids));
+        check("and the product is queued so the destination gets them",
+          after.sync_status === "pending", after.sync_status);
+
+        // Nothing narrowed: nothing to undo, and no pointless write.
+        const again = await productMappingModel.resetAllowedVariantsForProduct(
+          product.id
+        );
+        check("resetting an unnarrowed product changes nothing",
+          again === 0, String(again));
+
+        // Put the narrowing back for the checks below.
+        await productMappingModel.setAllowedVariants(narrowed.id, [variants[1].id]);
+      }
+
+      // The destination has to agree before anything is written to its store.
+      {
+        const offered = await productMappingModel.findById(narrowed.id);
+
+        check("a freshly offered product is not accepted",
+          offered.accepted_at === null, String(offered.accepted_at));
+
+        const notYet = await productMappingModel.listForConnection(connection.id, {
+          status: "pending",
+          acceptedOnly: true,
+        });
+        check("an unaccepted product is invisible to the push",
+          !notYet.some((m) => m.id === narrowed.id),
+          "it would have been written to a store that never asked for it");
+
+        // Another store's id must not be acceptable from here.
+        const stolen = await productMappingModel.acceptForDestination(
+          source.id, // the SOURCE store, which is not the destination
+          [narrowed.id]
+        );
+        check("a store cannot accept products into someone else's shop",
+          stolen === 0, String(stolen));
+
+        const accepted = await productMappingModel.acceptForDestination(
+          destination.id,
+          [narrowed.id]
+        );
+        check("the real destination can accept", accepted === 1, String(accepted));
+
+        const now = await productMappingModel.findById(narrowed.id);
+        check("acceptance is stamped", Boolean(now.accepted_at));
+        check("and it is queued for the push", now.sync_status === "pending");
+
+        const visible = await productMappingModel.listForConnection(connection.id, {
+          status: "pending",
+          acceptedOnly: true,
+        });
+        check("an accepted product IS visible to the push",
+          visible.some((m) => m.id === narrowed.id));
+
+        // Accepting twice must not move the timestamp.
+        const stamp = now.accepted_at;
+        await productMappingModel.acceptForDestination(destination.id, [narrowed.id]);
+        check("re-accepting keeps the original timestamp",
+          String((await productMappingModel.findById(narrowed.id)).accepted_at) ===
+            String(stamp));
+
+        // Declining stops future updates without deleting anything.
+        await productMappingModel.declineForDestination(destination.id, [narrowed.id]);
+        const declined = await productMappingModel.findById(narrowed.id);
+        check("declining clears the acceptance", declined.accepted_at === null);
+        check("declining marks it skipped", declined.sync_status === "skipped");
+        check("declining keeps the destination product id",
+          declined.destination_shopify_product_id !== null,
+          "the merchant's existing product was forgotten");
+
+        // Put it back so the checks below still have an accepted row.
+        await productMappingModel.acceptForDestination(destination.id, [narrowed.id]);
+      }
+
+      // A product deleted at the source must never be resurrected -- not by a
+      // re-import, and not by the destination accepting it again. Left until
+      // last because 'deleted' is a one-way door.
+      {
+        await productMappingModel.markDeleted(narrowed.id);
+
+        await productMappingModel.requeueForSourceProduct(product.id);
+        check("re-importing does not resurrect a deleted mapping",
+          (await productMappingModel.findById(narrowed.id)).sync_status === "deleted");
+
+        await productMappingModel.declineForDestination(destination.id, [narrowed.id]);
+        await productMappingModel.acceptForDestination(destination.id, [narrowed.id]);
+        check("accepting does not resurrect a deleted mapping",
+          (await productMappingModel.findById(narrowed.id)).sync_status === "deleted");
+      }
+
+      // Remove it again: later sections count this store's products and would
+      // otherwise trip over one this block invented. The delete cascades to
+      // the mapping and the variants.
+      await sourceProductModel.deleteByShopifyId(source.id, 5550);
+    }
+
     const auto = await connectionModel.listAutoSyncForSource(source.id);
     check("auto-sync lookup finds it", auto.length === 1, String(auto.length));
 
@@ -560,6 +845,439 @@ async function cleanup() {
     check("product mappings cascade", Number(after.mappings) === 0);
     check("source variants cascade", Number(after.src_variants) === 0);
     check("variant links cascade", Number(after.link_variants) === 0);
+  }
+
+  /* The two screen queries, run for real.
+   *
+   * The view tests hand these shapes in as fixtures, so a broken SELECT still
+   * renders perfectly there and only fails in a merchant's browser. That is
+   * exactly how a `CAST(... AS JSON)` -- valid in MySQL, rejected by MariaDB --
+   * reached a running app. These run the SQL. */
+  console.log("\nProducts screen queries");
+  {
+    const store = await storeModel.upsertStore({
+      shop_domain: `${RUN}-screens.myshopify.com`,
+      store_name: "Screens Source",
+      access_token: "shpat_screens",
+    });
+
+    const other = await storeModel.upsertStore({
+      shop_domain: `${RUN}-screensdst.myshopify.com`,
+      store_name: "Screens Destination",
+      access_token: "shpat_screensdst",
+    });
+
+    await pair(store, other);
+
+    const link = await connectionModel.createConnection({
+      sourceStoreId: store.id,
+      destinationStoreId: other.id,
+    });
+
+    const cached = await sourceProductModel.upsert(store.id, {
+      id: 6100,
+      title: "Screen Test Shirt",
+      status: "active",
+      variants: [
+        { id: 61001, sku: "ST-S", price: "9.00", option1: "S" },
+        { id: 61002, sku: "ST-M", price: "9.50", option1: "M" },
+        { id: 61003, sku: "ST-L", price: "9.90", option1: "L" },
+      ],
+    });
+
+    const variants = await sourceVariantModel.listForProduct(cached.id);
+
+    // Offer only two of the three variants.
+    const offered = await productMappingModel.ensure({
+      connectionId: link.id,
+      sourceProductId: cached.id,
+      sourceShopifyProductId: cached.shopify_product_id,
+      allowedVariantIds: [variants[0].id, variants[2].id],
+    });
+
+    /* Re-importing an UNCHANGED product must not re-queue it.
+     *
+     * The picker reopens pre-ticked, so confirming it sends every staged
+     * product back. Without the unchanged check, adding one product would
+     * mark the whole catalogue pending and re-push it. */
+    {
+      const stable = await sourceProductModel.upsert(store.id, {
+        id: 6300,
+        title: "Stable Shirt",
+        status: "active",
+        updated_at: "2026-08-20T10:00:00Z",
+        variants: [{ id: 63001, sku: "SS-1", price: "5.00" }],
+      });
+
+      const mapping = await productMappingModel.ensure({
+        connectionId: link.id,
+        sourceProductId: stable.id,
+        sourceShopifyProductId: stable.shopify_product_id,
+      });
+
+      await productMappingModel.markSynced(mapping.id, {
+        destinationProductId: 9300,
+        sourceUpdatedAt: null,
+      });
+
+      // Same updated_at: nothing about the product moved.
+      await sourceProductModel.upsert(store.id, {
+        id: 6300,
+        title: "Stable Shirt",
+        status: "active",
+        updated_at: "2026-08-20T10:00:00Z",
+        variants: [{ id: 63001, sku: "SS-1", price: "5.00" }],
+      });
+
+      const same = await sourceProductModel.findById(stable.id);
+      check("an unchanged re-import keeps the same Shopify timestamp",
+        new Date(same.shopify_updated_at).getTime() ===
+          new Date("2026-08-20T10:00:00Z").getTime(),
+        String(same.shopify_updated_at));
+
+      check("and the mapping is still synced, not re-queued",
+        (await productMappingModel.findById(mapping.id)).sync_status === "synced",
+        "adding one product would have re-pushed the whole catalogue");
+
+      // A real change DOES have to re-queue.
+      await sourceProductModel.upsert(store.id, {
+        id: 6300,
+        title: "Stable Shirt PRICED UP",
+        status: "active",
+        updated_at: "2026-08-31T10:00:00Z",
+        variants: [{ id: 63001, sku: "SS-1", price: "6.00" }],
+      });
+
+      const moved = await sourceProductModel.findById(stable.id);
+      check("a real change moves the timestamp",
+        new Date(moved.shopify_updated_at).getTime() >
+          new Date("2026-08-20T10:00:00Z").getTime());
+
+      await sourceProductModel.deleteByShopifyId(store.id, 6300);
+    }
+
+    /* The choice made in the resource picker, before any mapping exists. */
+    {
+      const fresh = await sourceProductModel.upsert(store.id, {
+        id: 6200,
+        title: "Picker Test Shirt",
+        status: "active",
+        variants: [
+          { id: 62001, sku: "PT-S", price: "5.00", option1: "S" },
+          { id: 62002, sku: "PT-M", price: "6.00", option1: "M" },
+          { id: 62003, sku: "PT-L", price: "7.00", option1: "L" },
+        ],
+      });
+
+      const rows = await sourceVariantModel.listForProduct(fresh.id);
+
+      check("a newly cached product has no selection",
+        fresh.selected_variant_ids === null);
+
+      // Two of three ticked in the picker.
+      const narrowedPick = await sourceProductModel.setSelectedVariants(
+        fresh.id, [rows[0].id, rows[2].id], rows.length
+      );
+      check("the picker choice round-trips",
+        Array.isArray(narrowedPick.selected_variant_ids) &&
+          narrowedPick.selected_variant_ids.length === 2,
+        JSON.stringify(narrowedPick.selected_variant_ids));
+
+      // Ticking EVERY variant stores NULL, so one added later still flows.
+      const allTicked = await sourceProductModel.setSelectedVariants(
+        fresh.id, rows.map((r) => r.id), rows.length
+      );
+      check("ticking every variant stores NULL, not a frozen list",
+        allTicked.selected_variant_ids === null,
+        JSON.stringify(allTicked.selected_variant_ids));
+
+      // Before it is shared, the list reports the picker's choice.
+      await sourceProductModel.setSelectedVariants(
+        fresh.id, [rows[1].id], rows.length
+      );
+
+      const beforeSharing = (await sourceProductModel.listWithMappingStatus(store.id))
+        .find((r) => r.id === fresh.id);
+
+      check("an unshared product reports the picker's choice",
+        Array.isArray(beforeSharing.effective_variant_ids) &&
+          beforeSharing.effective_variant_ids[0] === rows[1].id,
+        JSON.stringify(beforeSharing.effective_variant_ids));
+
+      // Allowing with nothing posted must INHERIT that choice, not widen the
+      // product back to everything.
+      const current = await sourceProductModel.findById(fresh.id);
+
+      const seeded = await productMappingModel.ensure({
+        connectionId: link.id,
+        sourceProductId: fresh.id,
+        sourceShopifyProductId: fresh.shopify_product_id,
+        allowedVariantIds: current.selected_variant_ids,
+      });
+
+      check("allowing inherits the picker's choice",
+        Array.isArray(seeded.allowed_variant_ids) &&
+          seeded.allowed_variant_ids[0] === rows[1].id,
+        JSON.stringify(seeded.allowed_variant_ids));
+
+      // Once shared, the mapping is what counts.
+      await productMappingModel.setAllowedVariants(seeded.id, [rows[0].id]);
+
+      const afterSharing = (await sourceProductModel.listWithMappingStatus(store.id))
+        .find((r) => r.id === fresh.id);
+
+      check("a shared product reports the MAPPING's selection",
+        afterSharing.effective_variant_ids[0] === rows[0].id,
+        JSON.stringify(afterSharing.effective_variant_ids));
+
+      await sourceProductModel.deleteByShopifyId(store.id, 6200);
+    }
+
+    const sourceRows = await sourceProductModel.listWithMappingStatus(store.id);
+    const row = sourceRows.find((r) => r.id === cached.id);
+
+    check("the source query runs", Boolean(row));
+    check("it counts the product as shared", row.allowed === 1, String(row.allowed));
+    check("it reports the destination has not accepted",
+      row.awaiting === 1, String(row.awaiting));
+    check("an unaccepted product is not counted as pending",
+      row.pending === 0, String(row.pending));
+    check("it returns the variant selection",
+      Array.isArray(row.allowed_variant_ids) && row.allowed_variant_ids.length === 2,
+      JSON.stringify(row.allowed_variant_ids));
+
+    const destinationRows = await sourceProductModel.listSyncedIntoStore(other.id);
+    const incoming = destinationRows.find((r) => r.mapping_id === offered.id);
+
+    check("the destination query runs", Boolean(incoming));
+    check("it names the source store",
+      incoming.source_shop_domain === `${RUN}-screens.myshopify.com`);
+    check("it marks the product as awaiting a decision", incoming.awaiting === true);
+    check("it counts only the OFFERED variants",
+      incoming.offered_variant_count === 2,
+      `${incoming.offered_variant_count} -- the JSON_CONTAINS filter is wrong`);
+
+    // With no narrowing, every variant is on offer.
+    await productMappingModel.setAllowedVariants(offered.id, null);
+    const widened = (await sourceProductModel.listSyncedIntoStore(other.id))
+      .find((r) => r.mapping_id === offered.id);
+
+    check("a product with no narrowing offers all its variants",
+      widened.offered_variant_count === 3,
+      String(widened.offered_variant_count));
+
+    await productMappingModel.acceptForDestination(other.id, [offered.id]);
+    const accepted = (await sourceProductModel.listSyncedIntoStore(other.id))
+      .find((r) => r.mapping_id === offered.id);
+
+    check("once accepted it stops awaiting", accepted.awaiting === false);
+
+    /* A change at the source, arriving as a webhook. */
+    const productSync = require(path.join(SERVER, "services/productSync"));
+
+    await productMappingModel.markSynced(offered.id, {
+      destinationProductId: 8800,
+      sourceUpdatedAt: null,
+    });
+
+    const changed = await productSync.applySourceUpdate(store.id, {
+      id: 6100,
+      title: "Screen Test Shirt RENAMED",
+      status: "active",
+      updated_at: "2026-08-28T09:00:00Z",
+      images: [{ src: "https://cdn.example/new.jpg", alt: "New" }],
+      options: [{ name: "Size", position: 1, values: ["S", "M", "L"] }],
+      variants: [
+        { id: 61001, sku: "ST-S", price: "12.00", option1: "S" },
+        { id: 61002, sku: "ST-M", price: "12.50", option1: "M" },
+        { id: 61003, sku: "ST-L", price: "12.90", option1: "L" },
+      ],
+    });
+
+    check("a source change is applied", Boolean(changed));
+    check("it queues the product for another push",
+      changed.requeued === 1, String(changed.requeued));
+    check("the mapping really went back to pending",
+      (await productMappingModel.findById(offered.id)).sync_status === "pending");
+
+    const refreshed = await sourceProductModel.findById(cached.id);
+    check("the cached title is updated",
+      refreshed.title === "Screen Test Shirt RENAMED", refreshed.title);
+    check("the new price reached the variant cache",
+      Number((await sourceVariantModel.listForProduct(cached.id))[0].price) === 12,
+      "a price change would never reach the destination");
+    check("the new image is cached",
+      refreshed.product_data.images[0].url === "https://cdn.example/new.jpg");
+
+    /* The DESTINATION's own merchant changing things in their admin. */
+    {
+      // Pretend the push created product 8800 there, with two variants linked.
+      await productMappingModel.markSynced(offered.id, {
+        destinationProductId: 8800,
+        sourceUpdatedAt: null,
+      });
+      await productMappingModel.acceptForDestination(other.id, [offered.id]);
+
+      await mappingVariantProductModel.upsertMany(
+        offered.id,
+        variants.slice(0, 2).map((v, i) => ({
+          sourceVariantMappingId: v.id,
+          sourceShopifyVariantId: v.shopify_variant_id,
+          destinationVariantId: 91000 + i,
+        }))
+      );
+
+      check("two variants are linked to start with",
+        (await mappingVariantProductModel.countForMapping(offered.id)) === 2);
+
+      // They delete ONE variant in their own admin. The webhook arrives with
+      // whatever is left.
+      const afterEdit = await productSync.applyDestinationUpdate(other.id, {
+        id: 8800,
+        variants: [{ id: 91000 }], // 91001 is gone
+      });
+
+      check("the destination edit is recognised", Boolean(afterEdit));
+      check("the vanished variant's link is dropped",
+        afterEdit.dropped === 1, String(afterEdit.dropped));
+      check("only the surviving variant is still listed",
+        (await mappingVariantProductModel.countForMapping(offered.id)) === 1);
+
+      // A product this app did not create there must be left alone.
+      const stranger = await productSync.applyDestinationUpdate(other.id, {
+        id: 999111,
+        variants: [],
+      });
+      check("someone else's product is ignored", stranger === null);
+
+      // Now they delete the whole product.
+      const removed = await productSync.applyDestinationDelete(other.id, 8800);
+
+      check("the deletion is recognised", removed && removed.mappings === 1);
+
+      const back = await productMappingModel.findById(offered.id);
+      check("the link to the deleted product is cleared",
+        back.destination_shopify_product_id === null);
+      check("it stops counting as accepted", back.accepted_at === null,
+        String(back.accepted_at));
+      check("and is not queued for another push",
+        back.sync_status === "skipped", back.sync_status);
+      check("its variant links are gone too",
+        (await mappingVariantProductModel.countForMapping(offered.id)) === 0);
+
+      // Put the mapping back the way the checks below expect it: accepted, and
+      // still pointing at the product it created there.
+      await productMappingModel.acceptForDestination(other.id, [offered.id]);
+      await productMappingModel.markSynced(offered.id, {
+        destinationProductId: 8800,
+        sourceUpdatedAt: null,
+      });
+    }
+
+    // A product this store does not stage must be ignored, not invented.
+    const unknown = await productSync.applySourceUpdate(store.id, {
+      id: 999999,
+      title: "Never Imported",
+      variants: [],
+    });
+    check("an unstaged product is ignored", unknown === null);
+    check("and is not silently added to the table",
+      (await sourceProductModel.findByShopifyId(store.id, 999999)) === null);
+
+    // Deleted at the source: the mapping is marked, never dropped.
+    const removed = await productSync.applySourceDelete(store.id, 6100);
+    check("deletion marks the mappings", removed.marked === 1, String(removed.marked));
+
+    const afterDelete = await productMappingModel.findById(offered.id);
+    check("the mapping row survives", Boolean(afterDelete));
+    check("it is marked deleted", afterDelete.sync_status === "deleted");
+    check("and it still remembers the destination product",
+      String(afterDelete.destination_shopify_product_id) === "8800",
+      "the link to what was created there was lost");
+  }
+
+  console.log("\nsync_settings");
+  {
+    const syncSettingsModel = require(path.join(SERVER, "models/syncSettingsModel"));
+
+    const a = await storeModel.upsertStore({
+      shop_domain: `${RUN}-setsrc.myshopify.com`,
+      store_name: "Settings Source",
+      access_token: "shpat_setsrc",
+    });
+    const b = await storeModel.upsertStore({
+      shop_domain: `${RUN}-setdst.myshopify.com`,
+      store_name: "Settings Destination",
+      access_token: "shpat_setdst",
+    });
+
+    await pair(a, b);
+
+    const link = await connectionModel.createConnection({
+      sourceStoreId: a.id,
+      destinationStoreId: b.id,
+    });
+
+    // A connection with no row must still sync: "not configured" can only
+    // safely mean "everything on".
+    const before = await syncSettingsModel.forConnection(link.id);
+    check("an unconfigured connection reads as everything on",
+      syncSettingsModel.TOGGLES.every((field) => before[field] === true),
+      syncSettingsModel.TOGGLES.filter((f) => !before[f]).join(", "));
+    check("and defaults to matching on SKU", before.match_by === "sku");
+
+    const saved = await syncSettingsModel.save(link.id, {
+      match_by: "barcode",
+      price_markup_percent: 12.5,
+      images: false,
+      variant_cost: false,
+    });
+
+    check("the chosen identifier is stored", saved.match_by === "barcode");
+    check("the markup is stored", saved.price_markup_percent === 12.5);
+    check("an unticked field is off", saved.images === false);
+    check("and so is the variant one", saved.variant_cost === false);
+    check("everything else stays on",
+      saved.title === true && saved.tags === true && saved.variant_price === true,
+      "only what was unticked should have changed");
+
+    // Missing keys mean ON, not off. A field added to the list later must not
+    // silently switch itself off for every existing connection.
+    const partial = await syncSettingsModel.save(link.id, { match_by: "sku" });
+    check("a field absent from the payload stays on",
+      partial.images === true && partial.variant_cost === true,
+      "an older screen would have turned off every field it did not know");
+
+    // Saving twice must not make a second row.
+    await syncSettingsModel.save(link.id, { tags: false });
+    const rows = await query(
+      "SELECT COUNT(*) AS total FROM sync_settings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("saving twice keeps ONE row", Number(rows[0].total) === 1,
+      String(rows[0].total));
+
+    // Nonsense from a browser must not reach a column.
+    const cleaned = await syncSettingsModel.save(link.id, {
+      match_by: "whatever",
+      price_markup_percent: 99999,
+    });
+    check("an unknown identifier falls back to SKU", cleaned.match_by === "sku");
+    check("an absurd markup is capped", cleaned.price_markup_percent === 1000,
+      String(cleaned.price_markup_percent));
+
+    const many = await syncSettingsModel.mapForConnections([link.id, 999999]);
+    check("a batch read returns settings for every id asked for",
+      many.size === 2 && many.get(999999).title === true,
+      "a connection with no row still has to sync");
+
+    // Settings belong to the connection: delete it and they go.
+    await connectionModel.deleteConnection(link.id);
+    const after = await query(
+      "SELECT COUNT(*) AS total FROM sync_settings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("settings cascade with the connection", Number(after[0].total) === 0);
   }
 
   await cleanup();

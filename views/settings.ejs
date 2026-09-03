@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title>Settings</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Settings</h1>
+        <p class="shell__sub">
+          What each source store is allowed to copy into
+          <%= store.store_name || shop %>.
+        </p>
+      </div>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <% if (!connections.length) { %>
+
+      <section class="empty">
+        <h2>No source store connected</h2>
+        <p>
+          Connect one from <s-link href="/stores">Stores</s-link> first. These
+          settings are per source store, so there is nothing to configure yet.
+        </p>
+      </section>
+
+    <% } else { %>
+
+      <% connections.forEach(function (connection) { %>
+        <%
+          var sync = connection.sync;
+          var id = connection.id;
+        %>
+
+        <section class="panel settings" data-connection="<%= id %>">
+
+          <header class="settings__head">
+            <div class="settings__who">
+              <span class="settings__eyebrow">Product sync settings from</span>
+              <h2 class="settings__store">
+                <%= connection.source.store_name || connection.source.shop_domain %>
+              </h2>
+              <%# Only when it adds something: a store with no name would
+                  otherwise show its domain twice. %>
+              <% if (connection.source.store_name) { %>
+                <span class="muted"><%= connection.source.shop_domain %></span>
+              <% } %>
+            </div>
+            <% if (connection.status !== "active") { %>
+              <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+            <% } %>
+          </header>
+
+          <%# No identifier picker: the destination product was created by this
+              app, so its SKUs are the ones we sent and always match. The
+              column and identityOf() stay, so it can come back as a dropdown
+              if a merchant ever needs to match on something else. %>
+
+          <div class="settings__group">
+            <h3 class="settings__legend">Product details</h3>
+            <p class="settings__hint">
+              Anything unticked is left alone here &mdash; your own value is
+              kept, not erased.
+            </p>
+
+            <div class="toggles">
+              <% productFields.forEach(function (field) { %>
+                <label class="toggles__item">
+                  <input
+                    type="checkbox"
+                    name="<%= field %>"
+                    <%= sync[field] ? "checked" : "" %>
+                    <%# A product cannot be created without a title, so this one
+                        is shown for completeness and cannot be turned off. %>
+                    <%= field === "title" ? "disabled" : "" %>>
+                  <span><%= labels[field] || field %></span>
+                  <% if (field === "title") { %>
+                    <span class="tag">always</span>
+                  <% } %>
+                </label>
+              <% }); %>
+
+              <label class="toggles__item">
+                <input type="checkbox" name="inventory" <%= sync.inventory ? "checked" : "" %>>
+                <span><%= labels.inventory %></span>
+              </label>
+            </div>
+          </div>
+
+          <%# No master "Variants" checkbox: this is a section like the one
+              above, not a parent toggle. sync_variants therefore stays on for
+              every save -- see the page script at the bottom. %>
+          <div class="settings__group">
+            <h3 class="settings__legend"><%= labels.variants %></h3>
+            <p class="settings__hint">
+              The same rule applies per variant: untick one and the destination
+              keeps the value it already has.
+            </p>
+
+            <div class="toggles">
+              <% variantFields.forEach(function (field) { %>
+                <label class="toggles__item">
+                  <input
+                    type="checkbox"
+                    name="<%= field %>"
+                    <%= sync[field] ? "checked" : "" %>>
+                  <span><%= labels[field] || field %></span>
+                </label>
+              <% }); %>
+            </div>
+
+            <div class="settings__margin">
+              <label class="field field--inline">
+                <span class="field__label">Price margin</span>
+                <span class="input-suffix">
+                  <input
+                    class="field__input"
+                    type="number"
+                    name="price_markup_percent"
+                    step="0.01"
+                    min="-100"
+                    max="1000"
+                    value="<%= sync.price_markup_percent %>">
+                  <span class="input-suffix__unit">%</span>
+                </span>
+              </label>
+              <p class="settings__hint">
+                Added to every price on the way across. Leave at 0 to copy the
+                source price exactly.
+              </p>
+            </div>
+          </div>
+
+          <footer class="settings__foot">
+            <!-- <p class="muted">
+              Saving queues every product on this connection so the change
+              reaches the store on the next sync.
+            </p> -->
+            <button class="btn btn--primary save-settings" type="button">
+              Save
+            </button>
+          </footer>
+
+        </section>
+      <% }); %>
+
+    <% } %>
+
+  </main>
+
+  <script>
+    (function () {
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      Array.prototype.slice.call(document.querySelectorAll(".settings"))
+        .forEach(function (panel) {
+          panel.querySelector(".save-settings")
+            .addEventListener("click", async function (event) {
+              var button = event.currentTarget;
+
+              pageError.hidden = true;
+              button.disabled = true;
+              button.textContent = "Saving…";
+
+              // Every checkbox by name, including the disabled ones: a
+              // disabled input is still a saved preference, and dropping it
+              // would silently turn the field off.
+              var settings = {};
+
+              Array.prototype.slice.call(panel.querySelectorAll('input[type="checkbox"]'))
+                .forEach(function (input) {
+                  settings[input.name] = input.checked;
+                });
+
+              settings.price_markup_percent = Number(
+                panel.querySelector('input[name="price_markup_percent"]').value
+              );
+
+              // The screen has no master variants switch any more, so say so
+              // rather than leaning on the model's "a missing key means on"
+              // rule to decide it.
+              settings.variants = true;
+
+              try {
+                var response = await window.appFetch("/settings", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    connection_id: panel.dataset.connection,
+                    settings: settings
+                  })
+                });
+
+                var data = await response.json().catch(function () { return {}; });
+
+                if (!response.ok) throw new Error(data.error || "Request failed");
+
+                window.appToast(
+                  "Saved. " + data.queued + " product(s) queued for the next sync."
+                );
+              } catch (err) {
+                fail(err.message);
+              } finally {
+                button.disabled = false;
+                button.textContent = "Save";
+              }
+            });
+
+        });
+    })();
+  </script>
+
+</body>
+
+</html>

@@ -8,6 +8,9 @@ const { query, pool, withTransaction } = require("../config/db");
 const storeModel = require("./storeModel");
 const { parseJson, toJsonColumn } = require("./helpers");
 
+// Field-level sync settings live in their own table -- see
+// models/syncSettingsModel.js. What stays here is the connection's own
+// behaviour, not what a product carries.
 const DEFAULT_SETTINGS = {
   price_markup_percent: 0,
   sync_images: true,
@@ -122,6 +125,24 @@ async function listAutoSyncForSource(sourceStoreId) {
         AND dst.is_active = 1
       ORDER BY c.id`,
     [sourceStoreId]
+  );
+  return rows.map(hydrate);
+}
+
+/**
+ * Every connection the background push should service.
+ *
+ * Both stores have to still be installed: pushing into a shop that uninstalled
+ * the app would only produce 401s until its refresh token expires.
+ */
+async function listAutoSync() {
+  const rows = await query(
+    `${SELECT_WITH_STORES}
+      WHERE c.status = 'active'
+        AND c.sync_mode = 'auto'
+        AND src.is_active = 1
+        AND dst.is_active = 1
+      ORDER BY c.id`
   );
   return rows.map(hydrate);
 }
@@ -302,7 +323,10 @@ class InvalidConnectionError extends Error {
 async function createConnection({
   sourceStoreId,
   destinationStoreId,
-  syncMode = "manual",
+  // 'auto' by default: once a destination accepts a product, later changes to
+  // it should follow without anyone pressing a button. Acceptance is still
+  // required first -- auto only ever pushes what was already agreed to.
+  syncMode = "auto",
   settings = {},
 }) {
   if (Number(sourceStoreId) === Number(destinationStoreId)) {
@@ -419,6 +443,7 @@ module.exports = {
   listForStore,
   listForDestination,
   listForSource,
+  listAutoSync,
   listSourceOptionsFor,
   listAutoSyncForSource,
   connectSources,
