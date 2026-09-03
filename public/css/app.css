@@ -466,38 +466,43 @@ body {
   font-size: 0.85rem;
 }
 
-/* ---------------- connected stores ---------------- */
+/* ---------------- modal ----------------
+   A native <dialog>: the backdrop, Esc-to-close and the focus trap come with
+   it, so there is no overlay div and no key handling to get wrong. */
 
-.stores {
-  margin: 0;
+.modal {
+  width: min(30rem, calc(100vw - 2rem));
   padding: 0;
-  list-style: none;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
-.stores__row {
+.modal::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.modal__body {
+  padding: 1.25rem 1.4rem 1.4rem;
+}
+
+.modal__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.modal__copy {
+  margin: 0 0 1.1rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.modal__actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  padding: 0.7rem 0;
-  border-top: 1px solid var(--line-soft);
-}
-
-.stores__row:first-child {
-  border-top: 0;
-}
-
-.stores__name {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.stores__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.2rem;
 }
 
 .pill {
@@ -692,6 +697,113 @@ body {
 
 /* ---------------- dashboard cards ---------------- */
 
+/* ---------------- plans ---------------- */
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  min-height: 20rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.plan--popular {
+  border-color: #8bb8f0;
+  box-shadow: 0 0 0 1px #8bb8f0;
+}
+
+.plan__heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.plan h2 {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.plan__badge {
+  padding: 0.18rem 0.55rem;
+  color: #fff;
+  background: #3b82f6;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.plan__price {
+  margin: 1rem 0 1.25rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.plan__price span {
+  color: var(--brand);
+  font-size: 2.4rem;
+  font-weight: 400;
+}
+
+.plan__features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0 0 1.35rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.plan__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.plan__features li::before {
+  content: "✓";
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.1rem;
+  flex: 0 0 auto;
+  color: #fff;
+  background: #3b82f6;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.plan__select,
+.plan__current {
+  width: 100%;
+  margin-top: auto;
+}
+
+.plan__current {
+  display: block;
+  padding: 0.45rem 0.65rem;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
@@ -743,7 +855,10 @@ body {
 
 @media (min-width: 56rem) {
   .charts {
-    grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+    /* One third of the three-card row above, after accounting for its two
+       gaps, keeps Sync status exactly aligned with Total synced products. */
+    grid-template-columns: minmax(0, calc(33.333333% - 0.6rem)) minmax(0, 1fr);
+    gap: 0.9rem;
     /* Keep the dashboard's two side-by-side panels level even when one
        contains more chart or store content than the other. */
     align-items: stretch;
@@ -1204,6 +1319,12 @@ body {
   color: var(--danger);
   background: var(--danger-bg);
   border-color: var(--danger-line);
+}
+
+.notice--success {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 
 /* ---------------- next-steps list ---------------- */

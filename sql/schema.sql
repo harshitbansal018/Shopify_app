@@ -231,3 +231,61 @@ CREATE TABLE IF NOT EXISTS `customers` (
   KEY `idx_customers_shopify_id` (`shopify_customer_id`),
   CONSTRAINT `fk_customer_store` FOREIGN KEY (`store_id`) REFERENCES `stores` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Subscription data. `user_id` is the destination store id in this app.
+CREATE TABLE IF NOT EXISTS `dummy_shops` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `shop_name` varchar(255) DEFAULT NULL,
+  `status` tinyint(1) DEFAULT 1,
+  PRIMARY KEY (`id`),
+  KEY `idx_dummy_shop_active` (`shop_name`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `plans` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `price` double NOT NULL DEFAULT 0,
+  `is_popular` tinyint(1) DEFAULT 0,
+  `is_active` tinyint(1) DEFAULT 1,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `days` int(11) DEFAULT NULL,
+  `status` tinyint(1) DEFAULT 0,
+  `plan_for` int(11) DEFAULT NULL,
+  `plan_content` longtext DEFAULT NULL,
+  `max_limit` int(11) DEFAULT NULL,
+  `mail_customization` tinyint(1) DEFAULT 0,
+  `template_limit` int(11) DEFAULT NULL,
+  `template_customization` tinyint(1) DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_plan_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `user_memberships` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `membership_id` int(11) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `status` tinyint(1) DEFAULT 1,
+  PRIMARY KEY (`id`),
+  KEY `idx_membership_store` (`user_id`,`status`),
+  CONSTRAINT `fk_membership_store` FOREIGN KEY (`user_id`) REFERENCES `stores` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_membership_plan` FOREIGN KEY (`membership_id`) REFERENCES `plans` (`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `membership_payments` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `membership_id` int(11) DEFAULT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `api_client_id` bigint(20) DEFAULT NULL,
+  `charge_id` bigint(20) DEFAULT NULL,
+  `date_add` datetime DEFAULT NULL,
+  `date_update` datetime DEFAULT NULL,
+  `status` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_payment_membership` (`membership_id`),
+  KEY `idx_payment_store` (`user_id`),
+  CONSTRAINT `fk_payment_membership` FOREIGN KEY (`membership_id`) REFERENCES `user_memberships` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_payment_store` FOREIGN KEY (`user_id`) REFERENCES `stores` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

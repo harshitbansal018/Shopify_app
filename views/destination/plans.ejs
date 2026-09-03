@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Plans</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+    <header class="shell__header">
+      <div>
+        <h1>Plans</h1>
+        <p class="shell__sub">Choose the product sync plan for this destination store.</p>
+      </div>
+    </header>
+
+    <% if (billingResult === "success") { %>
+      <p class="notice notice--success">Your Shopify subscription is active.</p>
+    <% } else if (billingResult === "pending") { %>
+      <p class="notice notice--warn">Shopify is still confirming this subscription. Refresh this page shortly.</p>
+    <% } else if (billingResult === "failed") { %>
+      <p class="notice notice--error">The Shopify subscription was not approved. Your current plan was not changed.</p>
+    <% } %>
+
+    <% if (billingTest) { %>
+      <p class="notice notice--warn">Billing test mode is on. Shopify will show a test charge and will not collect money.</p>
+    <% } %>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <section class="plans" aria-label="Product sync plans">
+      <% plans.forEach(function (plan) { %>
+        <%
+          var active = currentPlan && Number(currentPlan.membership_id) === Number(plan.id);
+          var features = [];
+          try { features = JSON.parse(plan.plan_content || "[]"); } catch (error) { features = []; }
+        %>
+        <article class="plan <%= plan.is_popular ? "plan--popular" : "" %>">
+          <div class="plan__heading">
+            <h2><%= plan.name %> Plan</h2>
+            <% if (plan.is_popular) { %><span class="plan__badge">Popular</span><% } %>
+          </div>
+          <p class="plan__price"><span>$<%= Number(plan.price).toFixed(0) %></span> / month</p>
+          <ul class="plan__features">
+            <% features.forEach(function (feature) { %><li><%= feature %></li><% }); %>
+          </ul>
+          <% if (active) { %>
+            <span class="plan__current">Current plan</span>
+          <% } else { %>
+            <button class="btn <%= plan.price ? "btn--primary" : "" %> plan__select" type="button" data-plan="<%= plan.id %>">
+              <%= plan.price ? "Buy " + plan.name : "Get started" %>
+            </button>
+          <% } %>
+        </article>
+      <% }); %>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var pageError = document.getElementById("page-error");
+      Array.prototype.slice.call(document.querySelectorAll(".plan__select"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            pageError.hidden = true;
+            button.disabled = true;
+            var label = button.textContent;
+            button.textContent = "Updating…";
+            try {
+              var response = await window.appFetch("/plans/select", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ plan_id: Number(button.dataset.plan) })
+              });
+              var data = await response.json().catch(function () { return {}; });
+              if (!response.ok) throw new Error(data.error || "Could not update your plan.");
+
+              if (data.confirmation_url) {
+                window.top.location.href = data.confirmation_url;
+                return;
+              }
+
+              window.appToast("Plan updated.");
+              window.appNavigate("/plans");
+            } catch (error) {
+              pageError.textContent = error.message;
+              pageError.hidden = false;
+              button.disabled = false;
+              button.textContent = label;
+            }
+          });
+        });
+    })();
+  </script>
+</body>
+</html>

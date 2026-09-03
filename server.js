@@ -13,6 +13,7 @@ const storeRoutes = require("./routes/storeRoute");
 const productRoutes = require("./routes/productRoute");
 const orderRoutes = require("./routes/orderRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
+const planRoutes = require("./routes/planRoute");
 const webhookRoutes = require("./routes/webhookRoute");
 
 const REQUIRED_ENV = [
@@ -70,6 +71,7 @@ app.use(noStore);
 app.use("/api/auth", authRoutes);
 app.use("/products", productRoutes);
 app.use("/orders", orderRoutes);
+app.use("/plans", planRoutes);
 app.use("/", storeRoutes);
 app.use("/", dashboardRoutes);
 
