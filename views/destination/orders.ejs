@@ -17,27 +17,23 @@
       <div>
         <h1>Orders</h1>
         <p class="shell__sub">
-          Your sales, and the order each one raised at the store that supplied it.
+          Your sales, and what the store that supplies each one has done about it.
         </p>
       </div>
     </header>
 
-    <p class="notice notice--error" id="page-error" hidden></p>
-
-    <%# One table, two tabs, the same shape as Products. "Waiting" holds
-        anything not yet placed at the source -- queued, failed or skipped --
-        because from the merchant's side those are all "the source has not got
-        this yet". %>
+    <%# The same two tabs the SOURCE sees, so the two merchants are looking at
+        the same list in the same order when they talk to each other. %>
     <nav class="tabs">
       <button
-        class="tabs__tab<%= tab === "placed" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="placed">
-        Placed (<%= counts.placed %>)
+        class="tabs__tab<%= tab === "open" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="open">
+        Awaiting supplier (<%= counts.open %>)
       </button>
       <button
-        class="tabs__tab<%= tab === "waiting" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="waiting">
-        Waiting (<%= counts.waiting %>)
+        class="tabs__tab<%= tab === "done" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="done">
+        Done (<%= counts.done %>)
       </button>
     </nav>
 
@@ -56,7 +52,9 @@
                 own money comes first. %>
             <th>Customer paid</th>
             <th>Source price</th>
-            <th>Status</th>
+            <%# The source is the store that actually ships, so this column is
+                the only real answer to "where is my order?". %>
+            <th>Supplier status</th>
             <th></th>
           </tr>
         </thead>
@@ -66,8 +64,8 @@
               <td class="table__empty" colspan="7">
                 <strong>No records found</strong>
                 <span>
-                  <% if (tab === "waiting") { %>
-                    Nothing is waiting. Every sale so far has reached its source store.
+                  <% if (tab === "open") { %>
+                    Nothing outstanding. Every sale so far has been dealt with.
                   <% } else { %>
                     No orders yet. When someone buys a synced product from your store,
                     the order raised at its source store appears here.
@@ -79,26 +77,11 @@
           <% orders.forEach(function (order) { %>
             <tr>
               <td>
-                <span class="media__body">
-                  <span class="table__title">
-                    <a class="record-link"
-                       href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
-                       target="_blank" rel="noopener noreferrer">
-                      <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
-                    </a>
-                  </span>
-                  <span class="muted">
-                    <% if (order.source_order_name && order.source_shopify_order_id) { %>
-                      &rarr;
-                      <a class="record-link"
-                         href="<%= shopifyAdminUrl(order.source_shop_domain, 'orders', order.source_shopify_order_id) %>"
-                         target="_blank" rel="noopener noreferrer"><%= order.source_order_name %> at the source</a>
-                    <% } else if (order.source_order_name) { %>
-                      &rarr; <%= order.source_order_name %> at the source
-                    <% } else { %>
-                      not yet placed
-                    <% } %>
-                  </span>
+                <%# Just the sale's own number. The source order number is on
+                    the detail page; here the Status column already says
+                    whether it has been placed. %>
+                <span class="table__title">
+                  <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
                 </span>
               </td>
               <td>
@@ -118,11 +101,37 @@
               </td>
 
               <td>
-                <span class="pill pill--<%= order.sync_status %>">
-                  <%= order.sync_status === "synced" ? "placed" : order.sync_status %>
-                </span>
-                <% if (order.error_message && order.sync_status !== "synced") { %>
-                  <span class="muted"><%= order.error_message %></span>
+                <%# Set by the source on its own Orders screen. This app never
+                    writes it, and never touches your Shopify order -- except
+                    to cancel it, which is the one case below. %>
+                <% if (order.source_fulfillment_status === "cancelled") { %>
+                  <span class="pill pill--failed">supplier cannot supply</span>
+                  <% if (order.cancel_status === "cancelled") { %>
+                    <span class="muted">your order was cancelled and refunded</span>
+                  <% } else if (order.cancel_status === "failed") { %>
+                    <span class="muted"><%= order.cancel_error %></span>
+                  <% } else { %>
+                    <span class="muted">cancelling your order&hellip;</span>
+                  <% } %>
+                <% } else if (order.source_fulfillment_status === "fulfilled") { %>
+                  <span class="pill pill--synced">fulfilled</span>
+                  <% order.source_tracking.forEach(function (parcel) { %>
+                    <span class="muted">
+                      <%= parcel.company || "tracking" %>: <%= parcel.number %>
+                    </span>
+                  <% }); %>
+                  <%# Your own Shopify order is fulfilled to match. Until that
+                      lands, saying nothing would look like it never will. %>
+                  <% if (order.fulfil_status === "failed") { %>
+                    <span class="muted">
+                      your Shopify order could not be updated &mdash;
+                      <%= order.fulfil_error %>
+                    </span>
+                  <% } else if (order.fulfil_status !== "fulfilled") { %>
+                    <span class="muted">updating your Shopify order&hellip;</span>
+                  <% } %>
+                <% } else { %>
+                  <span class="pill pill--pending">awaiting supplier</span>
                 <% } %>
               </td>
 
@@ -133,16 +142,8 @@
                   data-order="<%= order.id %>">
                   View
                 </button>
-                <%# Only the destination retries: its sale is what raised this
-                    order, so it is the end that owns the decision. %>
-                <% if (order.sync_status !== "synced") { %>
-                  <button
-                    class="btn btn--small btn--primary retry-order"
-                    type="button"
-                    data-order="<%= order.id %>">
-                    Place now
-                  </button>
-                <% } %>
+                <%# No action here: the supplier does the work, and cancelling
+                    is theirs to decide. This screen is a window onto it. %>
               </td>
             </tr>
           <% }); %>
@@ -155,13 +156,6 @@
 
   <script>
     (function () {
-      var pageError = document.getElementById("page-error");
-
-      function fail(message) {
-        pageError.textContent = message;
-        pageError.hidden = false;
-      }
-
       /* ---------------- tabs ---------------- */
 
       Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
@@ -182,34 +176,6 @@
           });
         });
 
-      /* ---------------- place a waiting order now ---------------- */
-
-      Array.prototype.slice.call(document.querySelectorAll(".retry-order"))
-        .forEach(function (button) {
-          button.addEventListener("click", async function () {
-            pageError.hidden = true;
-            button.disabled = true;
-            button.textContent = "Placing…";
-
-            try {
-              var response = await window.appFetch(
-                "/orders/" + button.dataset.order + "/retry",
-                { method: "POST" }
-              );
-
-              var data = await response.json().catch(function () { return {}; });
-
-              if (!response.ok) throw new Error(data.error || "Request failed");
-
-              window.appToast("Placed at the source as " + data.name);
-              window.appNavigate("/orders?tab=placed");
-            } catch (err) {
-              button.disabled = false;
-              button.textContent = "Place now";
-              fail(err.message);
-            }
-          });
-        });
     })();
   </script>
 

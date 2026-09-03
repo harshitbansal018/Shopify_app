@@ -182,6 +182,31 @@ async function sourceLinesForOrder(orderId) {
 }
 
 /**
+ * The DESTINATION's own line ids for one source's share of an order.
+ *
+ * The mirror of sourceLinesForOrder: that one answers "what does the source
+ * ship", this one answers "which of the buyer's lines does that cover". It is
+ * what lets the buyer's Shopify order be fulfilled for this supplier's lines
+ * and nobody else's -- fulfilling the whole order because one supplier shipped
+ * would tell the shopper everything is on its way when most of it is not.
+ */
+async function destinationLinesForConnection(orderId, connectionId) {
+  return query(
+    `SELECT li.id AS line_id,
+            li.shopify_line_item_id,
+            li.quantity,
+            li.sku,
+            li.title
+       FROM order_line_items li
+       JOIN mapping_variant_products mvp ON mvp.id = li.mapped_variant_id
+       JOIN product_mappings pm          ON pm.id = mvp.product_mapping_id
+      WHERE li.order_id = ? AND pm.connection_id = ?
+      ORDER BY li.id`,
+    [orderId, connectionId]
+  );
+}
+
+/**
  * Units sold per variant, resolved back through the mapping to the source
  * variant it came from -- which is what "how much of MY product sold" means
  * when the same product is synced to several stores.
@@ -303,6 +328,7 @@ module.exports = {
   listForOrder,
   countForOrder,
   sourceLinesForOrder,
+  destinationLinesForConnection,
   unitsSoldByVariant,
   topSellingProducts,
   topSellingSourceProducts,

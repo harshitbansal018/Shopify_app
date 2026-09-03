@@ -44,12 +44,12 @@ const TOPICS = [
   // source stores supplied the goods; a source order is only cached.
   //
   // Registered on every store for the same reason as the product topics: the
-  // role is not known at install time. Both need read_orders, and placing the
-  // order at the source needs write_orders.
+  // role is not known at install time. Both need read_orders; cancelling a
+  // destination order on the source's say-so needs write_orders.
   { topic: "ORDERS_CREATE", path: "/webhooks/orders/create" },
-  // Keeps financial_status, fulfillment_status and the lines current. It never
-  // raises a source order -- claim() is keyed on the sale, so a redelivery
-  // updates the row it already has instead of placing a second order.
+  // Keeps the totals and the lines current, and is how an order EDITED to add
+  // a synced product reaches its source. claim() is keyed on the sale, so a
+  // redelivery updates the row it already has.
   { topic: "ORDERS_UPDATED", path: "/webhooks/orders/updated" },
 ];
 

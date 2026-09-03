@@ -17,26 +17,27 @@
       <div>
         <h1>Orders</h1>
         <p class="shell__sub">
-          Sales in the destination stores you supply, raised here at your own prices.
+          Sales in the destination stores you supply, at your own prices. You
+          work them here &mdash; nothing is added to your own Shopify admin, and
+          what you mark reaches the buyer's store.
         </p>
       </div>
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
 
-    <%# One table, two tabs, the same shape as Products. "Waiting" holds
-        anything not yet placed here -- queued, failed or skipped -- because
-        from the merchant's side those are all "this store has not got it yet". %>
+    <%# One table, two tabs. "Open" is what still needs picking and shipping;
+        "Done" holds everything settled, cancelled included. %>
     <nav class="tabs">
       <button
-        class="tabs__tab<%= tab === "placed" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="placed">
-        Placed (<%= counts.placed %>)
+        class="tabs__tab<%= tab === "open" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="open">
+        To fulfil (<%= counts.open %>)
       </button>
       <button
-        class="tabs__tab<%= tab === "waiting" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="waiting">
-        Waiting (<%= counts.waiting %>)
+        class="tabs__tab<%= tab === "done" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="done">
+        Done (<%= counts.done %>)
       </button>
     </nav>
 
@@ -49,12 +50,12 @@
           <tr>
             <th>Order</th>
             <th>Sold by</th>
+            <th>Ship to</th>
             <th>Items</th>
-            <%# Both totals, side by side: the difference between them IS the
-                markup, and this is the only screen that shows it. This store's
-                own money comes first. %>
+            <%# Only this store's own money. What the shopper paid is the
+                destination's retail price, and their margin is not this
+                store's business. %>
             <th>You are owed</th>
-            <th>Customer paid</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -65,11 +66,10 @@
               <td class="table__empty" colspan="7">
                 <strong>No records found</strong>
                 <span>
-                  <% if (tab === "waiting") { %>
-                    Nothing is waiting. Every sale so far has reached this store.
+                  <% if (tab === "open") { %>
+                    Nothing to fulfil. Everything you have been sent is done.
                   <% } else { %>
-                    No orders yet. When a destination store sells one of your synced
-                    products, the matching order appears here.
+                    Nothing finished yet. Check the To fulfil tab.
                   <% } %>
                 </span>
               </td>
@@ -78,31 +78,35 @@
           <% orders.forEach(function (order) { %>
             <tr>
               <td>
-                <span class="media__body">
-                  <span class="table__title">
-                    <a class="record-link"
-                       href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
-                       target="_blank" rel="noopener noreferrer">
-                      <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
-                    </a>
-                  </span>
-                  <span class="muted">
-                    <% if (order.source_order_name && order.source_shopify_order_id) { %>
-                      &rarr;
-                      <a class="record-link"
-                         href="<%= shopifyAdminUrl(order.source_shop_domain, 'orders', order.source_shopify_order_id) %>"
-                         target="_blank" rel="noopener noreferrer"><%= order.source_order_name %> here</a>
-                    <% } else if (order.source_order_name) { %>
-                      &rarr; <%= order.source_order_name %> here
-                    <% } else { %>
-                      not yet placed
-                    <% } %>
-                  </span>
+                <span class="table__title">
+                  <%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %>
                 </span>
               </td>
               <td>
                 <%= order.destination_store_name || order.destination_shop_domain %>
               </td>
+
+              <td>
+                <%# The address is what makes this actionable at a glance --
+                    without it the row is a number and no job. %>
+                <% if (order.shipping_address) { %>
+                  <span class="media__body">
+                    <span>
+                      <%= [order.shipping_address.first_name,
+                           order.shipping_address.last_name]
+                          .filter(Boolean).join(" ") || "—" %>
+                    </span>
+                    <span class="muted">
+                      <%= [order.shipping_address.city,
+                           order.shipping_address.country_code]
+                          .filter(Boolean).join(", ") %>
+                    </span>
+                  </span>
+                <% } else { %>
+                  <span class="muted">no address</span>
+                <% } %>
+              </td>
+
               <td><%= order.line_count %></td>
 
               <td>
@@ -111,29 +115,71 @@
                   <%= order.source_total === null ? "—" : order.source_total.toFixed(2) %>
                 </strong>
               </td>
-              <td class="muted">
-                <%= order.currency %>
-                <%= order.destination_total === null ? "—" : order.destination_total.toFixed(2) %>
-              </td>
 
               <td>
-                <span class="pill pill--<%= order.sync_status %>">
-                  <%= order.sync_status === "synced" ? "placed" : order.sync_status %>
-                </span>
-                <% if (order.error_message && order.sync_status !== "synced") { %>
-                  <span class="muted"><%= order.error_message %></span>
+                <% if (order.source_fulfillment_status === "cancelled") { %>
+                  <span class="pill pill--failed">cancelled</span>
+                  <%# Says out loud that cancelling here refunded a real
+                      shopper, which is not obvious from this side. %>
+                  <span class="muted">
+                    <% if (order.cancel_status === "cancelled") { %>
+                      the buyer was refunded
+                    <% } else if (order.cancel_status === "failed") { %>
+                      <%= order.cancel_error %>
+                    <% } else { %>
+                      refunding the buyer&hellip;
+                    <% } %>
+                  </span>
+                <% } else if (order.source_fulfillment_status === "fulfilled") { %>
+                  <span class="pill pill--synced">fulfilled</span>
+                  <% order.source_tracking.forEach(function (parcel) { %>
+                    <span class="muted">
+                      <%= parcel.company || "tracking" %>: <%= parcel.number %>
+                    </span>
+                  <% }); %>
+                  <%# Whether the BUYER has been told, which is a different
+                      thing from whether this store says it shipped. %>
+                  <% if (order.fulfil_status === "failed") { %>
+                    <span class="muted"><%= order.fulfil_error %></span>
+                  <% } else if (order.fulfil_status !== "fulfilled") { %>
+                    <span class="muted">telling the buyer&hellip;</span>
+                  <% } %>
+                <% } else { %>
+                  <span class="pill pill--pending">to fulfil</span>
                 <% } %>
               </td>
 
               <td class="table__actions">
-                <%# No "Place now" here: the destination's sale is what raised
-                    this order, so it is the end that owns the retry. %>
                 <button
                   class="btn btn--small view-order"
                   type="button"
                   data-order="<%= order.id %>">
                   View
                 </button>
+                <%# Only the two moves that matter from a list. Tracking is
+                    typed on the order's own page, where there is room for it. %>
+                <% if (order.source_fulfillment_status === "unfulfilled") { %>
+                  <button
+                    class="btn btn--small btn--primary fulfil-order"
+                    type="button"
+                    data-order="<%= order.id %>">
+                    Mark fulfilled
+                  </button>
+                  <button
+                    class="btn btn--small btn--danger cancel-order"
+                    type="button"
+                    data-order="<%= order.id %>"
+                    data-name="<%= order.destination_order_name %>">
+                    Cannot supply
+                  </button>
+                <% } else if (order.source_fulfillment_status === "fulfilled") { %>
+                  <button
+                    class="btn btn--small unfulfil-order"
+                    type="button"
+                    data-order="<%= order.id %>">
+                    Undo
+                  </button>
+                <% } %>
               </td>
             </tr>
           <% }); %>
@@ -146,6 +192,40 @@
 
   <script>
     (function () {
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      async function act(button, url, body, busyLabel) {
+        pageError.hidden = true;
+
+        var label = button.textContent;
+        button.disabled = true;
+        button.textContent = busyLabel;
+
+        try {
+          var response = await window.appFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body || {})
+          });
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) throw new Error(data.error || "Request failed");
+
+          return data;
+        } catch (err) {
+          button.disabled = false;
+          button.textContent = label;
+          fail(err.message);
+          return null;
+        }
+      }
+
       /* ---------------- tabs ---------------- */
 
       Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
@@ -163,6 +243,70 @@
         .forEach(function (button) {
           button.addEventListener("click", function () {
             window.appNavigate("/orders/" + button.dataset.order);
+          });
+        });
+
+      /* ---------------- fulfil ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".fulfil-order"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            // No tracking from the list: this is the "shipped, nothing to
+            // track" case. The order's own page is where a number is typed.
+            var data = await act(
+              button,
+              "/orders/" + button.dataset.order + "/fulfil",
+              { tracking: [] },
+              "Saving…"
+            );
+
+            if (!data) return;
+
+            window.appToast("Marked fulfilled");
+            window.appNavigate("/orders?tab=done");
+          });
+        });
+
+      Array.prototype.slice.call(document.querySelectorAll(".unfulfil-order"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            var data = await act(
+              button,
+              "/orders/" + button.dataset.order + "/unfulfil",
+              {},
+              "Saving…"
+            );
+
+            if (!data) return;
+
+            window.appToast("Back on the To fulfil list");
+            window.appNavigate("/orders");
+          });
+        });
+
+      /* ---------------- cannot supply ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".cancel-order"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            // This one spends someone else's money, so it says so plainly.
+            if (!window.confirm(
+              "Cannot supply " + button.dataset.name + "?\n\n" +
+              "The buyer's order will be CANCELLED and REFUNDED, and they will " +
+              "be emailed about it. This cannot be undone."
+            )) return;
+
+            var data = await act(
+              button,
+              "/orders/" + button.dataset.order + "/cancel",
+              {},
+              "Cancelling…"
+            );
+
+            if (!data) return;
+
+            window.appToast("The buyer's order is being cancelled");
+            window.appNavigate("/orders?tab=done");
           });
         });
     })();

@@ -28,13 +28,19 @@
           <strong><%= order.source_store_name || order.source_shop_domain %></strong>
         </p>
       </div>
-      <span class="pill pill--<%= order.sync_status %>">
-        <%= order.sync_status === "synced" ? "placed" : order.sync_status %>
+      <span class="pill pill--<%=
+        order.source_fulfillment_status === "fulfilled" ? "synced"
+        : order.source_fulfillment_status === "cancelled" ? "failed" : "pending" %>">
+        <%= order.source_fulfillment_status === "unfulfilled"
+            ? "awaiting supplier" : order.source_fulfillment_status %>
       </span>
     </header>
 
-    <% if (order.sync_status !== "synced" && order.error_message) { %>
-      <p class="notice notice--error"><%= order.error_message %></p>
+    <% if (order.cancel_status === "failed" && order.cancel_error) { %>
+      <p class="notice notice--error">
+        The supplier cannot supply this, but your order could not be cancelled
+        automatically &mdash; <%= order.cancel_error %>
+      </p>
     <% } %>
 
     <section class="panel">
@@ -137,20 +143,6 @@
           </dd>
         </div>
         <div class="facts__row">
-          <dt>Order at source</dt>
-          <dd>
-            <%# Named only once the source has accepted it; until then this row
-                is the honest answer to "where is my order?". %>
-            <% if (order.source_order_name && order.source_shopify_order_id) { %>
-              <a class="record-link"
-                 href="<%= shopifyAdminUrl(order.source_shop_domain, 'orders', order.source_shopify_order_id) %>"
-                 target="_blank" rel="noopener noreferrer"><%= order.source_order_name %></a>
-            <% } else { %>
-              not placed yet
-            <% } %>
-          </dd>
-        </div>
-        <div class="facts__row">
           <dt>Payment</dt>
           <dd><%= order.financial_status || "—" %></dd>
         </div>
@@ -158,10 +150,65 @@
           <dt>Fulfillment</dt>
           <dd><%= order.fulfillment_status || "unfulfilled" %></dd>
         </div>
+
+        <%# What the supplier has done. They set it on their own Orders screen
+            in this app; nothing here touches your Shopify order, except the
+            cancellation below. %>
+        <div class="facts__row">
+          <dt>Supplier</dt>
+          <dd>
+            <% if (order.source_cancelled_at) { %>
+              cancelled<%= order.source_cancel_reason ? ` (${order.source_cancel_reason})` : "" %>
+            <% } else { %>
+              <%= order.source_fulfillment_status || "unfulfilled" %>
+              <% if (order.source_status_at) { %>
+                <span class="muted">
+                  as of <%= new Date(order.source_status_at).toISOString().slice(0, 16).replace("T", " ") %> UTC
+                </span>
+              <% } %>
+            <% } %>
+          </dd>
+        </div>
+
+        <% if (order.source_tracking.length) { %>
+          <div class="facts__row">
+            <dt>Tracking</dt>
+            <dd>
+              <%# One row per parcel: an order can ship in several boxes, and
+                  the shopper needs every number, not the first one. %>
+              <% order.source_tracking.forEach(function (parcel) { %>
+                <div>
+                  <%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong>
+                  <% if (parcel.url) { %>
+                    <a class="link" href="<%= parcel.url %>" target="_blank" rel="noopener">track</a>
+                  <% } %>
+                </div>
+              <% }); %>
+            </dd>
+          </div>
+        <% } %>
+
+        <% if (order.source_cancelled_at) { %>
+          <div class="facts__row">
+            <dt>Your order</dt>
+            <dd>
+              <%# The one thing the source can do that reaches into this store.
+                  It is spelled out because it moves the shopper's money. %>
+              <% if (order.cancel_status === "cancelled") { %>
+                cancelled and refunded, because the source cancelled theirs
+              <% } else if (order.cancel_status === "failed") { %>
+                could not be cancelled &mdash; <%= order.cancel_error %>
+              <% } else { %>
+                being cancelled and refunded&hellip;
+              <% } %>
+            </dd>
+          </div>
+        <% } %>
+
         <% if (order.cancelled_at) { %>
           <div class="facts__row">
-            <dt>Cancelled</dt>
-            <%# Cancelling the sale does NOT cancel the order at the source.
+            <dt>Cancelled here</dt>
+            <%# Cancelling YOUR sale does NOT cancel the order at the source.
                 That needs a decision about refunds, so it is left to a human. %>
             <dd>yes &mdash; the source order was not cancelled automatically</dd>
           </div>

@@ -150,16 +150,14 @@ exports.productsDelete = async (req, res) => {
  * A sale happened.
  *
  * In a DESTINATION store this is the whole point of the app's order side: the
- * shopper bought a product that belongs to a source store, so that source
- * needs an order of its own -- at its own prices, not the marked-up ones.
+ * shopper bought a product that belongs to a source store, so that source has
+ * a job to do -- and is owed its own price for it, not the marked-up one.
  *
- * As everywhere else here, nothing calls Shopify. The order is cached, the
- * work is queued into order_mappings, and services/orderSync.js places it on
- * the next background round.
+ * The job is recorded in order_mappings and worked from the source's Orders
+ * screen here. Nothing is written to the source's Shopify admin.
  *
- * In a SOURCE store the order is cached and nothing else happens. That is what
- * stops a loop: the order this app places at the source fires orders/create
- * right back at us, and forwarding it again would be endless.
+ * A SOURCE store firing this is its own unrelated trade. The order is cached
+ * and nothing else happens.
  */
 exports.ordersCreate = async (req, res) => {
   res.status(200).send("OK");
@@ -199,13 +197,15 @@ exports.ordersCreate = async (req, res) => {
 /**
  * The order changed: paid, fulfilled, cancelled, edited.
  *
- * Only the cache is refreshed. The source order is deliberately NOT re-placed
- * -- claim() is keyed on (connection, destination order), so a row that has
- * already been pushed keeps its 'synced' status and stays out of the queue.
+ * The cache is refreshed and the sale re-recorded, which is how an order
+ * EDITED to add a synced product still reaches its source. claim() is keyed on
+ * (connection, destination order), so this updates the row that exists rather
+ * than making a second one -- and it never touches the fulfilment state, so a
+ * sale the source has already shipped does not go back to looking outstanding.
  *
- * Cancelling the matching source order when the destination one is cancelled
- * is a real gap, and a deliberate one: it needs its own decision about refunds
- * and restocking rather than being smuggled in here.
+ * A destination cancelling its own sale is deliberately not passed on. The
+ * source has no order to cancel, and telling it to stop is a decision for that
+ * merchant rather than something to smuggle in here.
  */
 exports.ordersUpdated = async (req, res) => {
   res.status(200).send("OK");
@@ -222,10 +222,14 @@ exports.ordersUpdated = async (req, res) => {
 
     const order = await orderSync.cacheOrder(store.id, payload);
 
-    if (!order || store.store_type !== "destination") return;
+    if (!order) return;
 
-    // An order edited to ADD a synced product still needs forwarding, and this
-    // is the only webhook that says so. An order already pushed is untouched.
+    if (store.store_type !== "destination") return;
+
+    // An order edited to ADD a synced product still needs recording, and this
+    // is the only webhook that says so. A sale already recorded keeps whatever
+    // the source has since done with it -- claim() refreshes the totals but
+    // never the fulfilment state.
     await orderSync.queueForSources(store.id, order);
   } catch (err) {
     console.error("orders/updated processing failed:", err.message);
