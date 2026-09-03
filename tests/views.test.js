@@ -79,32 +79,63 @@ const STORE_ROW = {
       destination_shopify_product_id: 9001,
     }];
 
-    // SOURCE: the plain store summary. Its own work is on Products.
-    await expectRenders(
-      "source sees the store summary",
-      "source/dashboard",
-      { ...BASE, store: STORE_ROW, stats: null },
-      ["Demo Store", "demo.myshopify.com", "Dashboard"]
-    );
+    const source = (stats) =>
+      render("source/dashboard", { ...BASE, store: STORE_ROW, stats });
 
-    // A freshly installed shop can be missing most of these.
-    await expectRenders(
-      "renders with sparse store details",
-      "source/dashboard",
-      {
-        ...BASE,
-        store: {
-          id: 1,
-          shop_domain: "demo.myshopify.com",
-          store_name: null,
-          store_type: "source",
-          currency: null,
-          api_version: "2025-01",
+    const sourceBusy = await source({
+      cards: { staged: 10, shared: 8, unshared: 2, stores: 2 },
+      byDestination: [
+        {
+          domain: "retail.myshopify.com", name: "Retail",
+          status: "active", active: true, synced: 6, unsynced: 1,
         },
-        stats: null,
-      },
-      ["—"] // falls back to an em-dash rather than printing "null"
-    );
+        {
+          domain: "outlet.myshopify.com", name: "Outlet",
+          status: "paused", active: false, synced: 2, unsynced: 1,
+        },
+      ],
+      topSellers: [{
+        title: "Blue Shirt",
+        source_shopify_product_id: "7001",
+        stores: 2,
+        orders: 3,
+        units: 5,
+        revenue: 62.5,
+        currency: "USD",
+      }],
+    });
+
+    check("source gets the full dashboard",
+        sourceBusy.includes("Products staged") &&
+        sourceBusy.includes("Sharing status") &&
+        sourceBusy.includes("Connected destination stores") &&
+        sourceBusy.includes("Top selling products"));
+    check("source cards use real product counts",
+      sourceBusy.includes(">10<") && sourceBusy.includes(">8<") &&
+        sourceBusy.includes("2 ready on"));
+    check("source lists every destination",
+      sourceBusy.includes("retail.myshopify.com") &&
+        sourceBusy.includes("outlet.myshopify.com"));
+    check("source flags a paused destination",
+      sourceBusy.includes("pill--paused") && sourceBusy.includes(">paused<"));
+    check("source top products use order totals",
+      sourceBusy.includes("Blue Shirt") && sourceBusy.includes("USD 62.50") &&
+        sourceBusy.includes(">5<"));
+    check("source top products open Shopify",
+      sourceBusy.includes("https://demo.myshopify.com/admin/products/7001"));
+
+    const sourceEmpty = await source({
+      cards: { staged: 0, shared: 0, unshared: 0, stores: 0 },
+      byDestination: [],
+      topSellers: [],
+    });
+
+    check("an empty source explains its next steps",
+        sourceEmpty.includes("No products staged yet") &&
+        sourceEmpty.includes("No destination store is connected") &&
+        sourceEmpty.includes("None of your synced products have sold yet"));
+    check("an empty source has no invalid chart values",
+      !sourceEmpty.includes("NaN") && !sourceEmpty.includes("stroke-dasharray"));
 
     const destination = (stats) =>
       render("destination/dashboard", {
