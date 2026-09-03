@@ -2,14 +2,14 @@
 <html lang="en">
 
 <head>
-  <%- include("partials/head") %>
+  <%- include("../partials/head") %>
   <title>Orders</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 
 <body>
 
-  <%- include("partials/nav") %>
+  <%- include("../partials/nav") %>
 
   <main class="shell shell--wide">
 
@@ -17,9 +17,7 @@
       <div>
         <h1>Orders</h1>
         <p class="shell__sub">
-          <%= isSource
-              ? "Sales in the destination stores you supply, raised here at your own prices."
-              : "Your sales, and the order each one raised at the store that supplied it." %>
+          Your sales, and the order each one raised at the store that supplied it.
         </p>
       </div>
     </header>
@@ -45,38 +43,39 @@
 
     <section class="panel">
 
-      <% if (!orders.length) { %>
-
-        <p class="panel__copy">
-          <% if (tab === "waiting") { %>
-            Nothing is waiting. Every sale so far has reached
-            <%= isSource ? "this store" : "its source store" %>.
-          <% } else if (isSource) { %>
-            No orders yet. When a destination store sells one of your synced
-            products, the matching order appears here.
-          <% } else { %>
-            No orders yet. When someone buys a synced product from your store,
-            the order raised at its source store appears here.
-          <% } %>
-        </p>
-
-      <% } else { %>
-
+      <%# The table keeps its columns when it is empty and says so in a row of
+          its own: a table that vanishes reads as a screen that failed. %>
       <table class="table">
         <thead>
           <tr>
             <th>Order</th>
-            <th><%= isSource ? "Sold by" : "Source store" %></th>
+            <th>Source store</th>
             <th>Items</th>
             <%# Both totals, side by side: the difference between them IS the
-                markup, and this is the only screen that shows it. %>
-            <th><%= isSource ? "You are owed" : "Customer paid" %></th>
-            <th><%= isSource ? "Customer paid" : "Source price" %></th>
+                markup, and this is the only screen that shows it. This store's
+                own money comes first. %>
+            <th>Customer paid</th>
+            <th>Source price</th>
             <th>Status</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
+          <% if (!orders.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="7">
+                <strong>No records found</strong>
+                <span>
+                  <% if (tab === "waiting") { %>
+                    Nothing is waiting. Every sale so far has reached its source store.
+                  <% } else { %>
+                    No orders yet. When someone buys a synced product from your store,
+                    the order raised at its source store appears here.
+                  <% } %>
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
           <% orders.forEach(function (order) { %>
             <tr>
               <td>
@@ -86,7 +85,7 @@
                   </span>
                   <span class="muted">
                     <% if (order.source_order_name) { %>
-                      &rarr; <%= order.source_order_name %> here
+                      &rarr; <%= order.source_order_name %> at the source
                     <% } else { %>
                       not yet placed
                     <% } %>
@@ -94,27 +93,19 @@
                 </span>
               </td>
               <td>
-                <%= isSource
-                    ? (order.destination_store_name || order.destination_shop_domain)
-                    : (order.source_store_name || order.source_shop_domain) %>
+                <%= order.source_store_name || order.source_shop_domain %>
               </td>
               <td><%= order.line_count %></td>
 
-              <%# The source's column comes first for a source, so each store
-                  reads its own money in the same place. %>
               <td>
                 <strong>
                   <%= order.currency %>
-                  <%= (isSource ? order.source_total : order.destination_total) === null
-                      ? "—"
-                      : (isSource ? order.source_total : order.destination_total).toFixed(2) %>
+                  <%= order.destination_total === null ? "—" : order.destination_total.toFixed(2) %>
                 </strong>
               </td>
               <td class="muted">
                 <%= order.currency %>
-                <%= (isSource ? order.destination_total : order.source_total) === null
-                    ? "—"
-                    : (isSource ? order.destination_total : order.source_total).toFixed(2) %>
+                <%= order.source_total === null ? "—" : order.source_total.toFixed(2) %>
               </td>
 
               <td>
@@ -135,7 +126,7 @@
                 </button>
                 <%# Only the destination retries: its sale is what raised this
                     order, so it is the end that owns the decision. %>
-                <% if (!isSource && order.sync_status !== "synced") { %>
+                <% if (order.sync_status !== "synced") { %>
                   <button
                     class="btn btn--small btn--primary retry-order"
                     type="button"
@@ -146,9 +137,9 @@
               </td>
             </tr>
           <% }); %>
+          <% } %>
         </tbody>
       </table>
-      <% } %>
     </section>
 
   </main>

@@ -632,6 +632,26 @@ body {
   margin-left: 0.3rem;
 }
 
+/* An empty table keeps its columns and says so in one full-width row. A table
+   that vanishes and is replaced by a paragraph reads as a broken screen. */
+.table__empty {
+  padding: 1.5rem 0.8rem !important;
+  text-align: center;
+  color: var(--muted);
+}
+
+.table__empty strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Nothing to point at, so nothing lights up under the cursor. */
+.table tbody tr.row--empty:hover {
+  background: transparent;
+}
+
 /* Narrow screens: let the table scroll rather than the whole page. */
 .panel > .table {
   display: table;

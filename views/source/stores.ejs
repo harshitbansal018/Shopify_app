@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Stores</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Stores</h1>
+        <!-- <p class="shell__sub">
+          <%= store.store_name || shop %> &mdash;
+          <strong><%= store.store_type %></strong> store
+        </p> -->
+      </div>
+    </header>
+
+    <%# A source hands its code out; the destination types it in. %>
+    <section class="panel">
+      <h2 class="panel__title">Your pairing code</h2>
+      <p class="panel__copy">
+        Give this code to the destination store. Someone with admin access
+        there enters it to start receiving your products. It lasts
+        <%= codeTtlMinutes %> minutes and can only be used once.
+      </p>
+
+      <div class="code" id="code-box" <%= pairingCode ? "" : "hidden" %>>
+        <span class="code__value" id="code-value"><%= pairingCode ? pairingCode.code : "" %></span>
+        <span class="code__meta" id="code-meta">
+          <% if (pairingCode && pairingCode.expiresAt) { %>
+            expires <%= new Date(pairingCode.expiresAt).toISOString().slice(11, 16) %> UTC
+          <% } %>
+        </span>
+      </div>
+
+      <p class="notice notice--error" id="code-error" hidden></p>
+
+      <div class="shell__actions">
+        <button class="btn btn--primary" type="button" id="code-button">
+          <%= pairingCode ? "Generate a new code" : "Generate a code" %>
+        </button>
+      </div>
+
+      <% if (pairingCode) { %>
+        <p class="muted">Generating a new code makes the one above stop working.</p>
+      <% } %>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Destination stores receiving from here</h2>
+
+      <% if (!connections.length) { %>
+        <p class="panel__copy">
+          No destination store is connected yet. Share your code above.
+        </p>
+      <% } else { %>
+        <ul class="stores">
+          <% connections.forEach(function (connection) { %>
+            <% var other = connection.destination; %>
+            <li class="stores__row">
+              <span class="stores__name">
+                <%= other.store_name || other.shop_domain %>
+                <% if (other.store_name) { %>
+                  <span class="muted"><%= other.shop_domain %></span>
+                <% } %>
+              </span>
+              <span class="stores__meta">
+                <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+                <span class="muted"><%= connection.sync_mode %> sync</span>
+              </span>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      var codeButton = document.getElementById("code-button");
+      var codeBox = document.getElementById("code-box");
+      var codeValue = document.getElementById("code-value");
+      var codeMeta = document.getElementById("code-meta");
+      var codeError = document.getElementById("code-error");
+
+      function showError(message) {
+        codeError.textContent = message;
+        codeError.hidden = false;
+      }
+
+      /* ---------------- generate a code ---------------- */
+      codeButton.addEventListener("click", async function () {
+        codeError.hidden = true;
+        codeButton.disabled = true;
+
+        try {
+          var response = await window.appFetch("/stores/code", { method: "POST" });
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) {
+            return showError(data.error || "Could not generate a code.");
+          }
+
+          codeValue.textContent = data.code;
+          codeMeta.textContent = "expires " +
+            new Date(data.expiresAt).toISOString().slice(11, 16) + " UTC";
+          codeBox.hidden = false;
+          codeButton.textContent = "Generate a new code";
+          window.appToast("New pairing code ready");
+        } catch (err) {
+          showError("Could not reach the app. Try again.");
+        } finally {
+          codeButton.disabled = false;
+        }
+      });
+    })();
+  </script>
+
+</body>
+
+</html>

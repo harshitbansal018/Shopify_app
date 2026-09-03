@@ -2,14 +2,14 @@
 <html lang="en">
 
 <head>
-  <%- include("partials/head") %>
+  <%- include("../partials/head") %>
   <title><%= product.title %></title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 
 <body>
 
-  <%- include("partials/nav") %>
+  <%- include("../partials/nav") %>
 
   <main class="shell">
 
@@ -27,7 +27,7 @@
 
     <p class="notice notice--error" id="page-error" hidden></p>
 
-    <!-- <% if (isSource && !isShared) { %>
+    <!-- <% if (!isShared) { %>
       <p class="notice notice--warn">
         These are the variants you picked when you added this product. Nothing
         has been offered to a destination store yet &mdash; tick the product on
@@ -36,38 +36,17 @@
       </p>
     <% } %> -->
 
-    <% if (!isSource && !isShared) { %>
-      <p class="notice notice--warn">
-        These variants are on offer from
-        <strong><%= product.source_store_name || product.source_shop_domain %></strong>.
-        Nothing has been added to your store yet &mdash; tick the product on the
-        Products list and press <strong>Sync selected</strong>.
-      </p>
-    <% } %>
-
     <!-- <section class="panel">
-      <h2 class="panel__title">
-        <%= isSource
-            ? "Variants going to your destination stores"
-            : "Variants in this product" %>
-      </h2> -->
+      <h2 class="panel__title">Variants going to your destination stores</h2> -->
 
-      <% if (!shared.length) { %>
-        <p class="panel__copy">
-          <%= isSource
-              ? "No variants are being shared."
-              : "This product has no variants yet." %>
-        </p>
-      <% } else { %>
+        <!-- <p class="panel__copy">
+          Delete a variant to stop sending it. The destination store keeps
+          whatever it already has until the next sync, which then removes it
+          there too.
+        </p> -->
 
-        <!-- <% if (isSource) { %>
-          <p class="panel__copy">
-            Delete a variant to stop sending it. The destination store keeps
-            whatever it already has until the next sync, which then removes it
-            there too.
-          </p>
-        <% } %> -->
-
+        <%# The table keeps its columns when it is empty and says so in a row
+            of its own: a table that vanishes reads as a screen that failed. %>
         <table class="table">
           <thead>
             <tr>
@@ -75,22 +54,27 @@
               <th>SKU</th>
               <th>Price</th>
               <th>Stock</th>
-              <%# The destination cannot change what it was sent, so it gets no
-                  actions column at all rather than a row of dead buttons. %>
-              <% if (isSource) { %><th></th><% } %>
+              <th></th>
             </tr>
           </thead>
           <tbody>
+            <% if (!shared.length) { %>
+              <tr class="row--empty">
+                <td class="table__empty" colspan="5">
+                  <strong>No records found</strong>
+                  <span>No variants are being shared.</span>
+                </td>
+              </tr>
+            <% } else { %>
             <% shared.forEach(function (variant) { %>
               <tr>
                 <td>
                   <span class="table__title">
                     <%# Shopify calls a single default variant "Default Title",
-                        which means nothing to a merchant. The destination's
-                        rows carry the name under source_title. %>
+                        which means nothing to a merchant. %>
                     <% var name = [variant.option1, variant.option2, variant.option3]
                          .filter(Boolean).join(" / ")
-                       || variant.title || variant.source_title; %>
+                       || variant.title; %>
                     <%= name === "Default Title" ? "Single variant" : (name || "—") %>
                   </span>
                 </td>
@@ -102,35 +86,33 @@
                   <% } %>
                 </td>
                 <td>
-                  <% var price = variant.price === null || variant.price === undefined
-                       ? variant.source_price : variant.price; %>
-                  <%= price === null || price === undefined ? "—" : price %>
+                  <%= variant.price === null || variant.price === undefined ? "—" : variant.price %>
                 </td>
                 <td class="muted">
                   <%= variant.inventory_quantity === null ||
                       variant.inventory_quantity === undefined
                       ? "—" : variant.inventory_quantity %>
                 </td>
-                <% if (isSource) { %>
-                  <td class="table__actions">
-                    <button
-                      class="btn btn--small btn--danger remove-variant"
-                      type="button"
-                      data-variant="<%= variant.id %>"
-                      <%= shared.length === 1 ? "disabled" : "" %>
-                      title="<%= shared.length === 1
-                          ? 'The last shared variant cannot be removed. Delete the product instead.'
-                          : 'Stop sharing this variant' %>">
-                      Delete
-                    </button>
-                  </td>
-                <% } %>
+                <td class="table__actions">
+                  <button
+                    class="btn btn--small btn--danger remove-variant"
+                    type="button"
+                    data-variant="<%= variant.id %>"
+                    <%= shared.length === 1 ? "disabled" : "" %>
+                    title="<%= shared.length === 1
+                        ? 'The last shared variant cannot be removed. Delete the product instead.'
+                        : 'Stop sharing this variant' %>">
+                    Delete
+                  </button>
+                </td>
               </tr>
             <% }); %>
+            <% } %>
           </tbody>
         </table>
 
-        <% if (isSource && shared.length < totalVariants) { %>
+        <%# Nothing shared at all is its own state, handled in the row above. %>
+        <% if (shared.length && shared.length < totalVariants) { %>
           <p class="muted">
             <%= totalVariants - shared.length %> variant<%= totalVariants - shared.length === 1 ? " is" : "s are" %> not being shared.
           </p>
@@ -141,7 +123,6 @@
           </div>
         <% } %>
 
-      <% } %>
     </section>
 
   </main>

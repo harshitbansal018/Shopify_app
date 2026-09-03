@@ -43,11 +43,11 @@ exports.getOrders = async (req, res) => {
     const waiting = rows.filter((row) => row.sync_status !== "synced");
     const tab = requested || (waiting.length ? "waiting" : "placed");
 
-    res.render("orders", {
+    // Each role has its own screen under views/<role>/.
+    res.render(`${req.store.store_type}/orders`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isSource,
       tab,
       counts: { placed: placed.length, waiting: waiting.length },
       orders: (tab === "placed" ? placed : waiting).map((row) => ({
@@ -83,11 +83,10 @@ exports.getOrder = async (req, res) => {
       await orderLineItemModel.sourceLinesForOrder(mapping.destination_order_id)
     ).filter((line) => line.connection_id === mapping.connection_id);
 
-    res.render("orderDetail", {
+    res.render(`${req.store.store_type}/orderDetail`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      isSource: req.store.store_type === "source",
       order: {
         ...mapping,
         destination_total: toNumber(mapping.destination_total),
