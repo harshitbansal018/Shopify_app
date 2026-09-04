@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title><%= connection.source.store_name || connection.source.shop_domain %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <%
+      var money = function (value) {
+        var amount = Number(value);
+        return currency + " " + (isFinite(amount) ? amount : 0).toFixed(2);
+      };
+
+      /* A supplier connected but with nothing sold has no summary row of its
+         own; zeros are the honest reading of that, not an error. */
+      var owed = supplier ? supplier.outstanding : 0;
+    %>
+
+    <header class="shell__header">
+      <div>
+        <button class="link link--back" type="button" id="back">&larr; Payouts</button>
+        <h1><%= connection.source.store_name || connection.source.shop_domain %></h1>
+        <p class="shell__sub">
+          <%= connection.source.shop_domain %>
+        </p>
+      </div>
+      <% if (owed > 0) { %>
+        <span class="pill pill--pending"><%= money(owed) %> to pay</span>
+      <% } else if (owed < 0) { %>
+        <span class="pill"><%= money(Math.abs(owed)) %> in credit</span>
+      <% } else { %>
+        <span class="pill pill--synced">settled</span>
+      <% } %>
+    </header>
+
+    <p class="notice notice--error" id="page-error" hidden></p>
+
+    <section class="cards">
+      <div class="card">
+        <span class="card__label">Revenue</span>
+        <span class="card__value"><%= money(supplier ? supplier.revenue : 0) %></span>
+        <span class="card__note"><%= supplier ? supplier.fulfilled_orders : 0 %> fulfilled order(s)</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Cost</span>
+        <span class="card__value"><%= money(supplier ? supplier.cost : 0) %></span>
+        <span class="card__note">
+          <% if (supplier && supplier.upcoming_cost > 0) { %>
+            <%= money(supplier.upcoming_cost) %> more once shipped
+          <% } else { %>
+            Nothing else pending
+          <% } %>
+        </span>
+      </div>
+      <div class="card">
+        <span class="card__label">Profit</span>
+        <span class="card__value <%= supplier && supplier.profit < 0 ? "card__value--warn" : "" %>">
+          <%= money(supplier ? supplier.profit : 0) %>
+        </span>
+        <span class="card__note">Your margin on their goods</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Paid so far</span>
+        <span class="card__value"><%= money(supplier ? supplier.paid : 0) %></span>
+        <span class="card__note">
+          <%= supplier ? supplier.payments : 0 %> payment(s) recorded
+        </span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Record a payment</h2>
+      <p class="panel__copy">
+        <%# Said plainly, because a screen full of money can easily be mistaken
+            for one that moves it. %>
+        This is your own record of a transfer you have already made. No money
+        moves through this app, and the supplier is not notified.
+      </p>
+
+      <div class="toggles">
+        <label class="field">
+          <span class="field__label">Amount<% if (currency) { %> (<%= currency %>)<% } %></span>
+          <input class="field__input" type="number" id="amount"
+                 step="0.01" min="0.01"
+                 value="<%= owed > 0 ? owed.toFixed(2) : "" %>"
+                 placeholder="0.00" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field__label">Paid on</span>
+          <%# Defaults to today, but editable: a merchant recording Friday's
+              transfer on Monday needs Friday. %>
+          <input class="field__input" type="date" id="paid-at"
+                 value="<%= new Date().toISOString().slice(0, 10) %>">
+        </label>
+        <label class="field">
+          <span class="field__label">Reference</span>
+          <input class="field__input" type="text" id="reference"
+                 placeholder="Bank reference or invoice no." autocomplete="off">
+        </label>
+      </div>
+
+      <div class="shell__actions">
+        <button class="btn btn--primary" type="button" id="record">
+          Record payment
+        </button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Payments</h2>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Paid on</th>
+            <th>Amount</th>
+            <th>Reference</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!payments.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="4">
+                <strong>No records found</strong>
+                <span>Nothing has been paid to this supplier yet.</span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% payments.forEach(function (payment) { %>
+            <tr>
+              <td>
+                <%= new Date(payment.paid_at).toISOString().slice(0, 10) %>
+              </td>
+              <td><strong><%= money(payment.amount) %></strong></td>
+              <td class="muted"><%= payment.reference || "—" %></td>
+              <td class="table__actions">
+                <button
+                  class="btn btn--small btn--danger delete-payment"
+                  type="button"
+                  data-payment="<%= payment.id %>"
+                  data-amount="<%= money(payment.amount) %>">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Sales behind this</h2>
+      <p class="panel__copy">
+        <%# "You owe 459.00" is not something a merchant can check or dispute
+            without seeing which sales it came from. %>
+        Only fulfilled orders count towards what you owe.
+      </p>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Status</th>
+            <th>Customer paid</th>
+            <th>Supplier price</th>
+            <th>Profit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!orders.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="5">
+                <strong>No records found</strong>
+                <span>Nothing has been sold from this supplier yet.</span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% orders.forEach(function (order) { %>
+            <%
+              var counts = order.source_fulfillment_status === "fulfilled";
+              var profit = order.destination_total - order.source_total;
+            %>
+            <tr class="<%= counts ? "" : "row--placeholder" %>">
+              <td>
+                <span class="table__title">
+                  <%= order.destination_order_name
+                      || ("#" + order.destination_shopify_order_id) %>
+                </span>
+              </td>
+              <td>
+                <span class="pill pill--<%=
+                  order.source_fulfillment_status === "fulfilled" ? "synced"
+                  : order.source_fulfillment_status === "cancelled" ? "failed"
+                  : "pending" %>">
+                  <%= order.source_fulfillment_status === "unfulfilled"
+                      ? "awaiting supplier" : order.source_fulfillment_status %>
+                </span>
+              </td>
+              <td><%= money(order.destination_total) %></td>
+              <td class="muted"><%= money(order.source_total) %></td>
+              <td>
+                <% if (counts) { %>
+                  <strong><%= money(profit) %></strong>
+                <% } else { %>
+                  <%# Dimmed above, and dashed here: it has earned nothing yet. %>
+                  <span class="muted">—</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      var pageError = document.getElementById("page-error");
+
+      function fail(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      document.getElementById("back").addEventListener("click", function () {
+        window.appNavigate("/payouts");
+      });
+
+      async function post(button, path, body, busyLabel) {
+        pageError.hidden = true;
+
+        var label = button.textContent;
+        button.disabled = true;
+        button.textContent = busyLabel;
+
+        try {
+          var response = await window.appFetch(
+            "/payouts/<%= connection.id %>/" + path,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body || {})
+            }
+          );
+
+          var data = await response.json().catch(function () { return {}; });
+
+          if (!response.ok) throw new Error(data.error || "Request failed");
+
+          return data;
+        } catch (err) {
+          button.disabled = false;
+          button.textContent = label;
+          fail(err.message);
+          return null;
+        }
+      }
+
+      var record = document.getElementById("record");
+
+      record.addEventListener("click", async function () {
+        var amount = Number(document.getElementById("amount").value);
+
+        // Checked here as well as on the server: a merchant should be told
+        // straight away rather than after a round trip.
+        if (!isFinite(amount) || amount <= 0) {
+          return fail("Enter the amount you paid.");
+        }
+
+        var data = await post(record, "payments", {
+          amount: amount,
+          paid_at: document.getElementById("paid-at").value || null,
+          reference: document.getElementById("reference").value.trim() || null
+        }, "Saving…");
+
+        if (!data) return;
+
+        window.appToast("Payment recorded");
+        window.appNavigate("/payouts/<%= connection.id %>");
+      });
+
+      Array.prototype.slice.call(document.querySelectorAll(".delete-payment"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            if (!window.confirm(
+              "Delete the " + button.dataset.amount + " payment?\n\n" +
+              "It goes back onto what you owe this supplier."
+            )) return;
+
+            var data = await post(
+              button,
+              "payments/" + button.dataset.payment + "/delete",
+              {},
+              "Deleting…"
+            );
+
+            if (!data) return;
+
+            window.appToast("Payment deleted");
+            window.appNavigate("/payouts/<%= connection.id %>");
+          });
+        });
+    })();
+  </script>
+
+</body>
+
+</html>

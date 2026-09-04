@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title><%= connection.destination.store_name || connection.destination.shop_domain %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <%
+      var money = function (value) {
+        var amount = Number(value);
+        return currency + " " + (isFinite(amount) ? amount : 0).toFixed(2);
+      };
+
+      /* A buyer connected but with nothing sold has no summary row of its own;
+         zeros are the honest reading of that, not an error. */
+      var owed = buyer ? buyer.outstanding : 0;
+    %>
+
+    <header class="shell__header">
+      <div>
+        <button class="link link--back" type="button" id="back">&larr; Payouts</button>
+        <h1><%= connection.destination.store_name || connection.destination.shop_domain %></h1>
+        <p class="shell__sub"><%= connection.destination.shop_domain %></p>
+      </div>
+      <% if (owed > 0) { %>
+        <span class="pill pill--pending"><%= money(owed) %> owed to you</span>
+      <% } else if (owed < 0) { %>
+        <span class="pill"><%= money(Math.abs(owed)) %> paid ahead</span>
+      <% } else { %>
+        <span class="pill pill--synced">settled</span>
+      <% } %>
+    </header>
+
+    <section class="cards">
+      <div class="card">
+        <span class="card__label">Earned</span>
+        <span class="card__value"><%= money(buyer ? buyer.earned : 0) %></span>
+        <span class="card__note">
+          <%= buyer ? buyer.fulfilled_orders : 0 %> order(s) you fulfilled
+        </span>
+      </div>
+      <div class="card">
+        <span class="card__label">Received</span>
+        <span class="card__value"><%= money(buyer ? buyer.received : 0) %></span>
+        <span class="card__note">
+          <%= buyer ? buyer.payments : 0 %> payment(s) recorded
+        </span>
+      </div>
+      <div class="card">
+        <span class="card__label">Still owed</span>
+        <span class="card__value <%= owed > 0 ? "card__value--warn" : "" %>">
+          <%= money(owed) %>
+        </span>
+        <span class="card__note">Earned minus received</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Not yet shipped</span>
+        <span class="card__value"><%= money(buyer ? buyer.upcoming : 0) %></span>
+        <span class="card__note">
+          <%= buyer ? buyer.open_orders : 0 %> order(s) still to fulfil
+        </span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Payments received</h2>
+      <p class="panel__copy">
+        <%# Said plainly, because a list of payments on a money screen is
+            easily read as money this app has handled. %>
+        What
+        <%= connection.destination.store_name || connection.destination.shop_domain %>
+        has recorded paying you. No money moves through this app, so check these
+        against your own account before treating them as received.
+      </p>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Paid on</th>
+            <th>Amount</th>
+            <th>Reference</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!payments.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="3">
+                <strong>No records found</strong>
+                <span>This buyer has not recorded any payment yet.</span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% payments.forEach(function (payment) { %>
+            <tr>
+              <td><%= new Date(payment.paid_at).toISOString().slice(0, 10) %></td>
+              <td><strong><%= money(payment.amount) %></strong></td>
+              <td class="muted"><%= payment.reference || "—" %></td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel__title">Orders behind this</h2>
+      <p class="panel__copy">
+        <%# "You are owed 459.00" is not something a merchant can check or
+            dispute without seeing which orders it came from. %>
+        Only orders you have marked fulfilled count towards what you are owed.
+      </p>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Status</th>
+            <th>Items</th>
+            <th>You are owed</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!orders.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="4">
+                <strong>No records found</strong>
+                <span>This buyer has not sold any of your products yet.</span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% orders.forEach(function (order) { %>
+            <% var counts = order.source_fulfillment_status === "fulfilled"; %>
+            <tr class="<%= counts ? "" : "row--placeholder" %>">
+              <td>
+                <span class="table__title">
+                  <%= order.destination_order_name
+                      || ("#" + order.destination_shopify_order_id) %>
+                </span>
+              </td>
+              <td>
+                <span class="pill pill--<%=
+                  order.source_fulfillment_status === "fulfilled" ? "synced"
+                  : order.source_fulfillment_status === "cancelled" ? "failed"
+                  : "pending" %>">
+                  <%= order.source_fulfillment_status === "unfulfilled"
+                      ? "to fulfil" : order.source_fulfillment_status %>
+                </span>
+              </td>
+              <td><%= order.line_count %></td>
+              <td>
+                <% if (counts) { %>
+                  <strong><%= money(order.source_total) %></strong>
+                <% } else { %>
+                  <%# Dimmed above, and dashed here: it has earned nothing yet. %>
+                  <span class="muted"><%= money(order.source_total) %> once shipped</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script>
+    document.getElementById("back").addEventListener("click", function () {
+      window.appNavigate("/payouts");
+    });
+  </script>
+
+</body>
+
+</html>
