@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Payouts</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Payouts</h1>
+        <p class="shell__sub">
+          What you have earned on your suppliers' products, and what you still
+          owe them for it.
+        </p>
+      </div>
+    </header>
+
+    <%
+      /* One place to format money, so a null never reaches the page as "NaN"
+         and every figure carries its currency. */
+      var money = function (value) {
+        var amount = Number(value);
+        return currency + " " + (isFinite(amount) ? amount : 0).toFixed(2);
+      };
+    %>
+
+    <section class="cards">
+      <div class="card">
+        <span class="card__label">Revenue</span>
+        <span class="card__value"><%= money(totals.revenue) %></span>
+        <span class="card__note">What shoppers paid for supplied goods</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Cost</span>
+        <span class="card__value"><%= money(totals.cost) %></span>
+        <span class="card__note">What your suppliers charge for them</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Profit</span>
+        <%# The whole point of the screen, so it is the one figure that gets a
+            colour: green when you are ahead, red when the markup is negative. %>
+        <span class="card__value <%= totals.profit < 0 ? "card__value--warn" : "" %>">
+          <%= money(totals.profit) %>
+        </span>
+        <span class="card__note">Revenue minus cost</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Still to pay</span>
+        <span class="card__value <%= totals.outstanding > 0 ? "card__value--warn" : "" %>">
+          <%= money(totals.outstanding) %>
+        </span>
+        <span class="card__note">
+          <% if (totals.upcoming > 0) { %>
+            <%= money(totals.upcoming) %> more once shipped
+          <% } else { %>
+            Nothing else pending
+          <% } %>
+        </span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">By supplier</h2>
+        <span class="muted">
+          <%# The rule behind every figure, said once rather than guessed at. %>
+          Counted when the supplier marks a sale fulfilled &mdash; cancelled
+          orders were refunded and are not owed.
+        </span>
+      </div>
+
+      <%# The table keeps its columns when it is empty and says so in a row of
+          its own: a table that vanishes reads as a screen that failed. %>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Supplier</th>
+            <th>Orders</th>
+            <th>Revenue</th>
+            <th>Cost</th>
+            <th>Profit</th>
+            <th>Paid</th>
+            <th>Still to pay</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!suppliers.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="8">
+                <strong>No records found</strong>
+                <span>
+                  No supplier is connected yet. Enter a source store's pairing
+                  code on <s-link href="/stores">Stores</s-link> to start.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% suppliers.forEach(function (supplier) { %>
+            <tr>
+              <td>
+                <span class="media__body">
+                  <span class="table__title">
+                    <%= supplier.source_store_name || supplier.source_shop_domain %>
+                  </span>
+                  <% if (supplier.source_store_name) { %>
+                    <span class="muted"><%= supplier.source_shop_domain %></span>
+                  <% } %>
+                </span>
+              </td>
+
+              <td>
+                <%= supplier.fulfilled_orders %>
+                <% if (supplier.open_orders) { %>
+                  <%# Not owed yet, but coming. Worth seeing before it lands. %>
+                  <span class="muted"><%= supplier.open_orders %> open</span>
+                <% } %>
+              </td>
+
+              <td><%= money(supplier.revenue) %></td>
+              <td class="muted"><%= money(supplier.cost) %></td>
+              <td>
+                <strong class="<%= supplier.profit < 0 ? "stock--none" : "" %>">
+                  <%= money(supplier.profit) %>
+                </strong>
+              </td>
+              <td class="muted"><%= money(supplier.paid) %></td>
+
+              <td>
+                <% if (supplier.outstanding > 0) { %>
+                  <strong><%= money(supplier.outstanding) %></strong>
+                <% } else if (supplier.outstanding < 0) { %>
+                  <%# Paid more than is owed. Not an error -- a merchant who
+                      settled a round figure up front is in credit. %>
+                  <span class="muted">
+                    <%= money(Math.abs(supplier.outstanding)) %> in credit
+                  </span>
+                <% } else { %>
+                  <span class="pill pill--synced">settled</span>
+                <% } %>
+              </td>
+
+              <td class="table__actions">
+                <button
+                  class="btn btn--small view-supplier"
+                  type="button"
+                  data-connection="<%= supplier.connection_id %>">
+                  View
+                </button>
+              </td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      Array.prototype.slice.call(document.querySelectorAll(".view-supplier"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            window.appNavigate("/payouts/" + button.dataset.connection);
+          });
+        });
+    })();
+  </script>
+
+</body>
+
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Payouts</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell shell--wide">
+
+    <header class="shell__header">
+      <div>
+        <h1>Payouts</h1>
+        <p class="shell__sub">
+          What you have earned supplying your buyers, and what they still owe
+          you for it.
+        </p>
+      </div>
+    </header>
+
+    <%
+      /* One place to format money, so a null never reaches the page as "NaN"
+         and every figure carries its currency. */
+      var money = function (value) {
+        var amount = Number(value);
+        return currency + " " + (isFinite(amount) ? amount : 0).toFixed(2);
+      };
+    %>
+
+    <section class="cards">
+      <div class="card">
+        <span class="card__label">Earned</span>
+        <span class="card__value"><%= money(totals.earned) %></span>
+        <span class="card__note">Your prices, on orders you have fulfilled</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Received</span>
+        <span class="card__value"><%= money(totals.received) %></span>
+        <span class="card__note">Payments your buyers have recorded</span>
+      </div>
+      <div class="card">
+        <span class="card__label">Still owed</span>
+        <%# The number a supplier actually opens this screen for. %>
+        <span class="card__value <%= totals.outstanding > 0 ? "card__value--warn" : "" %>">
+          <%= money(totals.outstanding) %>
+        </span>
+        <span class="card__note">
+          <% if (totals.outstanding < 0) { %>
+            You have been paid ahead
+          <% } else { %>
+            Across every buyer
+          <% } %>
+        </span>
+      </div>
+      <div class="card">
+        <span class="card__label">Not yet shipped</span>
+        <span class="card__value"><%= money(totals.upcoming) %></span>
+        <span class="card__note">Earned once you fulfil it</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">By buyer</h2>
+        <span class="muted">
+          <%# The rule behind every figure, said once rather than guessed at. %>
+          Counted when you mark a sale fulfilled &mdash; cancelled orders were
+          refunded to the shopper and are not owed.
+        </span>
+      </div>
+
+      <%# The table keeps its columns when it is empty and says so in a row of
+          its own: a table that vanishes reads as a screen that failed. %>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Buyer</th>
+            <th>Orders</th>
+            <th>Earned</th>
+            <th>Received</th>
+            <th>Still owed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!buyers.length) { %>
+            <tr class="row--empty">
+              <td class="table__empty" colspan="6">
+                <strong>No records found</strong>
+                <span>
+                  No buyer is connected yet. Share your pairing code from
+                  <s-link href="/stores">Stores</s-link> to start.
+                </span>
+              </td>
+            </tr>
+          <% } else { %>
+          <% buyers.forEach(function (buyer) { %>
+            <tr>
+              <td>
+                <span class="media__body">
+                  <span class="table__title">
+                    <%= buyer.destination_store_name || buyer.destination_shop_domain %>
+                  </span>
+                  <% if (buyer.destination_store_name) { %>
+                    <span class="muted"><%= buyer.destination_shop_domain %></span>
+                  <% } %>
+                </span>
+              </td>
+
+              <td>
+                <%= buyer.fulfilled_orders %>
+                <% if (buyer.open_orders) { %>
+                  <%# Work in hand, and money not earned yet. %>
+                  <span class="muted"><%= buyer.open_orders %> to fulfil</span>
+                <% } %>
+              </td>
+
+              <td><strong><%= money(buyer.earned) %></strong></td>
+              <td class="muted"><%= money(buyer.received) %></td>
+
+              <td>
+                <% if (buyer.outstanding > 0) { %>
+                  <strong><%= money(buyer.outstanding) %></strong>
+                <% } else if (buyer.outstanding < 0) { %>
+                  <%# Paid ahead. Saying so stops a supplier chasing money it
+                      has already had. %>
+                  <span class="muted">
+                    <%= money(Math.abs(buyer.outstanding)) %> paid ahead
+                  </span>
+                <% } else { %>
+                  <span class="pill pill--synced">settled</span>
+                <% } %>
+              </td>
+
+              <td class="table__actions">
+                <button
+                  class="btn btn--small view-buyer"
+                  type="button"
+                  data-connection="<%= buyer.connection_id %>">
+                  View
+                </button>
+              </td>
+            </tr>
+          <% }); %>
+          <% } %>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      Array.prototype.slice.call(document.querySelectorAll(".view-buyer"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            window.appNavigate("/payouts/" + button.dataset.connection);
+          });
+        });
+    })();
+  </script>
+
+</body>
+
+</html>

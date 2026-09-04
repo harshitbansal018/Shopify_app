@@ -736,7 +736,55 @@ const CREATE_SYNC_SETTINGS = `
 `;
 
 /* ------------------------------------------------------------------ */
-/* 11. order_mappings                                                  */
+/* 11. payouts                                                         */
+/* ------------------------------------------------------------------ */
+/*
+ * Money the DESTINATION has actually paid a source store.
+ *
+ * What is owed is not stored: it is derived, as the sum of source_total over
+ * the orders that source fulfilled. Storing a running balance as well would
+ * give two answers to one question, and the stored one would be the one that
+ * drifts.
+ *
+ * A payment is deliberately NOT allocated to particular orders. Merchants
+ * settle up in round amounts and at their own rhythm -- a transfer covering
+ * "everything up to Friday" is the normal case -- and forcing each payment to
+ * name its orders would be bookkeeping the app cannot do honestly. Outstanding
+ * is therefore fulfilled-total minus paid-total, per connection.
+ *
+ * This records what a merchant SAYS they paid. No money moves through this
+ * app, and nothing here is a receipt.
+ */
+const CREATE_PAYOUTS = `
+  CREATE TABLE IF NOT EXISTS payouts (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- DECIMAL, never FLOAT: this is money.
+    amount   DECIMAL(12,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT NULL,
+
+    -- The merchant's own handle on the transfer: a bank reference, an invoice
+    -- number, whatever they will recognise on a statement.
+    reference VARCHAR(255) DEFAULT NULL,
+    note      VARCHAR(512) DEFAULT NULL,
+
+    -- When the money moved, which is not when the row was written: a merchant
+    -- recording Friday's transfer on Monday needs Friday.
+    paid_at DATETIME NOT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    KEY idx_payouts_connection (connection_id, paid_at),
+
+    CONSTRAINT fk_payout_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id)
+        ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/* ------------------------------------------------------------------ */
+/* 12. order_mappings                                                  */
 /* ------------------------------------------------------------------ */
 /*
  * A sale in a destination store, and the order it became in the source store
@@ -949,6 +997,7 @@ async function runMigrations() {
   await addSourceOrderStatus();
   await dropOrderPushColumns();
   await dropSourceOrderSettings();
+  await query(CREATE_PAYOUTS);
 }
 
 /**

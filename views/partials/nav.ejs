@@ -15,6 +15,9 @@
       orders those sales raised here. %>
   <s-link href="/orders">Orders</s-link>
   <s-link href="/stores">Stores</s-link>
+  <%# Both roles, two screens: the destination sees what it owes and records
+      what it has paid, the source sees what it has earned and been paid. %>
+  <s-link href="/payouts">Payouts</s-link>
   <%# Destination only. A source has nothing to configure: it does not choose
       what it copies, and the orders it is sent are simply shown to it. %>
   <% if(typeof store!== 'undefined' && store && store.store_type==="destination" ) { %>

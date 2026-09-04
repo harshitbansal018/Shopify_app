@@ -1203,17 +1203,9 @@ const STORE_ROW = {
     const open = await orders("destination", "open", [ROW]);
 
     check("both tabs are shown with their counts",
-<<<<<<< HEAD
       open.includes("Awaiting supplier (1)") && open.includes("Done (1)"));
     check("the sale is named", open.includes("#2001"));
     check("and so is the store that supplies it", open.includes("Warehouse"));
-=======
-      waiting.includes("Placed (1)") && waiting.includes("Waiting (1)"));
-    check("the sale is named", waiting.includes("#2001"));
-    check("order numbers open the destination Shopify order",
-      waiting.includes("https://dst.myshopify.com/admin/orders/900001"));
-    check("and so is the store that supplied it", waiting.includes("Warehouse"));
->>>>>>> 7ba6bacf227fd7b64d955575e5bde21934ed409b
 
     // The two totals side by side ARE the feature: the gap is the markup.
     check("the destination sees what the shopper paid", open.includes("30.00"));
@@ -1397,6 +1389,280 @@ const STORE_ROW = {
     check("but drops the totals row",
       !emptyDetail.includes("Totals"),
       "totalling nothing would print 0.00 as though it were a real invoice");
+  }
+
+  console.log("\nPayouts");
+  {
+    const SUPPLIER = {
+      connection_id: 4,
+      source_store_id: 1,
+      source_shop_domain: "src.myshopify.com",
+      source_store_name: "Warehouse",
+      connection_status: "active",
+      currency: "USD",
+      // 125.00 taken, 100.00 owed, 40.00 already paid.
+      revenue: 125,
+      cost: 100,
+      profit: 25,
+      paid: 40,
+      payments: 1,
+      last_paid_at: "2026-09-02T00:00:00Z",
+      outstanding: 60,
+      fulfilled_orders: 1,
+      open_orders: 1,
+      cancelled_orders: 1,
+      upcoming_cost: 50,
+    };
+
+    const payouts = (suppliers, totals) =>
+      render("destination/payouts", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        suppliers,
+        totals: totals || {
+          revenue: 125, cost: 100, profit: 25,
+          paid: 40, outstanding: 60, upcoming: 50,
+        },
+        currency: "USD",
+      });
+
+    const list = await payouts([SUPPLIER]);
+
+    check("all four cards are shown",
+      (list.match(/class="card"/g) || []).length === 4);
+    check("the money is shown with its currency",
+      list.includes("USD 125.00") && list.includes("USD 100.00") &&
+        list.includes("USD 25.00"));
+    check("the supplier is named", list.includes("Warehouse"));
+    check("what is still owed is flagged",
+      /class="card__value card__value--warn"[\s\S]{0,40}USD 60\.00/.test(list),
+      "the one number the merchant has to act on");
+    check("and what is coming once shipped",
+      list.includes("USD 50.00") && list.includes("more once shipped"),
+      "otherwise the next bill is a surprise");
+    check("open orders are counted apart from billed ones",
+      list.includes("1 open"));
+    check("the rule behind the figures is stated",
+      list.includes("marks a sale fulfilled") && list.includes("cancelled"),
+      "a merchant cannot check a total whose rule is implied");
+    check("every row opens",
+      /class="[^"]*view-supplier"[^>]*data-connection="4"/.test(list));
+
+    const settled = await payouts([{ ...SUPPLIER, paid: 100, outstanding: 0 }]);
+
+    check("a settled supplier says so",
+      settled.includes(">settled<"));
+
+    const credit = await payouts([{ ...SUPPLIER, paid: 130, outstanding: -30 }]);
+
+    check("overpaying reads as credit, not a negative",
+      credit.includes("USD 30.00") && credit.includes("in credit") &&
+        !credit.includes("-30"),
+      "a minus sign in a money column reads as a mistake");
+
+    const none = await payouts([], {
+      revenue: 0, cost: 0, profit: 0, paid: 0, outstanding: 0, upcoming: 0,
+    });
+
+    check("with no supplier it points at Stores",
+      none.includes("No records found") && none.includes("/stores"));
+    check("and keeps its columns",
+      none.includes("<table") && none.includes("Still to pay"));
+    check("no NaN anywhere", !none.includes("NaN"));
+
+    /* ---- one supplier ---- */
+    const CONN = {
+      id: 4,
+      status: "active",
+      source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Warehouse" },
+      destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: "Front Shop" },
+    };
+
+    const detail = (overrides = {}) =>
+      render("destination/payoutDetail", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        connection: CONN,
+        supplier: SUPPLIER,
+        payments: [
+          { id: 9, amount: 40, paid_at: "2026-09-02T00:00:00Z", reference: "BANK-1" },
+        ],
+        orders: [
+          {
+            id: 11,
+            destination_order_name: "#2001",
+            destination_shopify_order_id: "900001",
+            destination_total: 125,
+            source_total: 100,
+            source_fulfillment_status: "fulfilled",
+          },
+          {
+            id: 12,
+            destination_order_name: "#2002",
+            destination_shopify_order_id: "900002",
+            destination_total: 60,
+            source_total: 50,
+            source_fulfillment_status: "unfulfilled",
+          },
+        ],
+        currency: "USD",
+        ...overrides,
+      });
+
+    const one = await detail();
+
+    check("the detail names the supplier", one.includes("Warehouse"));
+    check("and heads with what is owed",
+      /class="pill pill--pending"[\s\S]{0,40}USD 60\.00 to pay/.test(one));
+    check("the amount box is prefilled with the balance",
+      /id="amount"[\s\S]{0,120}value="60\.00"/.test(one),
+      "the common case is paying exactly what is owed");
+    // Whitespace-tolerant: the sentence wraps in the template, so a plain
+    // includes() of the phrase would miss it.
+    check("it says no money actually moves",
+      /No money\s+moves through this app/.test(one),
+      "a screen full of money is easily mistaken for one that moves it");
+    check("past payments are listed with their reference",
+      one.includes("BANK-1") && one.includes("USD 40.00"));
+    check("and can be deleted",
+      /class="[^"]*delete-payment"[^>]*data-payment="9"/.test(one));
+
+    check("the sales behind the balance are shown",
+      one.includes("#2001") && one.includes("#2002"));
+    check("with profit only on the ones that count",
+      (one.match(/class="row--placeholder"/g) || []).length === 1,
+      "an unshipped sale has earned nothing yet and must not look like it has");
+
+    // A connection with nothing sold has no summary row at all.
+    const empty = await detail({ supplier: null, payments: [], orders: [] });
+
+    check("a supplier with no sales still renders",
+      empty.includes("USD 0.00") && !empty.includes("NaN"),
+      "zeros are the honest reading of nothing sold");
+    check("and says so in both tables",
+      (empty.match(/No records found/g) || []).length === 2);
+
+    /* ---- the same money, from the supplier's end ---- */
+    const BUYER = {
+      connection_id: 4,
+      destination_store_id: 2,
+      destination_shop_domain: "dst.myshopify.com",
+      destination_store_name: "Front Shop",
+      connection_status: "active",
+      currency: "USD",
+      earned: 100,
+      received: 40,
+      payments: 1,
+      outstanding: 60,
+      fulfilled_orders: 1,
+      open_orders: 1,
+      cancelled_orders: 1,
+      upcoming: 50,
+    };
+
+    const sourcePayouts = (buyers, totals) =>
+      render("source/payouts", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "source" },
+        buyers,
+        totals: totals || {
+          earned: 100, received: 40, outstanding: 60, upcoming: 50,
+        },
+        currency: "USD",
+      });
+
+    const owed = await sourcePayouts([BUYER]);
+
+    check("the supplier sees what it earned and is owed",
+      owed.includes("USD 100.00") && owed.includes("USD 60.00"));
+    check("its buyer is named", owed.includes("Front Shop"));
+    check("and what it still has to ship",
+      owed.includes("1 to fulfil") && owed.includes("USD 50.00"));
+    check("the balance it is chasing is flagged",
+      /class="card__value card__value--warn"[\s\S]{0,40}USD 60\.00/.test(owed));
+    check("every row opens",
+      /class="[^"]*view-buyer"[^>]*data-connection="4"/.test(owed));
+
+    // The retail price is the buyer's business, and must not leak here.
+    check("the supplier is shown no retail price or margin",
+      !owed.includes("Profit") && !owed.includes("Customer paid") &&
+        !owed.includes("Revenue"),
+      "a column that exists gets filled in by somebody eventually");
+    check("and cannot record a payment",
+      !owed.includes("Record payment") && !owed.includes("id=\"amount\""),
+      "the end that pays is the end that records it");
+
+    const ahead = await sourcePayouts([
+      { ...BUYER, received: 130, outstanding: -30 },
+    ]);
+
+    check("being paid ahead reads as such",
+      ahead.includes("paid ahead") && !ahead.includes("-30"),
+      "or a supplier chases money it has already had");
+
+    const noBuyers = await sourcePayouts([], {
+      earned: 0, received: 0, outstanding: 0, upcoming: 0,
+    });
+
+    check("with no buyer it points at Stores",
+      noBuyers.includes("No records found") && noBuyers.includes("/stores"));
+    check("and no NaN", !noBuyers.includes("NaN"));
+
+    const sourceDetail = (overrides = {}) =>
+      render("source/payoutDetail", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "source" },
+        connection: CONN,
+        buyer: BUYER,
+        payments: [
+          { id: 9, amount: 40, paid_at: "2026-09-02T00:00:00Z", reference: "BANK-1" },
+        ],
+        orders: [
+          {
+            id: 11,
+            destination_order_name: "#2001",
+            destination_shopify_order_id: "900001",
+            source_total: 100,
+            line_count: 1,
+            source_fulfillment_status: "fulfilled",
+          },
+          {
+            id: 12,
+            destination_order_name: "#2002",
+            destination_shopify_order_id: "900002",
+            source_total: 50,
+            line_count: 1,
+            source_fulfillment_status: "unfulfilled",
+          },
+        ],
+        currency: "USD",
+        ...overrides,
+      });
+
+    const buyerPage = await sourceDetail();
+
+    check("the detail names the buyer", buyerPage.includes("Front Shop"));
+    check("and heads with what is owed",
+      /class="pill pill--pending"[\s\S]{0,50}USD 60\.00 owed to you/.test(buyerPage));
+    check("payments received are listed",
+      buyerPage.includes("BANK-1") && buyerPage.includes("USD 40.00"));
+    check("but cannot be deleted from here",
+      !buyerPage.includes("delete-payment"),
+      "the buyer recorded it, so the buyer corrects it");
+    check("it warns the payments are only what the buyer claims",
+      /No money moves through this app/.test(buyerPage) &&
+        buyerPage.includes("check these"),
+      "a supplier must not treat a typed number as money received");
+    check("the orders behind it are shown",
+      buyerPage.includes("#2001") && buyerPage.includes("#2002"));
+    check("with unshipped ones marked as not yet earned",
+      buyerPage.includes("once shipped") &&
+        (buyerPage.match(/class="row--placeholder"/g) || []).length === 1);
+
+    const noSales = await sourceDetail({ buyer: null, payments: [], orders: [] });
+
+    check("a buyer with no sales still renders",
+      noSales.includes("USD 0.00") && !noSales.includes("NaN"));
   }
 
   console.log("\nPartials");
