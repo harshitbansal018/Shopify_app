@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("../partials/head") %>
+  <title>Help &amp; support</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("../partials/nav") %>
+
+  <main class="shell">
+
+    <header class="shell__header">
+      <div>
+        <h1>Help &amp; support</h1>
+        <p class="shell__sub">
+          You are set up as a <strong>destination</strong> store: you receive
+          products from suppliers and sell them.
+        </p>
+      </div>
+    </header>
+
+    <%# Two tabs, the same shape as every other screen here. FAQ is first
+        because someone opening Help usually has a question, not a fresh
+        install. %>
+    <nav class="tabs">
+      <button
+        class="tabs__tab<%= tab === "faq" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="faq">
+        FAQ
+      </button>
+      <button
+        class="tabs__tab<%= tab === "install" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="install">
+        Installation steps
+      </button>
+    </nav>
+
+    <% if (tab === "install") { %>
+
+      <section class="panel">
+        <h2 class="panel__title">Setting up a destination store</h2>
+        <p class="panel__copy">
+          In order, from installing the app to your first sale. Most of it
+          is one-time; the last step is the work you will do every day.
+        </p>
+
+        <ol class="steps">
+          <% steps.forEach(function (step, index) { %>
+            <li class="steps__item">
+              <span class="steps__number"><%= index + 1 %></span>
+              <span class="steps__body">
+                <span class="steps__title"><%= step.title %></span>
+                <span class="steps__detail"><%= step.detail %></span>
+              </span>
+            </li>
+          <% }); %>
+        </ol>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">Where everything lives</h2>
+        <dl class="facts">
+          <div class="facts__row">
+            <dt>Stores</dt>
+            <dd>Enter a supplier's pairing code, and see who you buy from.</dd>
+          </div>
+          <div class="facts__row">
+            <dt>Products</dt>
+            <dd>
+              Unsynced is what suppliers have offered; accepting one writes it
+              into your store. Synced is what is already live.
+            </dd>
+          </div>
+          <div class="facts__row">
+            <dt>Settings</dt>
+            <dd>
+              Which fields follow the supplier, and your price margin. Per
+              supplier, so you can treat two of them differently.
+            </dd>
+          </div>
+          <div class="facts__row">
+            <dt>Orders</dt>
+            <dd>
+              Your sales, and what the supplier has done about each one &mdash;
+              including the tracking number once it ships.
+            </dd>
+          </div>
+          <div class="facts__row">
+            <dt>Payouts</dt>
+            <dd>
+              Your profit per supplier, what you still owe them, and a record of
+              the transfers you have made.
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+    <% } else { %>
+
+      <section class="panel">
+        <h2 class="panel__title">Questions we get asked</h2>
+
+        <dl class="faq">
+          <% faq.forEach(function (item) { %>
+            <div class="faq__item">
+              <dt class="faq__question"><%= item.question %></dt>
+              <dd class="faq__answer"><%= item.answer %></dd>
+            </div>
+          <% }); %>
+        </dl>
+      </section>
+
+    <% } %>
+
+    <section class="panel">
+      <h2 class="panel__title">Still stuck?</h2>
+      <p class="panel__copy">
+        <%# No fake support desk: the honest answer is that the other merchant
+            and your own Shopify admin solve most of it. %>
+        If a product or an order is not behaving, the fastest check is usually
+        with the supplier directly &mdash; they control what is offered, their
+        prices, and whether an order has shipped. For anything about how a
+        product looks or sells in your shop, your Shopify admin is the source of
+        truth, and nothing this app writes there is locked.
+      </p>
+    </section>
+
+  </main>
+
+  <script>
+    (function () {
+      Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            // A real navigation, not a class toggle: the server decides which
+            // tab is open, so a reload or a back button lands where it should.
+            window.appNavigate("/help?tab=" + button.dataset.tab);
+          });
+        });
+    })();
+  </script>
+
+</body>
+
+</html>

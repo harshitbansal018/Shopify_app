@@ -1665,6 +1665,113 @@ const STORE_ROW = {
       noSales.includes("USD 0.00") && !noSales.includes("NaN"));
   }
 
+  console.log("\nHelp & support");
+  {
+    const helpController = require(path.join(SERVER, "controllers/helpController"));
+
+    const help = (role, tab) =>
+      render(`${role}/help`, {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: role },
+        tab,
+        steps: helpController.INSTALL_STEPS[role],
+        faq: helpController.FAQ[role],
+      });
+
+    /* ---- the content itself ---- */
+    ["source", "destination"].forEach((role) => {
+      check(`${role} has exactly five questions`,
+        helpController.FAQ[role].length === 5,
+        `${helpController.FAQ[role].length}`);
+      check(`${role} has installation steps`,
+        helpController.INSTALL_STEPS[role].length >= 5);
+      check(`no ${role} answer is left empty`,
+        helpController.FAQ[role].every(
+          (item) => item.question.trim() && item.answer.trim()
+        ),
+        "a blank answer is worse than no question");
+      check(`no ${role} step is left empty`,
+        helpController.INSTALL_STEPS[role].every(
+          (step) => step.title.trim() && step.detail.trim()
+        ));
+    });
+
+    // The two sets exist because the advice genuinely differs, so they must
+    // not be one list copied twice. One shared answer is expected and correct:
+    // "your role is permanent" is the same rule whichever role you picked.
+    const shared = helpController.FAQ.source.filter((item) =>
+      helpController.FAQ.destination.some(
+        (other) => other.answer === item.answer
+      )
+    );
+
+    check("the roles are given genuinely different advice",
+      shared.length <= 1,
+      `${shared.length} answers are identical -- one role is being told the ` +
+        `other's rules`);
+    check("and every question is worded for its own role",
+      helpController.FAQ.source.every((item) =>
+        !helpController.FAQ.destination.some(
+          (other) => other.question === item.question
+        )
+      ),
+      "even the shared rule reads differently from each side");
+
+    /* ---- both tabs, both roles ---- */
+    for (const role of ["source", "destination"]) {
+      const faq = await help(role, "faq");
+      const install = await help(role, "install");
+
+      check(`${role} lands on the FAQ tab`,
+        /tabs__tab tabs__tab--on"[^>]*data-tab="faq"/.test(faq),
+        "someone opening Help usually has a question, not a fresh install");
+      check(`${role} shows every question`,
+        (faq.match(/class="faq__item"/g) || []).length === 5);
+      check(`${role} shows every answer`,
+        helpController.FAQ[role].every((item) =>
+          faq.includes(item.question.slice(0, 30))));
+
+      check(`${role} can open the steps`,
+        /tabs__tab tabs__tab--on"[^>]*data-tab="install"/.test(install));
+      check(`${role} numbers its steps`,
+        (install.match(/class="steps__number"/g) || []).length ===
+          helpController.INSTALL_STEPS[role].length,
+        "the steps are in order and have to look it");
+      check(`${role} is shown only its own steps`,
+        !install.includes("How the two stores fit together"),
+        "each role gets its own list, not both halves of the arrangement");
+      check(`${role} is still told the other store installs it separately`,
+        /separately/.test(install),
+        "installing it once and waiting is the classic way to get stuck");
+      check(`${role} explains where each screen lives`,
+        install.includes("Where everything lives") &&
+          install.includes("Payouts"));
+
+      check(`${role} tabs navigate rather than toggle`,
+        install.includes('"/help?tab=" + button.dataset.tab'),
+        "a reload or a back button must land on the tab it says");
+      check(`${role} says which role it is talking to`,
+        faq.includes(role));
+    }
+
+    // Each role's page must not leak the other's advice.
+    const sourceFaq = await help("source", "faq");
+    const destinationFaq = await help("destination", "faq");
+
+    check("a source is told orders stay out of its admin",
+      sourceFaq.includes("Nothing is written into your store"),
+      "the single most surprising thing about being a source");
+    check("and is not shown the destination's margin rules",
+      !sourceFaq.includes("price margin in Settings"),
+      "the markup is the buyer's business");
+    check("a destination is told what the margin does",
+      destinationFaq.includes("price margin in Settings"));
+    check("and that unticking a field does not wipe it",
+      destinationFaq.includes("does it wipe my value") &&
+        destinationFaq.includes("stays exactly as it is"),
+      "the fear that stops merchants touching Settings at all");
+  }
+
   console.log("\nPartials");
   {
     await expectRenders("nav renders", "partials/nav", {}, [
