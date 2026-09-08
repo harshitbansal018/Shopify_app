@@ -505,10 +505,8 @@ body {
 }
 
 .faq__question {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  padding: 0.95rem 0;
+  position: relative;
+  padding: 0.95rem 0 0.95rem 1.75rem;
   font-weight: 600;
   cursor: pointer;
   list-style: none;
@@ -534,33 +532,43 @@ body {
   border-radius: 6px;
 }
 
-/* The caret is drawn rather than typed: a rotating box has one position to
-   animate, where swapping + for - jumps. */
-.faq__question::before {
+/* A plus, drawn as two bars rather than typed as a character: swapping the
+   text "+" for "-" jumps, where a bar that rotates flat has one thing to
+   animate. Closed it reads +, open it reads -.
+
+   Pinned to the first line, not centred, so a question that wraps onto two
+   lines keeps its marker beside the start of it. */
+.faq__question::before,
+.faq__question::after {
   content: "";
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-top: 0.4rem;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 0.15s ease;
+  position: absolute;
+  left: 0;
+  top: 1.4rem;
+  width: 0.75rem;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: transform 0.18s ease;
 }
 
-.faq__item[open] .faq__question::before {
-  transform: rotate(45deg);
+.faq__question::after {
+  transform: rotate(90deg);
+}
+
+/* The upright bar lies down on top of the other one, leaving a minus. */
+.faq__item[open] .faq__question::after {
+  transform: rotate(0deg);
 }
 
 .faq__item[open] .faq__question {
   color: var(--brand);
 }
 
-/* Indented to the caret, so an open answer lines up with its question rather
-   than with the panel edge. No width cap: the panel is the measure. */
+/* Indented to match the question's text, so an open answer lines up under it
+   rather than under the marker. No width cap: the panel is the measure. */
 .faq__answer {
   margin: 0 0 1.05rem;
-  padding-left: 1.15rem;
+  padding-left: 1.75rem;
   color: var(--muted);
   font-size: 0.92rem;
 }
