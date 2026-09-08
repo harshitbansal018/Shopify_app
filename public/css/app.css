@@ -149,6 +149,13 @@ body {
   padding: 1.15rem;
 }
 
+/* Panels are plain siblings in the shell with nothing between them, so each
+   one after the first has to space itself or two of them share an edge. The
+   screens that stack several -- an order, a payout, help -- all need this. */
+.shell > .panel + .panel {
+  margin-top: 1.15rem;
+}
+
 .panel__title {
   margin: 0 0 0.9rem;
   font-size: 1.02rem;
@@ -379,88 +386,183 @@ body {
 
 /* The preview reuses the storefront classes; keep it readable in the admin. */
 
-/* ---------------- help: numbered steps ---------------- */
+/* A heading and its copy WITHOUT a panel around them, for the times the
+   content below is already carrying its own boxes. */
+.section {
+  margin-bottom: 1.15rem;
+}
 
+.section__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.02rem;
+}
+
+.section__copy {
+  margin: 0 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* ---------------- help: step cards ---------------- */
+
+/* Cards, not rows: a step is a self-contained thing to do, and side by side
+   they show at a glance how much setup there actually is. Still an <ol>, so
+   the order survives for anyone reading it without the stylesheet. */
 .steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.85rem;
   margin: 0;
   padding: 0;
   list-style: none;
-  counter-reset: none;
 }
 
 .steps__item {
   display: flex;
-  gap: 0.85rem;
-  padding: 0.9rem 0;
-  border-top: 1px solid var(--line-soft);
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.05rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
-.steps__item:first-child {
-  border-top: 0;
-  padding-top: 0;
+/* The icon says what the step is about, the number says where it comes. Kept
+   on one row so a card reads left to right before it reads down. */
+.steps__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
 }
 
-/* The number is the whole reason this is a list and not paragraphs: the
-   steps are in order and have to look it. */
+.steps__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 10px;
+}
+
+/* The number is the whole reason this is a list and not a pile of cards: the
+   steps are in order and have to look it. Muted, because the icon is what the
+   eye should land on first. */
 .steps__number {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  color: var(--brand);
-  background: var(--brand-soft);
+  width: 1.6rem;
+  height: 1.6rem;
+  color: var(--muted);
+  background: var(--line-soft);
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* An inline SVG has no intrinsic size once width/height are overridden, so it
+   is pinned here rather than trusted to the attributes. */
+.icon {
+  display: block;
+  flex: none;
 }
 
 .steps__body {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.3rem;
 }
 
 .steps__title {
   font-weight: 600;
+  line-height: 1.3;
 }
 
 .steps__detail {
   color: var(--muted);
   font-size: 0.9rem;
-  max-width: 68ch;
 }
 
 /* ---------------- help: FAQ ---------------- */
 
+/* Built on <details>, so the browser does the opening, the keyboard and the
+   screen-reader work, and Ctrl+F still finds text inside a closed one. */
 .faq {
   margin: 0;
 }
 
 .faq__item {
-  padding: 1rem 0;
   border-top: 1px solid var(--line-soft);
 }
 
 .faq__item:first-child {
   border-top: 0;
-  padding-top: 0;
 }
 
 .faq__question {
-  margin: 0 0 0.35rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.95rem 0;
   font-weight: 600;
+  cursor: pointer;
+  list-style: none;
 }
 
-/* dd carries a browser default indent that would make the answer look like a
-   child of the question rather than the answer to it. */
+/* Both are needed: the first hides Safari's triangle, the second everyone
+   else's. Without them the marker sits beside our own caret. */
+.faq__question::-webkit-details-marker {
+  display: none;
+}
+
+.faq__question::marker {
+  content: "";
+}
+
+.faq__question:hover {
+  color: var(--brand);
+}
+
+.faq__question:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* The caret is drawn rather than typed: a rotating box has one position to
+   animate, where swapping + for - jumps. */
+.faq__question::before {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.4rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.faq__item[open] .faq__question::before {
+  transform: rotate(45deg);
+}
+
+.faq__item[open] .faq__question {
+  color: var(--brand);
+}
+
+/* Indented to the caret, so an open answer lines up with its question rather
+   than with the panel edge. No width cap: the panel is the measure. */
 .faq__answer {
-  margin: 0;
+  margin: 0 0 1.05rem;
+  padding-left: 1.15rem;
   color: var(--muted);
   font-size: 0.92rem;
-  max-width: 72ch;
 }
 
 /* ---------------- facts list ---------------- */
@@ -1463,7 +1565,7 @@ body {
   border-color: var(--ok-line);
 }
 
-/* ---------------- next-steps list ---------------- */
+/* ---------------- panel copy ---------------- */
 
 .panel__copy {
   margin: 0 0 0.9rem;
@@ -1471,18 +1573,6 @@ body {
   color: var(--muted);
 }
 
-.steps {
-  margin: 0 0 0.9rem;
-  padding-left: 1.25rem;
-  max-width: 62ch;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
-.steps code,
 .panel__copy code {
   padding: 0.08em 0.35em;
   font-size: 0.86em;

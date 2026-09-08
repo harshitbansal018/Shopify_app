@@ -1675,18 +1675,18 @@ const STORE_ROW = {
         store: { ...STORE_ROW, store_type: role },
         tab,
         steps: helpController.INSTALL_STEPS[role],
-        faq: helpController.FAQ[role],
+        faq: helpController.DEFAULT_FAQ[role],
       });
 
     /* ---- the content itself ---- */
     ["source", "destination"].forEach((role) => {
       check(`${role} has exactly five questions`,
-        helpController.FAQ[role].length === 5,
-        `${helpController.FAQ[role].length}`);
+        helpController.DEFAULT_FAQ[role].length === 5,
+        `${helpController.DEFAULT_FAQ[role].length}`);
       check(`${role} has installation steps`,
         helpController.INSTALL_STEPS[role].length >= 5);
       check(`no ${role} answer is left empty`,
-        helpController.FAQ[role].every(
+        helpController.DEFAULT_FAQ[role].every(
           (item) => item.question.trim() && item.answer.trim()
         ),
         "a blank answer is worse than no question");
@@ -1699,8 +1699,8 @@ const STORE_ROW = {
     // The two sets exist because the advice genuinely differs, so they must
     // not be one list copied twice. One shared answer is expected and correct:
     // "your role is permanent" is the same rule whichever role you picked.
-    const shared = helpController.FAQ.source.filter((item) =>
-      helpController.FAQ.destination.some(
+    const shared = helpController.DEFAULT_FAQ.source.filter((item) =>
+      helpController.DEFAULT_FAQ.destination.some(
         (other) => other.answer === item.answer
       )
     );
@@ -1710,8 +1710,8 @@ const STORE_ROW = {
       `${shared.length} answers are identical -- one role is being told the ` +
         `other's rules`);
     check("and every question is worded for its own role",
-      helpController.FAQ.source.every((item) =>
-        !helpController.FAQ.destination.some(
+      helpController.DEFAULT_FAQ.source.every((item) =>
+        !helpController.DEFAULT_FAQ.destination.some(
           (other) => other.question === item.question
         )
       ),
@@ -1728,8 +1728,26 @@ const STORE_ROW = {
       check(`${role} shows every question`,
         (faq.match(/class="faq__item"/g) || []).length === 5);
       check(`${role} shows every answer`,
-        helpController.FAQ[role].every((item) =>
+        helpController.DEFAULT_FAQ[role].every((item) =>
           faq.includes(item.question.slice(0, 30))));
+
+      /* ---- the accordion ---- */
+      check(`${role} FAQ is a native accordion`,
+        (faq.match(/<details class="faq__item">/g) || []).length === 5 &&
+          (faq.match(/<summary class="faq__question">/g) || []).length === 5,
+        "<details> gets keyboard, screen readers and Ctrl+F for free");
+      check(`${role} FAQ needs no script to open`,
+        !faq.includes("faq__item") || !/faq[\s\S]{0,200}addEventListener/.test(
+          faq.slice(faq.indexOf("<script>"))
+        ),
+        "the browser already does this, and a script can fail in the iframe");
+      check(`${role} opens closed, so the questions are scannable`,
+        !faq.includes("<details class=\"faq__item\" open"),
+        "five open answers is a wall of text, not an index");
+
+      check(`${role} has no dead-end support paragraph`,
+        !faq.includes("Still stuck"),
+        "it told merchants to go and ask somebody else");
 
       check(`${role} can open the steps`,
         /tabs__tab tabs__tab--on"[^>]*data-tab="install"/.test(install));
@@ -1740,6 +1758,33 @@ const STORE_ROW = {
       check(`${role} is shown only its own steps`,
         !install.includes("How the two stores fit together"),
         "each role gets its own list, not both halves of the arrangement");
+      check(`${role} steps are cards, not rows in a panel`,
+        /<section class="section">[\s\S]{0,400}<ol class="steps">/.test(install) &&
+          !/<section class="panel">[\s\S]{0,400}<ol class="steps">/.test(install),
+        "white cards inside a white panel are invisible");
+
+      /* ---- icons ---- */
+      check(`every ${role} step has an icon name`,
+        helpController.INSTALL_STEPS[role].every((step) => step.icon),
+        "a card with an empty badge reads as a missing image");
+      check(`and every one of them draws`,
+        (install.match(/<svg class="icon"/g) || []).length ===
+          helpController.INSTALL_STEPS[role].length,
+        "an unknown name renders nothing at all, silently");
+      // Scoped to the step list: the page also carries the brand logo, which
+      // is a real <img> and has nothing to do with these.
+      const stepsMarkup = install.slice(
+        install.indexOf('<ol class="steps">'),
+        install.indexOf("</ol>")
+      );
+
+      check(`${role} icons are inline, not fetched`,
+        !stepsMarkup.includes("<img"),
+        "the CSP blocks external images, so a fetched icon is an empty box");
+      check(`${role} icons are hidden from screen readers`,
+        (install.match(/aria-hidden="true"/g) || []).length >=
+          helpController.INSTALL_STEPS[role].length,
+        "the title beside each one already says what the step is");
       check(`${role} is still told the other store installs it separately`,
         /separately/.test(install),
         "installing it once and waiting is the classic way to get stuck");
