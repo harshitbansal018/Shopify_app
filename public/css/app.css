@@ -379,6 +379,90 @@ body {
 
 /* The preview reuses the storefront classes; keep it readable in the admin. */
 
+/* ---------------- help: numbered steps ---------------- */
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+
+.steps__item {
+  display: flex;
+  gap: 0.85rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.steps__item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* The number is the whole reason this is a list and not paragraphs: the
+   steps are in order and have to look it. */
+.steps__number {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.steps__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.steps__title {
+  font-weight: 600;
+}
+
+.steps__detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: 68ch;
+}
+
+/* ---------------- help: FAQ ---------------- */
+
+.faq {
+  margin: 0;
+}
+
+.faq__item {
+  padding: 1rem 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.faq__item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.faq__question {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+/* dd carries a browser default indent that would make the answer look like a
+   child of the question rather than the answer to it. */
+.faq__answer {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  max-width: 72ch;
+}
+
 /* ---------------- facts list ---------------- */
 
 .facts {
