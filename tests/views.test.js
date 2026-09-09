@@ -959,11 +959,40 @@ const STORE_ROW = {
 
     check("the synced tab marks itself",
       /tabs__tab tabs__tab--on"[^>]*data-tab="synced"/.test(synced));
-    check("accepted rows are NOT selectable",
-      !synced.includes('class="awaiting-check"'),
-      "there is nothing left to accept");
-    check("nor offered accept controls",
-      !synced.includes('id="accept-button"'));
+    check("accepted rows are selectable too",
+      (synced.match(/class="awaiting-check"/g) || []).length === 1,
+      "the Synced tab ticks rows to unsync them in one go");
+    check("and the checkbox says what ticking it is for",
+      /aria-label="Unsync [^"]+"/.test(synced),
+      "the same control means Sync on the other tab");
+    check("but not offered accept controls",
+      !synced.includes('id="accept-button"'),
+      "there is nothing left to accept here");
+
+    /* ---- bulk unsync, beside Sync now ---- */
+
+    check("the synced tab offers Unsync selected",
+      synced.includes('id="unsync-button"'));
+    check("in the header, next to Sync now",
+      /shell__actions[\s\S]{0,400}id="unsync-button"[\s\S]{0,400}id="sync-button"/
+        .test(synced),
+      "they are a pair -- refresh these, or stop receiving these");
+    check("it starts disabled",
+      /id="unsync-button"[^>]*disabled/.test(synced),
+      "it acts on ticked rows, and nothing is ticked on load");
+    check("and is styled as the destructive one",
+      /class="btn btn--danger"[^>]*id="unsync-button"/.test(synced));
+    check("it posts to decline, which is what clears accepted_at",
+      synced.includes('"/products/decline"'));
+    check("and warns that nothing leaves the store",
+      synced.includes("They stay in your store exactly as they are"),
+      "'unsync' reads as 'delete' unless it is said plainly");
+    check("then sends them to the tab they moved to",
+      synced.includes('productsUrl("unsynced")'));
+
+    check("the unsynced tab is not offered it",
+      !unsynced.includes('id="unsync-button"'),
+      "nothing there is synced, so there is nothing to unsync");
     check("the sync status is shown",
       /status-toggle[\s\S]{0,260}>\s*synced\s*</.test(synced));
     check("stock is shown", synced.includes("12 in stock"));
@@ -992,6 +1021,12 @@ const STORE_ROW = {
     check("a deleted product has no switch",
       !/class="[^"]*status-toggle"/.test(gone) && gone.includes(">deleted<"),
       "there is nothing at the source left to send");
+    check("and cannot be ticked for a bulk action either",
+      /class="awaiting-check"[^>]*disabled/.test(gone),
+      "select-all would otherwise include a row nothing can act on");
+    check("select-all skips the disabled ones",
+      gone.includes('".awaiting-check:not(:disabled)"'),
+      "the count would say 1 with nothing the button could send");
 
     /* ---- View, on both tabs ---- */
     check("every row has a View button",
