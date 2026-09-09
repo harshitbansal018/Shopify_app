@@ -743,6 +743,21 @@ body {
   line-height: 1.5;
 }
 
+/* What a destructive confirmation is about to do, one consequence per line.
+   A list rather than a paragraph: nobody reads a wall of text at the moment
+   they are trying to get past a dialog, but they do scan bullets. */
+.modal__list {
+  margin: 0 0 1.1rem;
+  padding-left: 1.1rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.modal__list li + li {
+  margin-top: 0.25rem;
+}
+
 .modal__actions {
   display: flex;
   justify-content: flex-end;

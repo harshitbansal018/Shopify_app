@@ -1493,6 +1493,163 @@ async function cleanup() {
     check("settings cascade with the connection", Number(after[0].total) === 0);
   }
 
+  /* A destination removing a supplier, and everything it put in the store.
+   *
+   * The destructive one, so the order is what is being checked: the products
+   * have to leave Shopify BEFORE the connection row does. The row is what
+   * remembers which Shopify products came from this supplier -- drop it first
+   * and anything that failed to delete is stranded in the store with nothing
+   * left to link it back. */
+  console.log("\nRemoving a source store");
+  {
+    const shopify = require(path.join(SERVER, "services/shopify"));
+    const productSync = require(path.join(SERVER, "services/productSync"));
+    const realForShop = shopify.forShop;
+
+    const source = await storeModel.upsertStore({
+      shop_domain: `${RUN}-rmsrc.myshopify.com`,
+      store_name: "Removal Source",
+      access_token: "shpat_rmsrc",
+    });
+    const buyer = await storeModel.upsertStore({
+      shop_domain: `${RUN}-rmdst.myshopify.com`,
+      store_name: "Removal Buyer",
+      access_token: "shpat_rmdst",
+    });
+
+    await pair(source, buyer);
+
+    const link = await connectionModel.createConnection({
+      sourceStoreId: source.id,
+      destinationStoreId: buyer.id,
+    });
+
+    // Three products offered; two actually pushed into the buyer's store.
+    const mappings = [];
+
+    for (const [index, shopifyId] of [7101, 7102, 7103].entries()) {
+      const product = await sourceProductModel.upsert(source.id, {
+        id: shopifyId,
+        title: `Removal Product ${index}`,
+        status: "active",
+        variants: [{ id: shopifyId * 10, sku: `RM-${index}`, price: "5.00" }],
+      });
+
+      const mapping = await productMappingModel.ensure({
+        connectionId: link.id,
+        sourceProductId: product.id,
+        sourceShopifyProductId: product.shopify_product_id,
+      });
+
+      // The third is offered but never pushed, so it has nothing over there.
+      if (index < 2) {
+        await productMappingModel.markSynced(mapping.id, {
+          destinationProductId: 88000 + index,
+          sourceUpdatedAt: null,
+        });
+      }
+
+      mappings.push(mapping);
+    }
+
+    check("only the pushed products count as live in the buyer's store",
+      (await productMappingModel.countLiveForConnection(link.id)) === 2,
+      "a product offered and never accepted has nothing there to delete");
+    check("and the list agrees with the count",
+      (await productMappingModel.listLiveForConnection(link.id)).length === 2);
+
+    /* ---- one product refuses ---- */
+    const deleted = [];
+
+    shopify.forShop = async (shop, body) => {
+      const id = String(body.variables.input.id);
+      deleted.push(id);
+
+      if (id.endsWith("88001")) {
+        return {
+          productDelete: {
+            userErrors: [{ field: ["id"], message: "Product is locked" }],
+          },
+        };
+      }
+      return { productDelete: { deletedProductId: id, userErrors: [] } };
+    };
+
+    const partial = await productSync.deleteConnectionProducts(link.id);
+
+    check("what could go, went", partial.deleted === 1, String(partial.deleted));
+    check("what could not is reported", partial.failed === 1);
+    check("with the reason", /locked/i.test(partial.errors[0] || ""),
+      partial.errors[0]);
+    check("and it is NOT done", partial.done === false,
+      "a partial delete must not let the caller drop the connection");
+    check("the one left is still counted",
+      partial.remaining === 1, String(partial.remaining));
+
+    check("the connection is still there",
+      Boolean(await connectionModel.findById(link.id)),
+      "dropping it now would strand the locked product with no record of it");
+
+    // The successful one is recorded immediately, so a retry does not delete
+    // it twice or count it twice.
+    check("a deleted product loses its link to the buyer's store",
+      (await productMappingModel.findById(mappings[0].id))
+        .destination_shopify_product_id === null);
+
+    /* ---- the merchant fixes it and tries again ---- */
+    shopify.forShop = async (shop, body) => ({
+      productDelete: {
+        deletedProductId: body.variables.input.id,
+        userErrors: [],
+      },
+    });
+
+    const rest = await productSync.deleteConnectionProducts(link.id);
+
+    check("the retry only touches what is left",
+      rest.deleted === 1, String(rest.deleted));
+    check("and now it is done", rest.done === true && rest.remaining === 0);
+
+    /* ---- already gone is success, not a failure ---- */
+    shopify.forShop = async () => ({
+      productDelete: {
+        userErrors: [{ field: ["id"], message: "Product not found" }],
+      },
+    });
+
+    const gone = await productSync.deleteConnectionProducts(link.id);
+    check("a store with nothing left is done", gone.done === true);
+
+    /* ---- an uninstalled buyer cannot be deleted from ---- */
+    await query("UPDATE stores SET is_active = 0 WHERE id = ?", [buyer.id]);
+    await productMappingModel.markSynced(mappings[2].id, {
+      destinationProductId: 88002,
+      sourceUpdatedAt: null,
+    });
+
+    const uninstalled = await productSync.deleteConnectionProducts(link.id);
+
+    check("an uninstalled buyer is skipped, not retried forever",
+      uninstalled.done === true && uninstalled.skipped === 1,
+      "there is no token to delete with, and trapping the merchant is worse");
+
+    await query("UPDATE stores SET is_active = 1 WHERE id = ?", [buyer.id]);
+    shopify.forShop = realForShop;
+
+    /* ---- and the row itself takes the rest with it ---- */
+    await connectionModel.deleteConnection(link.id);
+
+    const leftover = await query(
+      "SELECT COUNT(*) AS total FROM product_mappings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("the mappings go with the connection",
+      Number(leftover[0].total) === 0);
+    check("but the cached source products stay",
+      (await sourceProductModel.countForStore(source.id)) === 3,
+      "they belong to the SOURCE store, which has not removed anything");
+  }
+
   await cleanup();
   await pool.end();
 

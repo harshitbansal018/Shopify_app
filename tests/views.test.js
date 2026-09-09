@@ -358,6 +358,15 @@ const STORE_ROW = {
       destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
     };
 
+    // What removing this supplier would cost. The destination screen only.
+    const REMOVAL = {
+      products: 12,
+      orders: 3,
+      payments: 2,
+      outstanding: 140.5,
+      currency: "GBP",
+    };
+
     // SOURCE: shows a code, never an input to type one into.
     const withCode = await render("source/stores", {
       ...BASE,
@@ -406,7 +415,7 @@ const STORE_ROW = {
     const destinationHtml = await render("destination/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
-      connections: [CONNECTION],
+      connections: [{ ...CONNECTION, removal: REMOVAL }],
       pairingCode: null,
       codeTtlMinutes: 15,
     });
@@ -462,7 +471,7 @@ const STORE_ROW = {
       "an empty list keeps the columns",
       noConnections.includes("<table") &&
         noConnections.includes("No records found") &&
-        noConnections.includes('colspan="4"')
+        noConnections.includes('colspan="6"')
     );
 
     /* ---- the destination adds a store through a popup ---- */
@@ -490,6 +499,66 @@ const STORE_ROW = {
       !withCode.includes('id="add-store-button"'),
       "a source cannot redeem a code -- the server refuses it"
     );
+
+    /* ---- and removes one, which deletes real products ---- */
+
+    check("each connected store can be deleted",
+      /class="[^"]*delete-store"[^>]*data-connection="7"/.test(destinationHtml));
+
+    check("the row says how many products would go",
+      destinationHtml.includes("12 in your store"),
+      "the number must not be a surprise sprung inside the dialog");
+
+    check("the confirmation is a dialog, not a bare confirm()",
+      /<dialog[^>]*id="delete-store-modal"/.test(destinationHtml),
+      "window.confirm cannot show what is about to be deleted");
+    check("which starts closed",
+      !/<dialog[^>]*id="delete-store-modal"[^>]*\sopen[\s>]/.test(destinationHtml));
+
+    // Everything the dialog fills in comes off the button, so the dialog is
+    // written once rather than once per row.
+    check("the button carries what the warning has to say",
+      /data-products="12"/.test(destinationHtml) &&
+        /data-orders="3"/.test(destinationHtml) &&
+        /data-payments="2"/.test(destinationHtml) &&
+        /data-outstanding="140.5"/.test(destinationHtml));
+
+    check("the warning says it cannot be undone",
+      destinationHtml.includes("This cannot be undone"));
+    check("and names the products as permanently deleted from Shopify",
+      destinationHtml.includes("permanently deleted from your Shopify store"),
+      "'removed' would read as unlinked, which is a different thing");
+    check("it warns that the payout history goes too",
+      destinationHtml.includes("payout history"),
+      "deleting the connection cascades to payouts, and nothing else says so");
+    check("and that the orders go",
+      destinationHtml.includes("raised against this supplier"));
+    check("it reassures about what is NOT touched",
+      destinationHtml.includes("Your own orders and customers are not touched"));
+
+    check("money still owed gets its own notice",
+      destinationHtml.includes('id="delete-store-owed"') &&
+        destinationHtml.includes("still owe"),
+      "an outstanding balance must not be a bullet nobody reads");
+
+    check("the destructive button is styled as destructive",
+      /id="delete-store-confirm"[^>]*>/.test(destinationHtml) &&
+        /class="btn btn--danger"[^>]*id="delete-store-confirm"/.test(destinationHtml));
+    check("and focus lands on Cancel, not on it",
+      destinationHtml.includes("deleteCancel.focus()"),
+      "a stray Enter must not delete a catalogue");
+
+    // The delete comes back in rounds; the dialog has to keep asking.
+    check("the client finishes what the server started",
+      destinationHtml.includes("if (data.done) break;"),
+      "one request cannot delete a thousand products");
+    check("and shows progress while it does",
+      destinationHtml.includes("Deleting… "),
+      "a dialog silent for two minutes reads as a hang");
+
+    check("a source store cannot delete anything from here",
+      !withCode.includes("delete-store"),
+      "only the destination owns the products that would be deleted");
   }
 
   console.log("\nProducts");

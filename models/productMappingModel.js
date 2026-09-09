@@ -104,6 +104,37 @@ async function markGoneFromDestination(id) {
   return findById(id);
 }
 
+/**
+ * The mappings that really do have a product sitting in the destination store.
+ *
+ * Not every mapping does: one that was offered and never accepted, or that
+ * failed its first push, has nothing over there to remove. Selecting on
+ * destination_shopify_product_id is what makes "how many will be deleted"
+ * honest and stops a delete pass burning API calls on rows with no product.
+ */
+async function listLiveForConnection(connectionId, { limit = 100 } = {}) {
+  const rows = await query(
+    `SELECT * FROM product_mappings
+      WHERE connection_id = ?
+        AND destination_shopify_product_id IS NOT NULL
+      ORDER BY id
+      LIMIT ?`,
+    [connectionId, Number(limit)]
+  );
+  return rows.map(hydrate);
+}
+
+/** How many products this connection has actually put in the buyer's store. */
+async function countLiveForConnection(connectionId) {
+  const rows = await query(
+    `SELECT COUNT(*) AS total FROM product_mappings
+      WHERE connection_id = ?
+        AND destination_shopify_product_id IS NOT NULL`,
+    [connectionId]
+  );
+  return Number(rows[0] ? rows[0].total : 0);
+}
+
 /** Every connection that already carries this source product. */
 async function listForSourceProduct(sourceProductId) {
   const rows = await query(
@@ -478,6 +509,8 @@ module.exports = {
   markGoneFromDestination,
   listForSourceProduct,
   listForConnection,
+  listLiveForConnection,
+  countLiveForConnection,
   countForConnection,
   statusBreakdown,
   toAllowedVariants,

@@ -40,12 +40,14 @@
             <th>Domain</th>
             <th>Status</th>
             <th>Sync</th>
+            <th>Products</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <% if (!connections.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="4">
+              <td class="table__empty" colspan="6">
                 <strong>No records found</strong>
                 <span>
                   No source store is connected yet. Press <strong>Add store</strong>
@@ -67,6 +69,27 @@
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
               </td>
               <td class="muted"><%= connection.sync_mode %></td>
+              <td>
+                <%# What removing this store would actually delete. Shown in
+                    the row as well as in the dialog, so the number is not a
+                    surprise sprung at the moment of confirming. %>
+                <%= connection.removal.products %> in your store
+              </td>
+              <td class="table__actions">
+                <button
+                  class="btn btn--small btn--danger delete-store"
+                  type="button"
+                  data-connection="<%= connection.id %>"
+                  data-store="<%= other.store_name || other.shop_domain %>"
+                  data-domain="<%= other.shop_domain %>"
+                  data-products="<%= connection.removal.products %>"
+                  data-orders="<%= connection.removal.orders %>"
+                  data-payments="<%= connection.removal.payments %>"
+                  data-outstanding="<%= connection.removal.outstanding %>"
+                  data-currency="<%= connection.removal.currency || "" %>">
+                  Delete
+                </button>
+              </td>
             </tr>
           <% }); %>
           <% } %>
@@ -107,6 +130,52 @@
       </div>
 
     </form>
+  </dialog>
+
+  <%# The confirmation. Deliberately a dialog and not window.confirm: this
+      deletes real products out of a real Shopify store, and the merchant has
+      to be able to READ what goes before agreeing to it. %>
+  <dialog class="modal" id="delete-store-modal" aria-labelledby="delete-store-title">
+    <div class="modal__body">
+
+      <h2 class="modal__title" id="delete-store-title">
+        Delete <span id="delete-store-name"></span>?
+      </h2>
+
+      <p class="notice notice--error">
+        <strong>This cannot be undone.</strong>
+        <span id="delete-store-products"></span>
+      </p>
+
+      <p class="modal__copy">Deleting this store will:</p>
+
+      <ul class="modal__list">
+        <li id="delete-store-line-products"></li>
+        <li>Stop this store receiving anything else from them.</li>
+        <li id="delete-store-line-orders"></li>
+        <li id="delete-store-line-payments"></li>
+      </ul>
+
+      <%# Only when there is money in the balance. An outstanding figure is the
+          sharpest consequence of all, and burying it in a list nobody reads
+          would be the wrong place for it. %>
+      <p class="notice notice--warn" id="delete-store-owed" hidden></p>
+
+      <p class="modal__copy muted">
+        Your own orders and customers are not touched. Only the products this
+        supplier put here are removed from your Shopify catalogue.
+      </p>
+
+      <p class="notice notice--error" id="delete-store-error" hidden></p>
+
+      <div class="modal__actions">
+        <button class="btn" type="button" id="delete-store-cancel">Cancel</button>
+        <button class="btn btn--danger" type="button" id="delete-store-confirm">
+          Delete store and products
+        </button>
+      </div>
+
+    </div>
   </dialog>
 
   <script>
@@ -184,6 +253,162 @@
         } catch (err) {
           addButton.disabled = false;
           showError("Could not reach the app. Try again.");
+        }
+      });
+
+      /* ---------------- deleting a source store ---------------- */
+
+      var deleteModal = document.getElementById("delete-store-modal");
+      var deleteConfirm = document.getElementById("delete-store-confirm");
+      var deleteCancel = document.getElementById("delete-store-cancel");
+      var deleteError = document.getElementById("delete-store-error");
+      var owedNotice = document.getElementById("delete-store-owed");
+
+      // Which store the open dialog is about. Read from the row's button, so
+      // the dialog is written once rather than once per row.
+      var pending = null;
+
+      function plural(count, one, many) {
+        return count + " " + (count === 1 ? one : many);
+      }
+
+      function openDeleteModal(button) {
+        pending = button.dataset;
+
+        var products = Number(pending.products) || 0;
+        var orders = Number(pending.orders) || 0;
+        var payments = Number(pending.payments) || 0;
+        var outstanding = Number(pending.outstanding) || 0;
+
+        document.getElementById("delete-store-name").textContent = pending.store;
+
+        // The headline consequence, stated in the merchant's own terms: these
+        // are products sitting in their live Shopify catalogue.
+        document.getElementById("delete-store-products").textContent = products
+          ? plural(products, "product", "products") +
+            " will be permanently deleted from your Shopify store."
+          : "This store has not put any products in your Shopify store.";
+
+        document.getElementById("delete-store-line-products").textContent = products
+          ? "Delete " + plural(products, "product", "products") +
+            " from your catalogue, with their variants, images and inventory."
+          : "Remove the link to " + pending.domain + ".";
+
+        document.getElementById("delete-store-line-orders").textContent = orders
+          ? "Forget " + plural(orders, "order", "orders") +
+            " raised against this supplier."
+          : "Leave your orders alone — there are none from this supplier.";
+
+        document.getElementById("delete-store-line-payments").textContent = payments
+          ? "Erase " + plural(payments, "recorded payment", "recorded payments") +
+            " and this supplier's payout history."
+          : "Erase this supplier's payout history.";
+
+        // Money still owed is the one thing a merchant must not discover
+        // afterwards, so it gets its own notice rather than a bullet.
+        if (outstanding > 0) {
+          owedNotice.textContent =
+            "You still owe " +
+            (pending.currency ? pending.currency + " " : "") +
+            outstanding.toFixed(2) +
+            " to this supplier. Deleting the store erases the record of it. " +
+            "Settle up, or note the figure, before continuing.";
+          owedNotice.hidden = false;
+        } else {
+          owedNotice.hidden = true;
+        }
+
+        deleteError.hidden = true;
+        deleteConfirm.disabled = false;
+        deleteConfirm.textContent = "Delete store and products";
+
+        if (typeof deleteModal.showModal === "function") deleteModal.showModal();
+        else deleteModal.setAttribute("open", "");
+
+        // Focus lands on Cancel, not on the destructive button: a stray Enter
+        // must not delete a catalogue.
+        deleteCancel.focus();
+      }
+
+      function closeDeleteModal() {
+        if (typeof deleteModal.close === "function") deleteModal.close();
+        else deleteModal.removeAttribute("open");
+        pending = null;
+      }
+
+      Array.prototype.slice.call(document.querySelectorAll(".delete-store"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            openDeleteModal(button);
+          });
+        });
+
+      deleteCancel.addEventListener("click", closeDeleteModal);
+
+      deleteConfirm.addEventListener("click", async function () {
+        if (!pending) return;
+
+        var connectionId = pending.connection;
+        var name = pending.store;
+
+        deleteError.hidden = true;
+        deleteConfirm.disabled = true;
+
+        /* Deleting comes back in rounds: a store can hold a thousand products
+         * and a thousand Shopify calls do not fit in one request. Keep asking
+         * until the server says it is done, showing what is left as it goes --
+         * a dialog that sits silent for two minutes reads as a hang. */
+        var removed = 0;
+
+        try {
+          for (;;) {
+            var response = await window.appFetch(
+              "/stores/" + connectionId + "/delete",
+              { method: "POST" }
+            );
+
+            var data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok) {
+              deleteConfirm.disabled = false;
+              deleteConfirm.textContent = "Delete store and products";
+              deleteError.textContent = data.error || "Could not delete that store.";
+              deleteError.hidden = false;
+              return;
+            }
+
+            removed += data.deleted || 0;
+
+            if (data.done) break;
+
+            // Nothing moved and something refused: going round again would
+            // fail the same way. Stop and say why, with the store still there.
+            if (!data.deleted) {
+              deleteConfirm.disabled = false;
+              deleteConfirm.textContent = "Delete store and products";
+              deleteError.textContent =
+                (data.error ||
+                  "Some products could not be deleted from your store.") +
+                " Removed " + removed + " so far; " + data.remaining +
+                " left. The store has been kept so you can try again.";
+              deleteError.hidden = false;
+              return;
+            }
+
+            deleteConfirm.textContent =
+              "Deleting… " + data.remaining + " left";
+          }
+
+          closeDeleteModal();
+          window.appToast(
+            "Deleted " + name + " and " + plural(removed, "product", "products")
+          );
+          window.appNavigate("/stores");
+        } catch (err) {
+          deleteConfirm.disabled = false;
+          deleteConfirm.textContent = "Delete store and products";
+          deleteError.textContent = "Could not reach the app. Try again.";
+          deleteError.hidden = false;
         }
       });
     })();
