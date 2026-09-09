@@ -38,43 +38,57 @@
       </p>
     <% } %>
 
-    <%# Both tabs always show: "nothing here" on one of them is itself the
-        answer, and the other tab may still have something. %>
-    <nav class="tabs">
-      <button
-        class="tabs__tab<%= tab === "shared" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="shared">
-        Shared (<%= counts.shared %>)
-      </button>
-      <button
-        class="tabs__tab<%= tab === "unshared" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="unshared">
-        Unshared (<%= counts.unshared %>)
-      </button>
-    </nav>
-
-    <% if (tab === "unshared" && products.length) { %>
-      <div class="panel__header">
-        <h2 class="panel__title"><%= products.length %> product<%= products.length === 1 ? "" : "s" %></h2>
-        <div class="panel__add">
-          <button class="btn btn--small" type="button" id="allow-button" disabled>
-            Allow selected
-          </button>
-        </div>
+    <%# One list, with a filter over it. Two tabs made the catalogue look like
+        two catalogues; this shows how much of it is out there and lets the
+        merchant narrow it when they want to. %>
+    <div class="listbar">
+      <div class="listbar__filter">
+        <label class="field__label" for="filter">Show</label>
+        <select class="field__input field__input--compact" id="filter">
+          <%# Every count is on the option, so the merchant knows what a filter
+              holds before choosing it. %>
+          <option value="all" <%= filter === "all" ? "selected" : "" %>>
+            All products (<%= counts.all %>)
+          </option>
+          <option value="shared" <%= filter === "shared" ? "selected" : "" %>>
+            Shared (<%= counts.shared %>)
+          </option>
+          <option value="unshared" <%= filter === "unshared" ? "selected" : "" %>>
+            Unshared (<%= counts.unshared %>)
+          </option>
+        </select>
       </div>
-    <% } %>
+
+      <%# On the same row as the filter: both narrow the same list, and the two
+          screens should not look like different designs. %>
+      <%- include("../partials/search", {
+        action: "/products",
+        search: search,
+        placeholder: "Search by title, vendor, type or SKU",
+        hidden: [{ name: "filter", value: filter === "all" ? "" : filter }],
+        clearHref: filter === "all" ? "/products" : "/products?filter=" + filter,
+      }) %>
+
+      <div class="listbar__actions">
+        <%# Only ever acts on the ticked rows, and only unshared rows can be
+            ticked -- so it stays hidden until there is something to act on. %>
+        <button class="btn btn--small" type="button" id="allow-button" disabled>
+          Allow selected
+        </button>
+      </div>
+    </div>
 
     <%# The table keeps its columns when it is empty and says so in a row of
         its own: a table that vanishes reads as a screen that failed. %>
     <table class="table">
       <thead>
         <tr>
-          <%# Nothing to tick on the Shared tab: those are already out. %>
-          <% if (tab === "unshared") { %>
-            <th class="table__check">
-              <input type="checkbox" id="check-all" aria-label="Select all">
-            </th>
-          <% } %>
+          <th class="table__check">
+            <%# Ticks only the rows that can be allowed; an already-shared
+                product has nothing left to offer. Only this page's rows --
+                nothing off-screen is ever silently included in an action. %>
+            <input type="checkbox" id="check-all" aria-label="Select all on this page">
+          </th>
           <th>Product</th>
           <th>Variants</th>
           <th>Status</th>
@@ -85,19 +99,31 @@
       <tbody>
         <% if (!products.length) { %>
           <tr class="row--empty">
-            <%# One cell across every column, including the checkbox one the
-                Unshared tab adds. %>
-            <td class="table__empty" colspan="<%= tab === "unshared" ? 6 : 5 %>">
+            <td class="table__empty" colspan="6">
               <strong>No records found</strong>
               <span>
-                <% if (!counts.shared && !counts.unshared) { %>
+                <%# A search that found nothing is not an empty catalogue.
+                    Saying so, and repeating the term, is the difference
+                    between "you have no products" and "try another word". %>
+                <% if (search) { %>
+                  Nothing matches <strong><%= search %></strong><%
+                    %><% if (filter !== "all") { %> in this filter<% } %>.
+                  Titles, vendors, product types and SKUs are all searched
+                  &mdash; try a shorter term, or <strong>Clear</strong> to see
+                  the whole catalogue again.
+                <% } else if (!counts.all) { %>
                   Use <strong>Add products</strong> to pull products in from this
                   store's Shopify catalogue. Nothing is sent anywhere until you
                   allow it.
-                <% } else if (tab === "unshared") { %>
-                  Everything staged here is already shared. Use Add products to bring in more.
+                <% } else if (filter === "shared") { %>
+                  <%# The catalogue is not empty -- the filter is. Saying which
+                      one is hiding everything is the useful half. %>
+                  Nothing is shared yet. Switch to <strong>All products</strong>,
+                  tick what you want to sell through a destination store, and
+                  press Allow selected.
                 <% } else { %>
-                  Nothing shared yet. Tick a product on the Unshared tab and press Allow selected.
+                  Everything staged here is already shared. Use
+                  <strong>Add products</strong> to bring in more.
                 <% } %>
               </span>
             </td>
@@ -105,15 +131,18 @@
         <% } else { %>
         <% products.forEach(function (product) { %>
           <tr>
-            <% if (tab === "unshared") { %>
-              <td class="table__check">
-                <input
-                  type="checkbox"
-                  class="row-check"
-                  value="<%= product.id %>"
-                  aria-label="Select <%= product.title %>">
-              </td>
-            <% } %>
+            <td class="table__check">
+              <%# Disabled rather than absent on a shared row: a column that
+                  sometimes has no control in it reads as broken. %>
+              <input
+                type="checkbox"
+                class="row-check"
+                value="<%= product.id %>"
+                <%= product.allowed ? "disabled" : "" %>
+                title="<%= product.allowed
+                  ? "Already shared" : "Select to share this product" %>"
+                aria-label="Select <%= product.title %>">
+            </td>
             <td>
               <span class="media">
                 <% if (product.image_url) { %>
@@ -148,15 +177,24 @@
                 <span class="muted">Not shared</span>
               <% } else { %>
                 <% if (product.synced) { %>
-                  <span class="pill pill--active"><%= product.synced %> synced</span>
+                  <span class="pill pill--active"
+                        title="Live in <%= product.synced %> destination store(s)">
+                    <%= product.synced %> synced
+                  </span>
                 <% } %>
                 <% if (product.awaiting) { %>
                   <%# Offered, but the destination has not ticked it yet --
                       nothing the source can do about it. %>
-                  <span class="pill"><%= product.awaiting %> awaiting them</span>
+                  <span class="pill"
+                        title="Offered, but the destination store has not accepted it yet. Nothing for you to do.">
+                    <%= product.awaiting %> awaiting them
+                  </span>
                 <% } %>
                 <% if (product.pending) { %>
-                  <span class="pill pill--paused"><%= product.pending %> pending</span>
+                  <span class="pill pill--paused"
+                        title="Accepted, and queued to be written to their store on the next sync">
+                    <%= product.pending %> pending
+                  </span>
                 <% } %>
                 <% if (product.failed) { %>
                   <span class="pill pill--failed" title="<%= product.error_message || "" %>">
@@ -187,6 +225,8 @@
       </tbody>
     </table>
 
+    <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+
   </main>
 
   <script>
@@ -215,7 +255,11 @@
       var checkAll = document.getElementById("check-all");
 
       function rowChecks() {
-        return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
+        // Not disabled ones: an already-shared product cannot be allowed
+        // again, so select-all must skip it and the count must not include it.
+        return Array.prototype.slice.call(
+          document.querySelectorAll(".row-check:not(:disabled)")
+        );
       }
 
       /**
@@ -262,8 +306,9 @@
           try {
             var data = await post("/products/allow", { selections: selections() });
             window.appToast("Allowed on " + data.destinations + " destination store(s)");
-            // They have moved to the other tab, so follow them there.
-            window.appNavigate("/products?tab=shared");
+            // Reload where they were -- same filter, same search. Page 1,
+            // though: the rows they just shared have moved.
+            window.appNavigate(<%- json(pager.href(1)) %>);
           } catch (err) {
             allowButton.disabled = false;
             fail(pageError, err.message);
@@ -278,14 +323,23 @@
 
       /* ---------------- tabs ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
-        .forEach(function (button) {
-          button.addEventListener("click", function () {
-            // A real navigation, not a class toggle: the two tabs hold
-            // different rows and the server decides which ones.
-            window.appNavigate("/products?tab=" + button.dataset.tab);
-          });
+      var filterSelect = document.getElementById("filter");
+
+      if (filterSelect) {
+        filterSelect.addEventListener("change", function () {
+          // A real navigation, not a client-side hide: the server decides
+          // which rows there are, so the counts and the list cannot disagree.
+          //
+          // The search comes along. Changing the filter mid-search means "the
+          // shared ones OF WHAT I SEARCHED FOR", not "start again".
+          var params = new URLSearchParams({ filter: filterSelect.value });
+          var q = <%- json(search || "") %>;
+
+          if (q) params.set("q", q);
+
+          window.appNavigate("/products?" + params.toString());
         });
+      }
 
       /* ---------------- row actions: view / delete ---------------- */
 

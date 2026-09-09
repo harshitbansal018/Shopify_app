@@ -391,6 +391,67 @@ const PRODUCT_SET_MUTATION = `
   }
 `;
 
+/*
+ * Shopify keeps a product's SEO title and description in `global/title_tag`
+ * and `global/description_tag`, and ALSO exposes them as the product's `seo`
+ * field. They are one thing wearing two hats.
+ */
+const SEO_METAFIELDS = {
+  "global/title_tag": "title",
+  "global/description_tag": "description",
+};
+
+/**
+ * Split a source product's metafields into what productSet will actually take.
+ *
+ * Two problems, both of which reject the WHOLE mutation -- so a single bad
+ * metafield stops the product's title, price and stock going across too.
+ *
+ * 1. The SEO pair. Sent as plain metafields they create fine on a NEW product,
+ *    because nothing is there yet. On the second push the destination product
+ *    already has them -- Shopify maintains them from its own `seo` field -- and
+ *    the incoming pair collides with what is there:
+ *
+ *        fields.0  global/title_tag        Key must be unique within this
+ *        fields.1  global/description_tag  namespace on this resource
+ *
+ *    which is exactly why a product syncs once and then fails on every
+ *    re-sync. They belong in `seo`, where Shopify keeps them.
+ *
+ * 2. Duplicates. A metafield is identified by namespace+key, and two entries
+ *    sharing a pair are refused. Shopify's own list should not contain any,
+ *    but the cost of being wrong is the whole product, so the first wins.
+ */
+function splitMetafields(metafields) {
+  const seen = new Set();
+  const kept = [];
+  let seo = null;
+
+  (metafields || []).forEach((metafield) => {
+    if (!metafield || !metafield.namespace || !metafield.key) return;
+
+    const id = `${metafield.namespace}/${metafield.key}`;
+
+    if (seen.has(id)) return;
+    seen.add(id);
+
+    const seoField = SEO_METAFIELDS[id];
+
+    if (seoField) {
+      // Empty string is a real value here -- it clears the SEO field, which is
+      // different from leaving it alone.
+      if (metafield.value !== null && metafield.value !== undefined) {
+        seo = { ...(seo || {}), [seoField]: String(metafield.value) };
+      }
+      return;
+    }
+
+    kept.push(metafield);
+  });
+
+  return { metafields: kept, seo };
+}
+
 /** Apply the connection's markup. Stored as a percent, so 15 means +15%. */
 function withMarkup(price, markupPercent) {
   // Checked before Number(), because Number(null) and Number("") are both 0 --
@@ -462,7 +523,12 @@ function buildProductInput(
   // The taxonomy is global, so the same id means the same category over there.
   if (on("category") && data.category) input.category = data.category;
   if (on("metafields") && Array.isArray(data.metafields) && data.metafields.length) {
-    input.metafields = data.metafields;
+    const { metafields, seo } = splitMetafields(data.metafields);
+
+    if (metafields.length) input.metafields = metafields;
+    // The SEO pair goes to the field Shopify actually keeps it in. Sending it
+    // as a metafield is what made a re-push collide with itself.
+    if (seo) input.seo = seo;
   }
 
   // Variants off means the destination's own variants are left completely
@@ -1096,6 +1162,7 @@ module.exports = {
   pushPending,
   pushOne,
   buildProductInput,
+  splitMetafields,
   selectVariants,
   withMarkup,
   optionKey,

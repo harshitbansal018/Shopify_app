@@ -16,6 +16,24 @@ process.env.HOST = "https://app.example.com";
 
 const { serializeForScript } = require(path.join(SERVER, "utils/html"));
 const { shopifyAdminUrl } = require(path.join(SERVER, "utils/shop"));
+const { paginate } = require(path.join(SERVER, "controllers/pagination"));
+
+/**
+ * The pager local a controller would pass, built by the REAL helper.
+ *
+ * A hand-rolled stand-in would let the partial and the helper drift apart --
+ * the pager would keep rendering here long after the shape it needs changed.
+ */
+function pagerFor(total, options = {}) {
+  const param = options.param || "page";
+  const request = { query: { [param]: String(options.page || 1) } };
+
+  return paginate(request, total, {
+    path: options.path || "/products",
+    params: options.params || {},
+    param,
+  });
+}
 
 let passed = 0;
 let failed = 0;
@@ -344,8 +362,8 @@ const STORE_ROW = {
     const withCode = await render("source/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
       connections: [CONNECTION],
       pairingCode: { code: "ABCD-2345", expiresAt: new Date("2026-01-01T10:30:00Z") },
       codeTtlMinutes: 15,
@@ -367,8 +385,8 @@ const STORE_ROW = {
     const noCode = await render("source/stores", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
       connections: [],
       pairingCode: null,
       codeTtlMinutes: 15,
@@ -520,8 +538,10 @@ const STORE_ROW = {
     const emptySource = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
+      pager: pagerFor(1),
+      search: "",
       products: [],
       connections: [CONN],
       activeConnections: [CONN],
@@ -539,8 +559,10 @@ const STORE_ROW = {
     const sourceHtml = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
+      pager: pagerFor(4),
+      search: "",
       products: [
         SOURCE_ROW,
         { ...SOURCE_ROW, id: 12, title: "Red Cap", allowed: 1, pending: 1 },
@@ -575,55 +597,79 @@ const STORE_ROW = {
       "the variant picker shows a flat list with no product titles"
     );
 
-    // Two tabs over one table, same shape as the destination.
-    const sourceTab = (tab, products) =>
+    // ONE list with a filter over it, not two tabs.
+    const SHARED_ROW = {
+      ...SOURCE_ROW, id: 12, title: "Red Cap", allowed: 1, synced: 1,
+    };
+
+    const sourceList = (filter, products) =>
       render("source/products", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "source" },
-        tab,
-        counts: { shared: 1, unshared: 1 },
+        filter,
+        counts: { all: 2, shared: 1, unshared: 1 },
+        pager: pagerFor(products.length, {
+          params: { filter: filter === "all" ? "" : filter },
+        }),
+        search: "",
         products,
         connections: [CONN],
         activeConnections: [CONN],
         });
 
-    const unsharedTab = await sourceTab("unshared", [SOURCE_ROW]);
-    const sharedTab = await sourceTab("shared", [
-      { ...SOURCE_ROW, id: 12, title: "Red Cap", allowed: 1, synced: 1 },
-    ]);
+    const all = await sourceList("all", [SOURCE_ROW, SHARED_ROW]);
 
-    check("both tabs are shown with their counts",
-      unsharedTab.includes("Shared (1)") && unsharedTab.includes("Unshared (1)"));
-    check("the open tab is marked",
-      /tabs__tab tabs__tab--on"[^>]*data-tab="unshared"/.test(unsharedTab) &&
-        /tabs__tab tabs__tab--on"[^>]*data-tab="shared"/.test(sharedTab),
-      "the merchant cannot tell which list they are looking at");
+    check("there are no tabs any more",
+      !all.includes("tabs__tab"),
+      "two tabs made one catalogue look like two");
+    check("one list holds shared and unshared together",
+      all.includes("Blue Shirt") && all.includes("Red Cap"));
 
-    check("only the Unshared tab is selectable",
-      unsharedTab.includes('class="row-check"') &&
-        !sharedTab.includes('class="row-check"'),
+    check("the filter offers all three views with their counts",
+      all.includes("All products (2)") && all.includes("Shared (1)") &&
+        all.includes("Unshared (1)"),
+      "a merchant should know what a filter holds before choosing it");
+    check("and marks the one in use",
+      /value="all"\s+selected/.test(all) &&
+        /value="shared"\s+selected/.test(await sourceList("shared", [SHARED_ROW])),
+      "otherwise the list and the control disagree");
+    check("choosing one is a real navigation",
+      all.includes("filter: filterSelect.value") &&
+        all.includes('appNavigate("/products?" + params.toString())'),
+      "hiding rows in the browser would leave the counts lying");
+
+    check("an unshared row can be ticked",
+      /class="row-check"[^>]*value="11"(?![^>]*disabled)/.test(all));
+    check("but a shared one cannot",
+      /class="row-check"[^>]*value="12"[^>]*disabled/.test(all),
       "an already-shared product has nothing left to allow");
-    check("and only it offers Allow selected",
-      unsharedTab.includes('id="allow-button"') &&
-        !sharedTab.includes('id="allow-button"'));
+    check("and says why on hover",
+      all.includes('title="Already shared"'));
+    check("select-all skips the disabled ones",
+      all.includes('".row-check:not(:disabled)"'),
+      "it would otherwise count rows the button cannot act on");
 
-    check("View and Delete are on BOTH tabs",
-      unsharedTab.includes("view-product") && sharedTab.includes("view-product") &&
-        unsharedTab.includes("delete-product") && sharedTab.includes("delete-product"));
+    check("View and Delete are on every row",
+      (all.match(/view-product/g) || []).length >= 2 &&
+        (all.match(/delete-product/g) || []).length >= 2);
 
-    check("allowing moves the merchant to the Shared tab",
-      unsharedTab.includes('appNavigate("/products?tab=shared")'),
-      "the product just moved and the merchant would not see it");
+    check("allowing keeps the merchant where they were",
+      all.includes('appNavigate("/products")'),
+      "the row is still in the list; it has only changed column");
+    check("and inside a filter it stays inside it",
+      (await sourceList("shared", [SHARED_ROW]))
+        .includes('appNavigate("/products?filter=shared")'),
+      "landing back in the full catalogue loses their place");
 
-    // An empty tab still shows the tabs -- the other one may have something.
-    const emptyShared = await sourceTab("shared", []);
+    // An empty FILTER is not an empty catalogue, and the copy has to say which.
+    const emptyShared = await sourceList("shared", []);
 
-    check("an empty tab keeps the tabs visible",
-      emptyShared.includes("Shared (1)") && emptyShared.includes("Unshared (1)"));
-    check("and explains itself",
-      emptyShared.includes("Nothing shared yet"));
-    check("with no rows there is no Allow button",
-      !emptyShared.includes('id="allow-button"'));
+    check("an empty filter keeps the filter visible",
+      emptyShared.includes("All products (2)"));
+    check("and says it is the filter that is empty",
+      emptyShared.includes("Nothing is shared yet") &&
+        emptyShared.includes("Switch to"),
+      "'no records' on a full catalogue reads as data loss");
 
     // The picker opens BLANK on purpose. Pre-ticking it with everything
     // already staged made it hand the whole catalogue back on every Add, and
@@ -670,8 +716,10 @@ const STORE_ROW = {
       (await render("source/products", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+        filter: "all",
+        counts: { all: 1, shared: 0, unshared: 1 },
+        pager: pagerFor(1),
+      search: "",
         products: [{ ...SOURCE_ROW, image_url: null }],
         connections: [CONN],
         activeConnections: [CONN],
@@ -711,8 +759,10 @@ const STORE_ROW = {
     const narrowedOnly = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
+      pager: pagerFor(1),
+      search: "",
       products: [
         {
           ...SOURCE_ROW,
@@ -737,8 +787,10 @@ const STORE_ROW = {
     const noDestination = await render("source/products", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
-      tab: "unshared",
-      counts: { shared: 0, unshared: 1 },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
+      pager: pagerFor(1),
+      search: "",
       products: [SOURCE_ROW],
       connections: [],
       activeConnections: [],
@@ -802,6 +854,8 @@ const STORE_ROW = {
         store: { ...STORE_ROW, store_type: "destination" },
         tab,
         counts: { synced: 1, unsynced: 1 },
+        pager: pagerFor(products.length, { params: { tab } }),
+        search: "",
         products,
         connections: [CONN],
       });
@@ -856,7 +910,7 @@ const STORE_ROW = {
         synced.includes('"/products/accept"'),
       "that is what moves the row back to the Unsynced tab");
     check("and it says where the row went",
-      synced.includes('"/products?tab=" + (unsync ? "unsynced" : "synced")'));
+      synced.includes('productsUrl(unsync ? "unsynced" : "synced")'));
 
     // A product that is gone at the source cannot be synced back, so the pill
     // there stays a label.
@@ -896,6 +950,8 @@ const STORE_ROW = {
       store: { ...STORE_ROW, store_type: "destination" },
       tab: "unsynced",
       counts: { synced: 0, unsynced: 0 },
+      pager: pagerFor(0, { params: { tab: "unsynced" } }),
+      search: "",
       products: [],
       connections: [CONN],
     });
@@ -1196,6 +1252,7 @@ const STORE_ROW = {
         store: { ...STORE_ROW, store_type: role },
         tab,
         counts: { open: 1, done: 1 },
+        pager: pagerFor(rows.length, { path: "/orders", params: { tab } }),
         orders: rows,
         statusCounts: { unfulfilled: 1, fulfilled: 1, cancelled: 0 },
       });
@@ -1484,6 +1541,9 @@ const STORE_ROW = {
         store: { ...STORE_ROW, store_type: "destination" },
         connection: CONN,
         supplier: SUPPLIER,
+        // Two lists on one page, so two pagers with two query keys.
+        orderPager: pagerFor(2, { path: "/payouts/4" }),
+        paymentPager: pagerFor(1, { path: "/payouts/4", param: "payments" }),
         payments: [
           { id: 9, amount: 40, paid_at: "2026-09-02T00:00:00Z", reference: "BANK-1" },
         ],
@@ -1614,6 +1674,8 @@ const STORE_ROW = {
         store: { ...STORE_ROW, store_type: "source" },
         connection: CONN,
         buyer: BUYER,
+        orderPager: pagerFor(2, { path: "/payouts/4" }),
+        paymentPager: pagerFor(1, { path: "/payouts/4", param: "payments" }),
         payments: [
           { id: 9, amount: 40, paid_at: "2026-09-02T00:00:00Z", reference: "BANK-1" },
         ],
@@ -1830,6 +1892,159 @@ const STORE_ROW = {
       "/images/favicon-32.png",
       "/images/apple-touch-icon.png",
     ]);
+  }
+
+  console.log("\nSearch box");
+  {
+    const box = (search, extra = {}) =>
+      render("partials/search", {
+        action: "/products",
+        search,
+        placeholder: "Search by title, vendor, type or SKU",
+        hidden: [{ name: "filter", value: "unshared" }],
+        clearHref: "/products?filter=unshared",
+        ...extra,
+      });
+
+    const empty = await box("");
+
+    // A real form, so Enter submits and phone keyboards show a Search key --
+    // but it must NAVIGATE, or a GET inside the iframe loses the token.
+    check("it is a form", empty.includes("<form") && empty.includes('role="search"'));
+    check("that navigates instead of submitting",
+      empty.includes("data-navigate-form"),
+      "a plain GET form posts to the top window and comes back logged out");
+    check("the field is a search input", /type="search"[\s\S]{0,60}name="q"/.test(empty) ||
+      /name="q"[\s\S]{0,60}type="search"/.test(empty));
+    check("it names what it searches",
+      empty.includes("SKU"),
+      "a merchant will not guess that a SKU works");
+
+    // The filter has to travel, or searching would silently widen the list.
+    check("the current filter is carried",
+      /<input type="hidden" name="filter" value="unshared">/.test(empty));
+
+    check("an empty box offers nothing to clear",
+      !empty.includes("search__clear"),
+      "a Clear beside an empty box is a control that does nothing");
+
+    const active = await box("blue shirt");
+
+    check("what was searched for stays in the box",
+      active.includes('value="blue shirt"'),
+      "an emptied box after a search reads as though it did not work");
+    check("and there is a way back out",
+      active.includes("search__clear") &&
+        active.includes('data-navigate="/products?filter=unshared"'),
+      "Clear must drop the search and keep the filter");
+
+    // The page number is deliberately absent: a new search is a new list.
+    check("no page number is carried into a new search",
+      !active.includes('name="page"'),
+      "landing on page 7 of a fresh search is an empty screen");
+
+    // It renders into the real screens, with the filter and tab they are on.
+    const sourceScreen = await render("source/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      filter: "unshared",
+      counts: { all: 3, shared: 2, unshared: 1 },
+      pager: pagerFor(0, { params: { filter: "unshared", q: "widget" } }),
+      search: "widget",
+      products: [],
+      connections: [],
+      activeConnections: [],
+    });
+
+    check("the source screen carries its filter into the search",
+      sourceScreen.includes('name="filter" value="unshared"'));
+    check("and a search that finds nothing says so, not 'no products'",
+      sourceScreen.includes("Nothing matches") && sourceScreen.includes("widget"),
+      "an empty catalogue and an empty result are different problems");
+    check("the search survives a change of filter",
+      sourceScreen.includes('params.set("q", q)'),
+      "narrowing mid-search must mean 'the shared ones OF THIS'");
+
+    const destinationScreen = await render("destination/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      tab: "synced",
+      counts: { synced: 4, unsynced: 0 },
+      pager: pagerFor(0, { params: { tab: "synced", q: "widget" } }),
+      search: "widget",
+      products: [],
+      connections: [],
+    });
+
+    check("the destination screen searches inside its tab",
+      destinationScreen.includes('name="tab" value="synced"'));
+    check("and can search by the store that sent it",
+      destinationScreen.includes("source store"),
+      "over there a merchant thinks in suppliers, not product names");
+    check("its empty result says which tab is empty",
+      destinationScreen.includes("Nothing on this tab matches"));
+
+    /* One row, not two. The search and the control beside it narrow the same
+     * table; stacked, they read as two unrelated widgets. */
+    const controlRow = (html) =>
+      html.slice(html.indexOf('class="listbar"'), html.indexOf("<table"));
+
+    check("the destination search sits on the tab row",
+      controlRow(destinationScreen).includes('role="search"') &&
+        controlRow(destinationScreen).includes("tabs__tab"),
+      "the tabs and the search have to be inside the same listbar");
+
+    check("and the source search sits on the filter row",
+      controlRow(sourceScreen).includes('role="search"') &&
+        controlRow(sourceScreen).includes('id="filter"'),
+      "the two screens must not look like different designs");
+  }
+
+  console.log("\nPager");
+  {
+    const pager = (total, options) =>
+      render("partials/pager", { pager: pagerFor(total, options), noun: "products" });
+
+    // A pager under a table that fits on one screen is noise.
+    check("one page draws no pager",
+      !(await pager(10)).includes("class=\"pager\""),
+      "a list that fits needs no controls");
+
+    const many = await pager(214, { page: 5, params: { filter: "unshared" } });
+
+    check("more than one page draws it", many.includes('class="pager"'));
+    check("it says which rows are on screen",
+      many.includes("61") && many.includes("75") && many.includes("214"),
+      "showing 61-75 of 214 -- otherwise the merchant cannot tell where they are");
+    check("and what is being counted", many.includes("products"));
+
+    // Buttons, not links: a plain href loses the session token in the iframe.
+    check("it navigates through appNavigate",
+      many.includes("data-navigate=") && !/<a [^>]*href="\/products/.test(many),
+      "an <a> inside the admin iframe comes back unauthenticated");
+    check("the filter travels with every page link",
+      (many.match(/data-navigate="\/products\?filter=unshared/g) || []).length > 1,
+      "Next would drop the merchant back into the full catalogue");
+
+    check("the current page is marked for a screen reader",
+      many.includes('aria-current="page"'));
+    check("and is not clickable",
+      /pager__page--on[^>]*disabled/.test(many) ||
+        /disabled[^>]*pager__page--on/.test(many));
+
+    const first = await pager(214, { page: 1 });
+    check("page one cannot go back",
+      /pager__step"[^>]*disabled/.test(first),
+      "Prev must be present but dead, not missing -- the row would jump");
+
+    const last = await pager(214, { page: 15 });
+    check("the last page cannot go forward",
+      (last.match(/pager__step"[^>]*disabled/g) || []).length === 1);
+
+    check("a deep list is windowed rather than listing every page",
+      (await pager(3000, { page: 100 })).includes("&hellip;") ||
+        (await pager(3000, { page: 100 })).includes("…"),
+      "200 numbered buttons is not a control");
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

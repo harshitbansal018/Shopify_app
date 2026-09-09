@@ -39,7 +39,7 @@
         <span class="card__value"><%= stats.cards.shared %></span>
         <span class="card__note">
           <% if (stats.cards.unshared) { %>
-            <%= stats.cards.unshared %> ready on <s-link href="/products?tab=unshared">Products</s-link>
+            <%= stats.cards.unshared %> ready on <s-link href="/products?filter=unshared">Products</s-link>
           <% } else { %>
             Everything staged is shared
           <% } %>
@@ -59,7 +59,7 @@
         <% if (!total) { %>
           <p class="panel__copy">
             No products staged yet. Add products on
-            <s-link href="/products?tab=unshared">Products</s-link>.
+            <s-link href="/products?filter=unshared">Products</s-link>.
           </p>
         <% } else { %>
           <div class="chart chart--pie">

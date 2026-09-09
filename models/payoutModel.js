@@ -243,14 +243,23 @@ async function summaryForSource(sourceStoreId) {
 }
 
 /** The payments made to one source store, newest first. */
-async function listForConnection(connectionId, { limit = 100 } = {}) {
+async function listForConnection(connectionId, { limit = 100, offset = 0 } = {}) {
   return query(
     `SELECT * FROM payouts
       WHERE connection_id = ?
       ORDER BY paid_at DESC, id DESC
-      LIMIT ?`,
-    [connectionId, Number(limit)]
+      LIMIT ? OFFSET ?`,
+    [connectionId, Number(limit), Number(offset)]
   );
+}
+
+/** How many payments this connection has, for the pager. */
+async function countForConnection(connectionId) {
+  const rows = await query(
+    "SELECT COUNT(*) AS total FROM payouts WHERE connection_id = ?",
+    [connectionId]
+  );
+  return Number(rows[0] ? rows[0].total : 0);
 }
 
 /**
@@ -309,6 +318,7 @@ module.exports = {
   summaryForDestination,
   summaryForSource,
   listForConnection,
+  countForConnection,
   record,
   remove,
   findById,

@@ -511,7 +511,6 @@ body {
   cursor: pointer;
   list-style: none;
 }
-
 /* Both are needed: the first hides Safari's triangle, the second everyone
    else's. Without them the marker sits beside our own caret. */
 .faq__question::-webkit-details-marker {
@@ -751,9 +750,16 @@ body {
   margin-top: 1.2rem;
 }
 
+/* inline-block, not inline: an inline box lets its text break mid-phrase and
+   drags the border and padding along with it, so "1 awaiting them" came out
+   as two half-pills stacked on each other. nowrap then keeps the phrase
+   whole; several pills in one cell still wrap, but as whole units. */
 .pill {
+  display: inline-block;
   padding: 0.12rem 0.55rem;
   font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--line);
 }
@@ -877,6 +883,12 @@ body {
 .table td .muted {
   display: block;
   margin-top: 0.15rem;
+}
+
+/* A status cell can hold two or three of these -- synced, awaiting, failed --
+   and without this they touch. */
+.table td .pill {
+  margin: 0.1rem 0.25rem 0.1rem 0;
 }
 
 .table td .pill + .pill {
@@ -1441,6 +1453,58 @@ body {
   border-top: 1px solid var(--line-soft);
 }
 
+/* ---------------- list bar: a filter and its actions ---------------- */
+
+.listbar {
+  display: flex;
+  /* Everything in the row lines up on its middle: the tabs, the filter and
+     the search box are all single-line controls of slightly different
+     heights. */
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.listbar__filter {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+/* The label sits beside the control, so it loses the stacked spacing
+   .field__label carries everywhere else. */
+.listbar__filter .field__label {
+  margin: 0;
+  color: var(--muted);
+}
+
+.listbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* A search sharing the row with the tabs or the filter.
+   Its own bottom margin belongs to the standalone case; here the listbar
+   already spaces the row from the table. */
+.listbar .search {
+  /* Takes the rest of the row and packs its contents to the right, so the row
+     reads: what you are looking at, then find one in it.
+
+     justify-content, not margin-left:auto -- flex-grow resolves first and
+     leaves an auto margin nothing to absorb, and the field's own max-width
+     would then strand the box in the middle of the space it claimed. */
+  flex: 1 1 18rem;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.listbar .tabs {
+  margin-bottom: 0;
+}
+
 /* ---------------- tabs ---------------- */
 
 .tabs {
@@ -1471,6 +1535,139 @@ body {
   background: var(--brand-soft);
   border-color: var(--brand);
   box-shadow: none;
+}
+
+/* ---------------- search ---------------- */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+/* The icon lives INSIDE the field, so the box has to be the positioned
+   element and the input has to make room for it on the left. */
+.search__field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 22rem;
+  /* Past this it stops being a search box and starts being a banner. */
+  max-width: 34rem;
+  color: var(--muted);
+}
+
+.search__field .icon {
+  position: absolute;
+  left: 0.65rem;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.search__input {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.5rem 2.3rem;
+  font: inherit;
+  font-size: 0.92rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.search__input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.search__input::placeholder {
+  color: var(--muted);
+}
+
+/* Safari draws its own clear button; ours is a real control that navigates,
+   so the native one would be a second, differently-behaved X. */
+.search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+@media (max-width: 34rem) {
+  .search {
+    flex-wrap: wrap;
+  }
+
+  .search__field {
+    flex-basis: 100%;
+  }
+}
+
+/* ---------------- pager ---------------- */
+
+/* Sits under the table it belongs to. The summary goes on the left and the
+   controls on the right, so on a wide screen the buttons stay near the scroll
+   bar rather than stranded in the middle. */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.pager__summary {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.pager__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Square-ish, so a row of numbers reads as a row of numbers. min-width rather
+   than width: a four-digit page still has to fit. */
+.pager__page {
+  min-width: 2.1rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  text-align: center;
+}
+
+/* The current page. Disabled, but this is where you ARE -- so it must not look
+   like the greyed-out unavailable controls beside it. */
+.pager__page--on:disabled {
+  color: var(--brand);
+  font-weight: 600;
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  opacity: 1;
+  cursor: default;
+}
+
+.pager__gap {
+  padding: 0 0.15rem;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* Narrow screens: the summary above, the controls below and centred, rather
+   than a squeezed row that wraps mid-number. */
+@media (max-width: 34rem) {
+  .pager {
+    justify-content: center;
+  }
+
+  .pager__summary {
+    width: 100%;
+    text-align: center;
+  }
 }
 
 /* Zero stock is worth noticing before accepting a product. */

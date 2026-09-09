@@ -35,18 +35,33 @@
         itself the answer and the other tab may still have something.
         "Unsynced" is what a source has offered and this store has not
         accepted; nothing of it has been written here yet. %>
-    <nav class="tabs">
-      <button
-        class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="synced">
-        Synced (<%= counts.synced %>)
-      </button>
-      <button
-        class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="unsynced">
-        Unsynced (<%= counts.unsynced %>)
-      </button>
-    </nav>
+    <%# Tabs and search on one row: both narrow the same table, so they belong
+        together rather than stacked as two separate-looking controls. %>
+    <div class="listbar">
+      <nav class="tabs">
+        <button
+          class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="synced">
+          Synced (<%= counts.synced %>)
+        </button>
+        <button
+          class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="unsynced">
+          Unsynced (<%= counts.unsynced %>)
+        </button>
+      </nav>
+
+      <%# Searches inside the current tab. Across both would be worse: the two
+          tabs mean different things to act on, and a result you cannot see
+          without also switching tab is a dead end. %>
+      <%- include("../partials/search", {
+        action: "/products",
+        search: search,
+        placeholder: "Search by title, vendor, SKU or source store",
+        hidden: [{ name: "tab", value: tab }],
+        clearHref: "/products?tab=" + tab,
+      }) %>
+    </div>
 
     <%# Only when there is something to act on: buttons over an empty list
         are just dead controls. %>
@@ -95,9 +110,17 @@
                 <td class="table__empty" colspan="<%= tab === "unsynced" ? 8 : 7 %>">
                   <strong>No records found</strong>
                   <span>
-                    <%= tab === "unsynced"
-                        ? "Nothing is waiting for you. When a source store offers a product it appears here."
-                        : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
+                    <%# A search that found nothing is not an empty tab. %>
+                    <% if (search) { %>
+                      Nothing on this tab matches <strong><%= search %></strong>.
+                      Titles, vendors, SKUs and source store names are all
+                      searched &mdash; try a shorter term, the other tab, or
+                      <strong>Clear</strong>.
+                    <% } else { %>
+                      <%= tab === "unsynced"
+                          ? "Nothing is waiting for you. When a source store offers a product it appears here."
+                          : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
+                    <% } %>
                   </span>
                 </td>
               </tr>
@@ -198,6 +221,8 @@
           </tbody>
         </table>
 
+    <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+
   </main>
 
   <script>
@@ -213,6 +238,23 @@
         pageError.hidden = false;
       }
 
+      /* A /products URL that keeps whatever is being searched for.
+       *
+       * Every navigation on this screen goes through it. After an action moves
+       * a row to the other tab, the merchant should arrive there still looking
+       * for what they were looking for -- not back at the full list. */
+      var currentSearch = <%- json(search || "") %>;
+
+      function productsUrl(tab) {
+        var params = new URLSearchParams();
+
+        if (tab) params.set("tab", tab);
+        if (currentSearch) params.set("q", currentSearch);
+
+        var query = params.toString();
+        return query ? "/products?" + query : "/products";
+      }
+
       /* ---------------- tabs ---------------- */
 
       Array.prototype.slice.call(document.querySelectorAll(".tabs__tab"))
@@ -220,7 +262,15 @@
           button.addEventListener("click", function () {
             // A real navigation, not a class toggle: the two tabs hold
             // different rows and the server decides which ones.
-            window.appNavigate("/products?tab=" + button.dataset.tab);
+            //
+            // The search comes along: switching tabs mid-search means "the
+            // other tab, still looking for this".
+            var params = new URLSearchParams({ tab: button.dataset.tab });
+            var q = <%- json(search || "") %>;
+
+            if (q) params.set("q", q);
+
+            window.appNavigate("/products?" + params.toString());
           });
         });
 
@@ -248,7 +298,7 @@
             if (!response.ok) throw new Error(data.error || "Request failed");
 
             window.appToast(data.synced + " updated, " + data.failed + " failed");
-            window.appNavigate("/products");
+            window.appNavigate(productsUrl());
           } catch (err) {
             syncButton.disabled = false;
             syncButton.textContent = "Sync now";
@@ -292,7 +342,7 @@
 
               window.appToast(unsync ? "Moved to Unsynced" : "Synced");
               // The row belongs on the other tab now, so go and show it there.
-              window.appNavigate("/products?tab=" + (unsync ? "unsynced" : "synced"));
+              window.appNavigate(productsUrl(unsync ? "unsynced" : "synced"));
             } catch (err) {
               pill.disabled = false;
               pill.textContent = pill.dataset.was;
@@ -374,7 +424,7 @@
 
         window.appToast(data.synced + " synced, " + data.failed + " failed");
         // They are synced now, so show them where they landed.
-        window.appNavigate("/products?tab=synced");
+        window.appNavigate(productsUrl("synced"));
       });
 
       declineButton.addEventListener("click", async function () {
@@ -388,7 +438,7 @@
         if (!data) return;
 
         window.appToast("Declined " + data.declined + " product(s)");
-        window.appNavigate("/products");
+        window.appNavigate(productsUrl());
       });
     })();
   </script>

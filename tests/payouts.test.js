@@ -205,6 +205,24 @@ async function sale(destinationStoreId, connectionId, shopifyId, paid, cost) {
       check("with the reference kept",
         payments.some((p) => p.reference === "BANK-1"));
 
+      /* The payments list pages, and shares its screen with the orders list --
+       * so it needs a count of its own, and an offset that agrees with it. */
+      check("the count matches the list",
+        (await payoutModel.countForConnection(connection.id)) === payments.length,
+        "the pager would offer a page with nothing on it");
+
+      const secondPage = await payoutModel.listForConnection(connection.id, {
+        limit: 2,
+        offset: 2,
+      });
+
+      check("an offset moves through them in the same order",
+        secondPage.length === 1 && secondPage[0].id === payments[2].id,
+        "a payment seen twice or not at all is a bookkeeping error");
+      check("an offset past the end is empty, not an error",
+        (await payoutModel.listForConnection(connection.id, { offset: 500 }))
+          .length === 0);
+
       await payoutModel.remove(first);
 
       [row] = await payoutModel.summaryForDestination(destination.id);

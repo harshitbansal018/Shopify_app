@@ -117,28 +117,95 @@ async function findById(id) {
   return hydrate(rows[0]);
 }
 
+/**
+ * The WHERE that both screens share, built from the same options.
+ *
+ * `tab` is narrowed in SQL rather than by the caller because the screens page:
+ * filtering an already-read page of fifteen leaves however many happened to
+ * match, and the rest of that tab is simply never reachable.
+ *
+ *   open   still on the source to pick and ship
+ *   done   fulfilled or cancelled -- settled either way
+ */
+function scopeFor(column, storeId, { tab = null, connectionId = null } = {}) {
+  const params = [storeId];
+  let where = `WHERE ${column} = ?`;
+
+  if (tab === "open") where += " AND om.source_fulfillment_status = 'unfulfilled'";
+  if (tab === "done") where += " AND om.source_fulfillment_status <> 'unfulfilled'";
+
+  if (connectionId !== null && connectionId !== undefined) {
+    where += " AND om.connection_id = ?";
+    params.push(Number(connectionId));
+  }
+
+  return { where, params };
+}
+
 /** Every sale raised from one destination store, newest first. */
-async function listForDestination(destinationStoreId, { limit = 100 } = {}) {
+async function listForDestination(
+  destinationStoreId,
+  { limit = 100, offset = 0, tab = null, connectionId = null } = {}
+) {
+  const scope = scopeFor("c.destination_store_id", destinationStoreId, {
+    tab,
+    connectionId,
+  });
+
   const rows = await query(
     `${SELECT_WITH_ORDER}
-      WHERE c.destination_store_id = ?
+      ${scope.where}
       ORDER BY om.id DESC
-      LIMIT ?`,
-    [destinationStoreId, Number(limit)]
+      LIMIT ? OFFSET ?`,
+    [...scope.params, Number(limit), Number(offset)]
   );
   return rows.map(hydrate);
 }
 
 /** Every sale this source store has been asked to supply, newest first. */
-async function listForSource(sourceStoreId, { limit = 100 } = {}) {
+async function listForSource(
+  sourceStoreId,
+  { limit = 100, offset = 0, tab = null, connectionId = null } = {}
+) {
+  const scope = scopeFor("c.source_store_id", sourceStoreId, {
+    tab,
+    connectionId,
+  });
+
   const rows = await query(
     `${SELECT_WITH_ORDER}
-      WHERE c.source_store_id = ?
+      ${scope.where}
       ORDER BY om.id DESC
-      LIMIT ?`,
-    [sourceStoreId, Number(limit)]
+      LIMIT ? OFFSET ?`,
+    [...scope.params, Number(limit), Number(offset)]
   );
   return rows.map(hydrate);
+}
+
+/**
+ * How many sales match, without reading them.
+ *
+ * The joins stay: `side` is a column on store_connections, so dropping them
+ * would leave nothing to scope by and count every store's orders.
+ */
+async function countForStore(
+  storeId,
+  { side = "destination", tab = null, connectionId = null } = {}
+) {
+  const column =
+    side === "source" ? "c.source_store_id" : "c.destination_store_id";
+
+  const scope = scopeFor(column, storeId, { tab, connectionId });
+
+  const rows = await query(
+    `SELECT COUNT(*) AS total
+       FROM order_mappings om
+       JOIN store_connections c ON c.id = om.connection_id
+      ${scope.where}`,
+    scope.params
+  );
+
+  return Number(rows[0] ? rows[0].total : 0);
 }
 
 /** Counts per fulfilment state for one side, for the screen tabs. */
@@ -362,6 +429,7 @@ module.exports = {
   findById,
   listForDestination,
   listForSource,
+  countForStore,
   statusCounts,
   markFulfilled,
   markUnfulfilled,

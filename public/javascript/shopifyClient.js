@@ -57,4 +57,60 @@
   window.appFetch = appFetch;
   window.appNavigate = appNavigate;
   window.appToast = appToast;
+
+  /*
+   * Anything carrying data-navigate goes there when clicked.
+   *
+   * Inside the admin iframe a plain <a href> loses the session token and the
+   * page comes back unauthenticated, so every internal link has to go through
+   * appNavigate. Doing it once here, delegated, is what lets a partial like the
+   * pager be dropped into any screen without also copying a click handler into
+   * that screen's script block.
+   *
+   * Delegated from the document, so it also works for rows added after load.
+   */
+  document.addEventListener("click", function (event) {
+    var target = event.target.closest("[data-navigate]");
+
+    if (!target || target.disabled) return;
+
+    var href = target.getAttribute("data-navigate");
+
+    // Empty is deliberate -- the current page's own number, and the Prev button
+    // on page one, are rendered as disabled controls rather than removed.
+    if (!href) return;
+
+    event.preventDefault();
+    appNavigate(href);
+  });
+
+  /*
+   * A GET form that navigates instead of submitting.
+   *
+   * A real <form method="get"> inside the admin iframe posts to the top window
+   * and comes back without a session token, so the search box has to become an
+   * appNavigate. Keeping it a FORM rather than an input plus a click handler is
+   * what makes Enter submit, phone keyboards show a Search key, and the browser
+   * offer what was typed here before.
+   *
+   * Empty fields are dropped rather than sent as key=, so clearing the box
+   * really clears the search instead of searching for nothing.
+   */
+  document.addEventListener("submit", function (event) {
+    var form = event.target.closest("form[data-navigate-form]");
+
+    if (!form) return;
+
+    event.preventDefault();
+
+    var params = new URLSearchParams();
+
+    new FormData(form).forEach(function (value, key) {
+      var trimmed = String(value).trim();
+      if (trimmed) params.set(key, trimmed);
+    });
+
+    var query = params.toString();
+    appNavigate(form.getAttribute("action") + (query ? "?" + query : ""));
+  });
 })();
