@@ -4,7 +4,13 @@
 // Shopify payload means a re-sync, or a second connection fanning out from the
 // same source, needs no extra API call.
 const { query, pool } = require("../config/db");
-const { parseJson, toJsonColumn, toShopifyId, toDate } = require("./helpers");
+const {
+  parseJson,
+  toJsonColumn,
+  toShopifyId,
+  toDate,
+  likePattern,
+} = require("./helpers");
 const sourceVariantModel = require("./sourceVariantModel");
 
 function hydrate(row) {
@@ -80,14 +86,71 @@ async function listForStore(storeId, { limit = 250, offset = 0 } = {}) {
 }
 
 /**
+ * What a merchant typed in the search box, as SQL.
+ *
+ * Title, vendor, type, handle and SKU. SKU is the one that earns its keep --
+ * a warehouse operator working from a picking list has the code and not the
+ * marketing name, and the sku column is already indexed for it.
+ *
+ * Returned as a fragment plus its parameters so the list and the COUNT beside
+ * it are built from the SAME source. Two hand-written copies of this drift,
+ * and then the pager promises pages the list cannot fill.
+ */
+function searchClause(search, { extraColumns = [] } = {}) {
+  const pattern = likePattern(search);
+
+  if (!pattern) return { where: "", params: [] };
+
+  const columns = [
+    "sp.title",
+    "sp.vendor",
+    "sp.product_type",
+    "sp.handle",
+    // The destination screen adds the supplier's name and domain here: over
+    // there a merchant thinks "what did Warehouse send me", which is not
+    // something any column on the product answers.
+    ...extraColumns,
+  ];
+
+  const tests = columns.map((column) => `${column} LIKE ?`);
+
+  tests.push(`EXISTS (SELECT 1 FROM source_variant_mappings svm
+                       WHERE svm.source_product_id = sp.id
+                         AND svm.sku LIKE ?)`);
+
+  return {
+    where: ` AND (${tests.join("\n                  OR ")})`,
+    params: new Array(tests.length).fill(pattern),
+  };
+}
+
+/**
  * The source store's Products table: every cached product, with how many
  * connections it is allowed on and what happened on the last push.
  *
  * The aggregate is a LEFT JOIN rather than a per-row query, so a hundred
  * products still cost one statement. A product with no mappings comes back
  * with allowed = 0, which is what "not shared yet" means on screen.
+ *
+ * `filter` narrows to shared or unshared HERE rather than in the caller: the
+ * screen shows one page at a time, and filtering a page after it has been read
+ * gives a page of whatever survived -- fifteen rows in, three rows out.
  */
-async function listWithMappingStatus(storeId, { limit = 100, offset = 0 } = {}) {
+async function listWithMappingStatus(
+  storeId,
+  { limit = 100, offset = 0, filter = "all", search = null } = {}
+) {
+  // A HAVING, not a WHERE: `allowed` is the aggregate, and it does not exist
+  // until the rows are grouped.
+  const having =
+    filter === "shared"
+      ? "HAVING allowed > 0"
+      : filter === "unshared"
+        ? "HAVING allowed = 0"
+        : "";
+
+  const matching = searchClause(search);
+
   const rows = await query(
     `SELECT sp.id, sp.shopify_product_id, sp.title, sp.handle, sp.vendor,
             sp.product_type, sp.status, sp.shopify_updated_at, sp.last_fetched_at,
@@ -109,11 +172,12 @@ async function listWithMappingStatus(storeId, { limit = 100, offset = 0 } = {}) 
               WHERE svm.source_product_id = sp.id) AS variant_count
        FROM source_products sp
        LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id
-      WHERE sp.store_id = ?
+      WHERE sp.store_id = ?${matching.where}
       GROUP BY sp.id
+      ${having}
       ORDER BY sp.title, sp.id
       LIMIT ? OFFSET ?`,
-    [storeId, Number(limit), Number(offset)]
+    [storeId, ...matching.params, Number(limit), Number(offset)]
   );
 
   return rows.map((row) => ({
@@ -137,10 +201,75 @@ async function listWithMappingStatus(storeId, { limit = 100, offset = 0 } = {}) 
 }
 
 /**
+ * How many products each filter would show.
+ *
+ * A separate statement because the filter dropdown has to name a count the
+ * merchant has not chosen yet -- "Shared (48)" while looking at Unshared. The
+ * page itself only holds fifteen rows, so there is nothing on it to count.
+ *
+ * The subquery groups first and counts second: `allowed` is per product, and
+ * counting the join directly would count mappings.
+ */
+async function countsWithMappingStatus(storeId, { search = null } = {}) {
+  // The same clause the list uses. While a search is running the dropdown must
+  // count what MATCHES -- "Shared (48)" beside three visible rows would read
+  // as a broken filter.
+  const matching = searchClause(search);
+
+  const rows = await query(
+    `SELECT COUNT(*)          AS total,
+            SUM(allowed > 0)  AS shared,
+            SUM(allowed = 0)  AS unshared
+       FROM (SELECT sp.id, COUNT(pm.id) AS allowed
+               FROM source_products sp
+               LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id
+              WHERE sp.store_id = ?${matching.where}
+              GROUP BY sp.id) grouped`,
+    [storeId, ...matching.params]
+  );
+
+  const row = rows[0] || {};
+
+  return {
+    all: Number(row.total || 0),
+    shared: Number(row.shared || 0),
+    unshared: Number(row.unshared || 0),
+  };
+}
+
+/**
  * The destination store's Products table: what has been synced INTO this
  * store, and which source store each product came from.
+ *
+ * `tab` is applied here for the same reason the source's filter is: a page is
+ * fifteen rows, and narrowing it afterwards would leave fewer than that.
  */
-async function listSyncedIntoStore(destinationStoreId, { limit = 100, offset = 0 } = {}) {
+async function listSyncedIntoStore(
+  destinationStoreId,
+  { limit = 100, offset = 0, tab = null, mappingId = null, search = null } = {}
+) {
+  const params = [destinationStoreId];
+  let where = "";
+
+  // Accepted or not is the whole difference between the two tabs: an unsynced
+  // product is one this store has been offered and has not taken yet.
+  if (tab === "synced") where += " AND pm.accepted_at IS NOT NULL";
+  if (tab === "unsynced") where += " AND pm.accepted_at IS NULL";
+
+  if (mappingId !== null) {
+    where += " AND pm.id = ?";
+    params.push(Number(mappingId));
+  }
+
+  const matching = searchClause(search, {
+    extraColumns: ["src.shop_domain", "src.store_name"],
+  });
+
+  where += matching.where;
+  params.push(...matching.params);
+
+  params.push(Number(limit), Number(offset));
+
   const rows = await query(
     `SELECT pm.id AS mapping_id,
             pm.destination_shopify_product_id,
@@ -177,10 +306,10 @@ async function listSyncedIntoStore(destinationStoreId, { limit = 100, offset = 0
        JOIN store_connections c ON c.id = pm.connection_id
        JOIN stores src         ON src.id = c.source_store_id
        JOIN source_products sp ON sp.id = pm.source_product_id
-      WHERE c.destination_store_id = ?
+      WHERE c.destination_store_id = ?${where}
       ORDER BY pm.last_synced_at IS NULL, pm.last_synced_at DESC, pm.id DESC
       LIMIT ? OFFSET ?`,
-    [destinationStoreId, Number(limit), Number(offset)]
+    params
   );
 
   return rows.map((row) => ({
@@ -193,10 +322,84 @@ async function listSyncedIntoStore(destinationStoreId, { limit = 100, offset = 0
   }));
 }
 
-/** One offered product, scoped to the store it was offered to. */
+/** How many products sit under each tab, for the tab labels. */
+async function countsSyncedIntoStore(destinationStoreId, { search = null } = {}) {
+  const matching = searchClause(search, {
+    extraColumns: ["src.shop_domain", "src.store_name"],
+  });
+
+  // The product and store joins exist only for the search. Left in
+  // unconditionally they would still be correct -- every mapping has both --
+  // but this is the count on every page load, so it stays as cheap as it can.
+  const joins = matching.where
+    ? `JOIN stores src         ON src.id = c.source_store_id
+       JOIN source_products sp ON sp.id = pm.source_product_id`
+    : "";
+
+  const rows = await query(
+    `SELECT SUM(pm.accepted_at IS NOT NULL) AS synced,
+            SUM(pm.accepted_at IS NULL)     AS unsynced
+       FROM product_mappings pm
+       JOIN store_connections c ON c.id = pm.connection_id
+       ${joins}
+      WHERE c.destination_store_id = ?${matching.where}`,
+    [destinationStoreId, ...matching.params]
+  );
+
+  const row = rows[0] || {};
+
+  return {
+    synced: Number(row.synced || 0),
+    unsynced: Number(row.unsynced || 0),
+  };
+}
+
+/**
+ * The same two counts, split by the source store that sent them.
+ *
+ * For the destination dashboard's chart. It used to read 500 product rows and
+ * tally them in JavaScript, which made the chart quietly wrong for any store
+ * past 500 -- and read the whole product payload to produce two numbers.
+ *
+ * Grouped on the domain rather than the store id because a product outlives
+ * its connection, and a source that has been disconnected still has to appear
+ * on the chart rather than vanishing from it.
+ */
+async function countsSyncedBySource(destinationStoreId) {
+  const rows = await query(
+    `SELECT src.shop_domain AS source_shop_domain,
+            src.store_name  AS source_store_name,
+            SUM(pm.accepted_at IS NOT NULL) AS synced,
+            SUM(pm.accepted_at IS NULL)     AS unsynced
+       FROM product_mappings pm
+       JOIN store_connections c ON c.id = pm.connection_id
+       JOIN stores src         ON src.id = c.source_store_id
+      WHERE c.destination_store_id = ?
+      GROUP BY src.shop_domain, src.store_name`,
+    [destinationStoreId]
+  );
+
+  return rows.map((row) => ({
+    source_shop_domain: row.source_shop_domain,
+    source_store_name: row.source_store_name,
+    synced: Number(row.synced || 0),
+    unsynced: Number(row.unsynced || 0),
+  }));
+}
+
+/**
+ * One offered product, scoped to the store it was offered to.
+ *
+ * Matched in the query rather than by reading a page and searching it: the old
+ * version read the first 500 rows and looked through them, so a store past 500
+ * products got "not found" for a product that was plainly on its own screen.
+ */
 async function findOfferedByMapping(destinationStoreId, mappingId) {
-  const rows = await listSyncedIntoStore(destinationStoreId, { limit: 500 });
-  return rows.find((row) => Number(row.mapping_id) === Number(mappingId)) || null;
+  const rows = await listSyncedIntoStore(destinationStoreId, {
+    mappingId,
+    limit: 1,
+  });
+  return rows[0] || null;
 }
 
 async function countForStore(storeId) {
@@ -370,7 +573,10 @@ module.exports = {
   findById,
   listForStore,
   listWithMappingStatus,
+  countsWithMappingStatus,
   listSyncedIntoStore,
+  countsSyncedIntoStore,
+  countsSyncedBySource,
   findOfferedByMapping,
   setSelectedVariants,
   countForStore,

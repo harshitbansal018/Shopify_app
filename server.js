@@ -18,6 +18,10 @@ const helpRoutes = require("./routes/helpRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
 const planRoutes = require("./routes/planRoute");
 const webhookRoutes = require("./routes/webhookRoute");
+// The public marketing site. Everything it needs -- its copy, its templates,
+// its stylesheet and its pricing -- lives under landing/, and this is the only
+// line of the app that knows it exists.
+const landingRoutes = require("./landing");
 
 const REQUIRED_ENV = [
   "SHOPIFY_API_KEY",
@@ -78,6 +82,10 @@ app.use("/orders", orderRoutes);
 app.use("/payouts", payoutRoutes);
 app.use("/help", helpRoutes);
 app.use("/plans", planRoutes);
+// Above storeRoutes and dashboardRoutes, because it claims "/" -- but only
+// when the request has no Shopify parameters on it. Anything the admin opens
+// falls straight through to the embedded app exactly as before.
+app.use("/", landingRoutes);
 app.use("/", storeRoutes);
 app.use("/", dashboardRoutes);
 

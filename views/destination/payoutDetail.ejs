@@ -156,6 +156,8 @@
           <% } %>
         </tbody>
       </table>
+
+      <%- include("../partials/pager", { pager: paymentPager, noun: "payments" }) %>
     </section>
 
     <section class="panel">
@@ -221,6 +223,8 @@
           <% } %>
         </tbody>
       </table>
+
+      <%- include("../partials/pager", { pager: orderPager, noun: "sales" }) %>
     </section>
 
   </main>

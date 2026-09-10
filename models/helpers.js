@@ -37,4 +37,34 @@ function toDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-module.exports = { parseJson, toJsonColumn, toShopifyId, toDate };
+/**
+ * A merchant's search box turned into a LIKE pattern.
+ *
+ * The wildcards are ESCAPED. Without this, typing "50%" would match every
+ * product in the store and typing "_" would match every single-character
+ * title -- a search box that silently ignores what you typed is worse than no
+ * search box, because the results look real.
+ *
+ * Backslash is MariaDB's default LIKE escape character, so it needs no ESCAPE
+ * clause -- but it has to be escaped first, or a stray one would swallow the
+ * character after it.
+ *
+ * Returns null for nothing worth searching, which every caller reads as "no
+ * filter" rather than as "match the empty string".
+ */
+function likePattern(value, { maxLength = 100 } = {}) {
+  if (value === null || value === undefined) return null;
+
+  const text = String(value).trim().slice(0, maxLength);
+
+  if (!text) return null;
+
+  const escaped = text
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+
+  return `%${escaped}%`;
+}
+
+module.exports = { parseJson, toJsonColumn, toShopifyId, toDate, likePattern };

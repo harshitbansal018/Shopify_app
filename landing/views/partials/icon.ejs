@@ -1,0 +1,82 @@
+<%#
+  One inline SVG icon, by name. Include it with a `name` local.
+
+  Its own copy rather than the app's views/partials/icon.ejs on purpose: this
+  folder is meant to be self-contained, and a marketing page borrowing a
+  partial from the admin screens means neither can be changed without checking
+  the other. The overlap is a handful of paths.
+
+  Drawn with currentColor and a stroke, so each one takes the colour and weight
+  of whatever it sits in. An unknown name renders nothing rather than a broken
+  box.
+%>
+<%
+  var paths = {
+    /* Products staged in a catalogue. */
+    box:
+      '<path d="M21 8.5 12 3.5 3 8.5v7l9 5 9-5v-7z"/><path d="m3 8.5 9 5 9-5"/>' +
+      '<path d="M12 13.5v7"/>',
+
+    /* Sending them on to another store. */
+    share:
+      '<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/>' +
+      '<circle cx="18" cy="18.5" r="2.5"/><path d="m8.2 10.8 7.6-4.1"/>' +
+      '<path d="m8.2 13.2 7.6 4.1"/>',
+
+    /* Price and margin. */
+    tag:
+      '<path d="M11.6 3H5a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l7.4 7.4a2 2 0 0 0 2.8 0l6.6-6.6a2 2 0 0 0 0-2.8L13 3.6A2 2 0 0 0 11.6 3z"/>' +
+      '<circle cx="7.5" cy="7.5" r="1.4"/>',
+
+    /* Approving what has been offered. */
+    check:
+      '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+
+    /* Choosing which fields travel. */
+    sliders:
+      '<path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/>' +
+      '<path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/>',
+
+    /* Two things joined. */
+    link:
+      '<path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/>' +
+      '<path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/>',
+
+    /* Orders being packed and shipped. */
+    truck:
+      '<path d="M3 7.5h10v9H3z"/><path d="M13 11h4l3 3v2.5h-7z"/>' +
+      '<circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>',
+
+    /* Money owed and settled. */
+    wallet:
+      '<path d="M3 7.5A2 2 0 0 1 5 5.5h11a2 2 0 0 1 2 2v1"/>' +
+      '<path d="M3 7.5v9a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-2"/>' +
+      '<path d="M20 10.5h-3.5a2 2 0 0 0 0 4H20a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1z"/>',
+
+    /* Installing: something arriving into the store. */
+    download:
+      '<path d="M12 3v11"/><path d="M7.5 9.5 12 14l4.5-4.5"/>' +
+      '<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+
+    /* A pairing code. */
+    key:
+      '<circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3"/>' +
+      '<path d="M17 6l2.5 2.5"/><path d="M14.5 8.5 17 11"/>',
+
+    /* A bullet tick, smaller and lighter than the circled one. */
+    tick: '<path d="m4.5 12.5 5 5 10-11"/>',
+
+    /* Section links in the nav. */
+    arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
+  };
+
+  var path = paths[typeof name !== "undefined" ? name : ""];
+%>
+<% if (path) { %>
+<svg class="icon" viewBox="0 0 24 24" width="<%= typeof size !== "undefined" ? size : 22 %>"
+     height="<%= typeof size !== "undefined" ? size : 22 %>"
+     fill="none" stroke="currentColor" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <%- path %>
+</svg>
+<% } %>

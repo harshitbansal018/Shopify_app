@@ -391,6 +391,67 @@ const PRODUCT_SET_MUTATION = `
   }
 `;
 
+/*
+ * Shopify keeps a product's SEO title and description in `global/title_tag`
+ * and `global/description_tag`, and ALSO exposes them as the product's `seo`
+ * field. They are one thing wearing two hats.
+ */
+const SEO_METAFIELDS = {
+  "global/title_tag": "title",
+  "global/description_tag": "description",
+};
+
+/**
+ * Split a source product's metafields into what productSet will actually take.
+ *
+ * Two problems, both of which reject the WHOLE mutation -- so a single bad
+ * metafield stops the product's title, price and stock going across too.
+ *
+ * 1. The SEO pair. Sent as plain metafields they create fine on a NEW product,
+ *    because nothing is there yet. On the second push the destination product
+ *    already has them -- Shopify maintains them from its own `seo` field -- and
+ *    the incoming pair collides with what is there:
+ *
+ *        fields.0  global/title_tag        Key must be unique within this
+ *        fields.1  global/description_tag  namespace on this resource
+ *
+ *    which is exactly why a product syncs once and then fails on every
+ *    re-sync. They belong in `seo`, where Shopify keeps them.
+ *
+ * 2. Duplicates. A metafield is identified by namespace+key, and two entries
+ *    sharing a pair are refused. Shopify's own list should not contain any,
+ *    but the cost of being wrong is the whole product, so the first wins.
+ */
+function splitMetafields(metafields) {
+  const seen = new Set();
+  const kept = [];
+  let seo = null;
+
+  (metafields || []).forEach((metafield) => {
+    if (!metafield || !metafield.namespace || !metafield.key) return;
+
+    const id = `${metafield.namespace}/${metafield.key}`;
+
+    if (seen.has(id)) return;
+    seen.add(id);
+
+    const seoField = SEO_METAFIELDS[id];
+
+    if (seoField) {
+      // Empty string is a real value here -- it clears the SEO field, which is
+      // different from leaving it alone.
+      if (metafield.value !== null && metafield.value !== undefined) {
+        seo = { ...(seo || {}), [seoField]: String(metafield.value) };
+      }
+      return;
+    }
+
+    kept.push(metafield);
+  });
+
+  return { metafields: kept, seo };
+}
+
 /** Apply the connection's markup. Stored as a percent, so 15 means +15%. */
 function withMarkup(price, markupPercent) {
   // Checked before Number(), because Number(null) and Number("") are both 0 --
@@ -462,7 +523,12 @@ function buildProductInput(
   // The taxonomy is global, so the same id means the same category over there.
   if (on("category") && data.category) input.category = data.category;
   if (on("metafields") && Array.isArray(data.metafields) && data.metafields.length) {
-    input.metafields = data.metafields;
+    const { metafields, seo } = splitMetafields(data.metafields);
+
+    if (metafields.length) input.metafields = metafields;
+    // The SEO pair goes to the field Shopify actually keeps it in. Sending it
+    // as a metafield is what made a re-push collide with itself.
+    if (seo) input.seo = seo;
   }
 
   // Variants off means the destination's own variants are left completely
@@ -962,27 +1028,15 @@ async function deleteFromDestinations(sourceProductId) {
     }
 
     try {
-      const data = await shopify.forShop(connection.destination.shop_domain, {
-        query: PRODUCT_DELETE_MUTATION,
-        variables: {
-          input: {
-            id: `gid://shopify/Product/${mapping.destination_shopify_product_id}`,
-          },
-          synchronous: true,
-        },
-      });
-
-      const errors = data.productDelete?.userErrors || [];
-
-      // Already gone counts as done: the goal was for it not to be there.
-      const alreadyGone = errors.some((error) =>
-        /not found|does not exist/i.test(error.message || "")
+      const outcome = await deleteProductFromShop(
+        connection.destination.shop_domain,
+        mapping.destination_shopify_product_id
       );
 
-      if (errors.length && !alreadyGone) {
+      if (!outcome.ok) {
         results.failed += 1;
         results.errors.push(
-          `${connection.destination.shop_domain}: ${errors[0].message}`
+          `${connection.destination.shop_domain}: ${outcome.message}`
         );
         continue;
       }
@@ -995,6 +1049,129 @@ async function deleteFromDestinations(sourceProductId) {
   }
 
   return results;
+}
+
+/**
+ * Remove one product from one store. The single Shopify call, on its own.
+ *
+ * Shared by the two delete passes so they cannot disagree about what counts as
+ * success. "Already gone" IS success: the goal is for the product not to be
+ * there, and a merchant who deleted it themselves has not created a problem to
+ * report back to them.
+ */
+async function deleteProductFromShop(shopDomain, destinationProductId) {
+  const data = await shopify.forShop(shopDomain, {
+    query: PRODUCT_DELETE_MUTATION,
+    variables: {
+      input: { id: `gid://shopify/Product/${destinationProductId}` },
+      synchronous: true,
+    },
+  });
+
+  const errors = data.productDelete?.userErrors || [];
+
+  const alreadyGone = errors.some((error) =>
+    /not found|does not exist/i.test(error.message || "")
+  );
+
+  if (errors.length && !alreadyGone) return { ok: false, message: errors[0].message };
+
+  return { ok: true };
+}
+
+/**
+ * Empty a connection out of the destination store: every product it put there.
+ *
+ * For a destination removing a supplier. The connection row itself is NOT
+ * touched here -- the caller deletes it only once this reports nothing left,
+ * because a connection deleted early takes its product_mappings with it and
+ * leaves the products stranded in the store with no record that they came from
+ * anywhere.
+ *
+ * Bounded, and resumable. A store on the largest plan can hold a thousand
+ * products, and deleting a thousand products one GraphQL call at a time does
+ * not fit in an HTTP request. So it works until its time budget runs out and
+ * says how many are left; the caller comes back for the rest. Each success is
+ * recorded immediately, so a request that dies half way through has still made
+ * real progress rather than starting again.
+ */
+async function deleteConnectionProducts(
+  connectionId,
+  { budgetMs = 20_000, batchSize = 25 } = {}
+) {
+  const connection = await connectionModel.findById(connectionId);
+  const results = { deleted: 0, failed: 0, skipped: 0, remaining: 0, errors: [] };
+
+  if (!connection) return { ...results, done: true };
+
+  const shop = connection.destination.shop_domain;
+  const startedAt = Date.now();
+
+  // The shop uninstalled the app, so there is no token to delete with. Saying
+  // "done" is the honest answer: nothing more can be removed from here, and
+  // holding the connection open forever would trap the merchant.
+  if (!connection.destination.is_active) {
+    results.skipped = await productMappingModel.countLiveForConnection(connectionId);
+    return { ...results, done: true };
+  }
+
+  // A product that refuses keeps its destination id, so it stays in the "live"
+  // list and the next read hands it straight back. Remembering it is what stops
+  // this pass retrying the same failure and counting it twice.
+  const refused = new Set();
+
+  for (;;) {
+    const found = await productMappingModel.listLiveForConnection(connectionId, {
+      limit: batchSize + refused.size,
+    });
+
+    const batch = found.filter((mapping) => !refused.has(mapping.id));
+
+    // Nothing left, or nothing left that has not already failed once.
+    if (!batch.length) break;
+
+    let progressed = 0;
+
+    for (const mapping of batch) {
+      try {
+        const outcome = await deleteProductFromShop(
+          shop,
+          mapping.destination_shopify_product_id
+        );
+
+        if (!outcome.ok) {
+          results.failed += 1;
+          refused.add(mapping.id);
+          // One message, not one per product: a hundred copies of the same
+          // Shopify error is not more informative than the first.
+          if (!results.errors.length) results.errors.push(outcome.message);
+          continue;
+        }
+
+        // Recorded per product, not at the end. This is also what makes the
+        // next batch a DIFFERENT batch -- the row loses its destination
+        // product id, so it drops out of listLiveForConnection.
+        await productMappingModel.markGoneFromDestination(mapping.id);
+        results.deleted += 1;
+        progressed += 1;
+      } catch (err) {
+        results.failed += 1;
+        refused.add(mapping.id);
+        if (!results.errors.length) results.errors.push(err.message);
+      }
+    }
+
+    // Nothing in that batch moved. Whatever is wrong is not going to fix
+    // itself on the next pass, so stop rather than spend the whole budget
+    // failing; the caller reports it and the merchant tries again.
+    if (!progressed) break;
+
+    if (Date.now() - startedAt >= budgetMs) break;
+  }
+
+  results.remaining = await productMappingModel.countLiveForConnection(connectionId);
+
+  return { ...results, done: results.remaining === 0 };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1090,12 +1267,14 @@ module.exports = {
   applyDestinationUpdate,
   applyDestinationDelete,
   deleteFromDestinations,
+  deleteConnectionProducts,
   runAutoSync,
   startAutoSync,
   stopAutoSync,
   pushPending,
   pushOne,
   buildProductInput,
+  splitMetafields,
   selectVariants,
   withMarkup,
   optionKey,

@@ -22,6 +22,14 @@
       </div>
 
       <div class="shell__actions">
+        <%# Beside Sync now, and only on the tab it can act on: the two read as
+            a pair -- refresh these, or stop receiving these. Starts disabled
+            because it acts on the ticked rows, and nothing is ticked yet. %>
+        <% if (tab === "synced" && products.length) { %>
+          <button class="btn btn--danger" type="button" id="unsync-button" disabled>
+            Unsync selected
+          </button>
+        <% } %>
         <% if (connections.length) { %>
           <%# Updates to products already accepted -- nothing new is added. %>
           <button class="btn" type="button" id="sync-button">Sync now</button>
@@ -35,18 +43,33 @@
         itself the answer and the other tab may still have something.
         "Unsynced" is what a source has offered and this store has not
         accepted; nothing of it has been written here yet. %>
-    <nav class="tabs">
-      <button
-        class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="synced">
-        Synced (<%= counts.synced %>)
-      </button>
-      <button
-        class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="unsynced">
-        Unsynced (<%= counts.unsynced %>)
-      </button>
-    </nav>
+    <%# Tabs and search on one row: both narrow the same table, so they belong
+        together rather than stacked as two separate-looking controls. %>
+    <div class="listbar">
+      <nav class="tabs">
+        <button
+          class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="synced">
+          Synced (<%= counts.synced %>)
+        </button>
+        <button
+          class="tabs__tab<%= tab === "unsynced" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="unsynced">
+          Unsynced (<%= counts.unsynced %>)
+        </button>
+      </nav>
+
+      <%# Searches inside the current tab. Across both would be worse: the two
+          tabs mean different things to act on, and a result you cannot see
+          without also switching tab is a dead end. %>
+      <%- include("../partials/search", {
+        action: "/products",
+        search: search,
+        placeholder: "Search by title, vendor, SKU or source store",
+        hidden: [{ name: "tab", value: tab }],
+        clearHref: "/products?tab=" + tab,
+      }) %>
+    </div>
 
     <%# Only when there is something to act on: buttons over an empty list
         are just dead controls. %>
@@ -73,11 +96,15 @@
         <table class="table">
           <thead>
             <tr>
-              <% if (tab === "unsynced") { %>
-                <th class="table__check">
-                  <input type="checkbox" id="check-all-awaiting" aria-label="Select all">
-                </th>
-              <% } %>
+              <%# Both tabs: the Unsynced tab ticks rows to sync or decline,
+                  the Synced tab ticks them to unsync. Only this page's rows --
+                  nothing off-screen is ever included in an action. %>
+              <th class="table__check">
+                <input
+                  type="checkbox"
+                  id="check-all-awaiting"
+                  aria-label="Select all on this page">
+              </th>
               <th>Product</th>
               <th>Source store</th>
               <th>Inventory</th>
@@ -90,29 +117,45 @@
           <tbody>
             <% if (!products.length) { %>
               <tr class="row--empty">
-                <%# One cell across every column, including the checkbox one
-                    the Unsynced tab adds. %>
-                <td class="table__empty" colspan="<%= tab === "unsynced" ? 8 : 7 %>">
+                <%# One cell across every column, the checkbox one included. %>
+                <td class="table__empty" colspan="8">
                   <strong>No records found</strong>
                   <span>
-                    <%= tab === "unsynced"
-                        ? "Nothing is waiting for you. When a source store offers a product it appears here."
-                        : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
+                    <%# A search that found nothing is not an empty tab. %>
+                    <% if (search) { %>
+                      Nothing on this tab matches <strong><%= search %></strong>.
+                      Titles, vendors, SKUs and source store names are all
+                      searched &mdash; try a shorter term, the other tab, or
+                      <strong>Clear</strong>.
+                    <% } else { %>
+                      <%= tab === "unsynced"
+                          ? "Nothing is waiting for you. When a source store offers a product it appears here."
+                          : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
+                    <% } %>
                   </span>
                 </td>
               </tr>
             <% } else { %>
             <% products.forEach(function (product) { %>
               <tr>
-                <% if (tab === "unsynced") { %>
-                  <td class="table__check">
-                    <input
-                      type="checkbox"
-                      class="awaiting-check"
-                      value="<%= product.mapping_id %>"
-                      aria-label="Accept <%= product.title %>">
-                  </td>
-                <% } %>
+                <td class="table__check">
+                  <%# One class for both tabs -- what the tick MEANS is decided
+                      by which button acts on it, not by the checkbox.
+
+                      Disabled rather than absent on a 'deleted' row: the
+                      product is gone at the source, so there is nothing left
+                      to sync or unsync, and this is the same reason its status
+                      is a label rather than a button. A column that sometimes
+                      has no control in it reads as broken. %>
+                  <input
+                    type="checkbox"
+                    class="awaiting-check"
+                    value="<%= product.mapping_id %>"
+                    <%= product.sync_status === "deleted" ? "disabled" : "" %>
+                    title="<%= product.sync_status === "deleted"
+                      ? "Deleted at the source store" : "" %>"
+                    aria-label="<%= tab === "unsynced" ? "Sync" : "Unsync" %> <%= product.title %>">
+                </td>
                 <td>
                   <span class="media">
                     <% if (product.image_url) { %>
@@ -198,6 +241,8 @@
           </tbody>
         </table>
 
+    <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+
   </main>
 
   <script>
@@ -205,12 +250,30 @@
       var acceptButton = document.getElementById("accept-button");
       var syncButton = document.getElementById("sync-button");
       var declineButton = document.getElementById("decline-button");
+      var unsyncButton = document.getElementById("unsync-button");
       var checkAll = document.getElementById("check-all-awaiting");
       var pageError = document.getElementById("page-error");
 
       function fail(message) {
         pageError.textContent = message;
         pageError.hidden = false;
+      }
+
+      /* A /products URL that keeps whatever is being searched for.
+       *
+       * Every navigation on this screen goes through it. After an action moves
+       * a row to the other tab, the merchant should arrive there still looking
+       * for what they were looking for -- not back at the full list. */
+      var currentSearch = <%- json(search || "") %>;
+
+      function productsUrl(tab) {
+        var params = new URLSearchParams();
+
+        if (tab) params.set("tab", tab);
+        if (currentSearch) params.set("q", currentSearch);
+
+        var query = params.toString();
+        return query ? "/products?" + query : "/products";
       }
 
       /* ---------------- tabs ---------------- */
@@ -220,7 +283,15 @@
           button.addEventListener("click", function () {
             // A real navigation, not a class toggle: the two tabs hold
             // different rows and the server decides which ones.
-            window.appNavigate("/products?tab=" + button.dataset.tab);
+            //
+            // The search comes along: switching tabs mid-search means "the
+            // other tab, still looking for this".
+            var params = new URLSearchParams({ tab: button.dataset.tab });
+            var q = <%- json(search || "") %>;
+
+            if (q) params.set("q", q);
+
+            window.appNavigate("/products?" + params.toString());
           });
         });
 
@@ -248,7 +319,7 @@
             if (!response.ok) throw new Error(data.error || "Request failed");
 
             window.appToast(data.synced + " updated, " + data.failed + " failed");
-            window.appNavigate("/products");
+            window.appNavigate(productsUrl());
           } catch (err) {
             syncButton.disabled = false;
             syncButton.textContent = "Sync now";
@@ -292,7 +363,7 @@
 
               window.appToast(unsync ? "Moved to Unsynced" : "Synced");
               // The row belongs on the other tab now, so go and show it there.
-              window.appNavigate("/products?tab=" + (unsync ? "unsynced" : "synced"));
+              window.appNavigate(productsUrl(unsync ? "unsynced" : "synced"));
             } catch (err) {
               pill.disabled = false;
               pill.textContent = pill.dataset.was;
@@ -304,14 +375,26 @@
           pill.dataset.was = pill.textContent.trim();
         });
 
-      /* ---------------- accept what is on offer ---------------- */
+      /* ---------------- acting on the ticked rows ----------------
 
-      // Nothing offered: the rest of this page is a read-only list.
-      if (!acceptButton) return;
+         Both tabs tick rows; what the tick MEANS differs. Unsynced offers
+         Sync selected and Decline, Synced offers Unsync selected. The
+         selection code below is shared, and each button is wired only if this
+         tab actually rendered it. */
+
+      // Buttons that act on the selection, whichever tab we are on.
+      var bulkButtons = [acceptButton, declineButton, unsyncButton]
+        .filter(Boolean);
+
+      // A page with no rows to tick: the rest of this is a read-only list.
+      if (!bulkButtons.length) return;
 
       function checks() {
+        // Not the disabled ones: a product deleted at the source has nothing
+        // left to act on, so select-all must skip it and the count must not
+        // include it.
         return Array.prototype.slice.call(
-          document.querySelectorAll(".awaiting-check")
+          document.querySelectorAll(".awaiting-check:not(:disabled)")
         );
       }
 
@@ -323,11 +406,21 @@
 
       function refresh() {
         var count = chosen().length;
-        acceptButton.disabled = count === 0;
-        declineButton.disabled = count === 0;
-        acceptButton.textContent = count
-          ? "Sync " + count + " selected"
-          : "Sync selected";
+
+        bulkButtons.forEach(function (button) { button.disabled = count === 0; });
+
+        // The count goes on the primary action of each tab, so the merchant
+        // can see how many they are about to act on without recounting ticks.
+        if (acceptButton) {
+          acceptButton.textContent = count
+            ? "Sync " + count + " selected"
+            : "Sync selected";
+        }
+        if (unsyncButton) {
+          unsyncButton.textContent = count
+            ? "Unsync " + count + " selected"
+            : "Unsync selected";
+        }
       }
 
       checks().forEach(function (check) {
@@ -343,9 +436,13 @@
 
       async function send(url, label) {
         pageError.hidden = true;
-        acceptButton.disabled = true;
-        declineButton.disabled = true;
-        acceptButton.textContent = label;
+
+        // Every one of them, not just the one pressed: a second action fired
+        // mid-request would send the same ids twice.
+        bulkButtons.forEach(function (button) { button.disabled = true; });
+
+        var busy = acceptButton || unsyncButton;
+        if (busy) busy.textContent = label;
 
         try {
           var response = await window.appFetch(url, {
@@ -366,7 +463,7 @@
         }
       }
 
-      acceptButton.addEventListener("click", async function () {
+      if (acceptButton) acceptButton.addEventListener("click", async function () {
         // Accepting also pulls the products in, so this can take a moment.
         var data = await send("/products/accept", "Syncing…");
 
@@ -374,10 +471,34 @@
 
         window.appToast(data.synced + " synced, " + data.failed + " failed");
         // They are synced now, so show them where they landed.
-        window.appNavigate("/products?tab=synced");
+        window.appNavigate(productsUrl("synced"));
       });
 
-      declineButton.addEventListener("click", async function () {
+      /* ---- Synced tab: stop receiving several at once ---- */
+
+      if (unsyncButton) unsyncButton.addEventListener("click", async function () {
+        var count = chosen().length;
+
+        // Said plainly, because "unsync" could easily be read as "delete".
+        // Nothing leaves the store here -- the products stay exactly as they
+        // are and simply stop being updated.
+        if (!window.confirm(
+          "Stop syncing " + count + " product(s)?\n\n" +
+          "They stay in your store exactly as they are; they just will not " +
+          "receive any more updates from the source store.\n\n" +
+          "You can sync them again from the Unsynced tab."
+        )) return;
+
+        var data = await send("/products/decline", "Unsyncing…");
+
+        if (!data) return;
+
+        window.appToast("Unsynced " + data.declined + " product(s)");
+        // They belong on the other tab now, so go and show them there.
+        window.appNavigate(productsUrl("unsynced"));
+      });
+
+      if (declineButton) declineButton.addEventListener("click", async function () {
         if (!window.confirm(
           "Stop receiving " + chosen().length + " product(s)?\n\n" +
           "Anything already in your store stays; it just will not be updated."
@@ -388,7 +509,7 @@
         if (!data) return;
 
         window.appToast("Declined " + data.declined + " product(s)");
-        window.appNavigate("/products");
+        window.appNavigate(productsUrl());
       });
     })();
   </script>

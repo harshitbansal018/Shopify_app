@@ -736,7 +736,53 @@ const CREATE_SYNC_SETTINGS = `
 `;
 
 /* ------------------------------------------------------------------ */
-/* 11. payouts                                                         */
+/* 11. faqs                                                            */
+/* ------------------------------------------------------------------ */
+/*
+ * The Help screen's questions and answers.
+ *
+ * In the database rather than in the code so support can reword an answer, add
+ * a question or hide one WITHOUT a deploy. That is the whole reason this table
+ * exists; nothing else about it is interesting.
+ *
+ * Not per store: every merchant of a given role sees the same list. If that
+ * ever changes it wants a store_id column, not a second table.
+ *
+ * The starting set is seeded once, on a database that has none. After that the
+ * rows are whoever edits them -- see seedFaqs().
+ */
+const CREATE_FAQS = `
+  CREATE TABLE IF NOT EXISTS faqs (
+    id   INT AUTO_INCREMENT PRIMARY KEY,
+
+    -- Which kind of merchant sees it. The two roles ask different questions,
+    -- and showing a source the destination's rules would be worse than
+    -- showing it nothing.
+    role ENUM('source','destination') NOT NULL,
+
+    question VARCHAR(512) NOT NULL,
+    -- TEXT, not VARCHAR: an answer worth writing runs longer than a column
+    -- limit anyone would guess, and being truncated mid-sentence is the one
+    -- failure a help page cannot afford.
+    answer   TEXT NOT NULL,
+
+    -- Counted in tens by the seed, so a question can be slipped between two
+    -- others without renumbering everything after it.
+    position INT NOT NULL DEFAULT 0,
+
+    -- Hidden rather than deleted: a question being reworked should stop
+    -- showing without losing the text it had.
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    KEY idx_faqs_role (role, is_active, position)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/* ------------------------------------------------------------------ */
+/* 12. payouts                                                         */
 /* ------------------------------------------------------------------ */
 /*
  * Money the DESTINATION has actually paid a source store.
@@ -998,6 +1044,49 @@ async function runMigrations() {
   await dropOrderPushColumns();
   await dropSourceOrderSettings();
   await query(CREATE_PAYOUTS);
+  await query(CREATE_FAQS);
+  await seedFaqs();
+}
+
+/**
+ * Put the starting questions in, once.
+ *
+ * Guarded on the table being COMPLETELY empty, not on each row missing. The
+ * whole point of moving these out of the code is that someone can edit them
+ * from the database -- so a boot that re-inserted a deleted question, or wrote
+ * an edited one back to its original wording, would take that away again.
+ *
+ * A fresh install gets the full set. Every install after that is left alone.
+ */
+async function seedFaqs() {
+  const { pool } = require("./db");
+
+  const [rows] = await pool.query("SELECT COUNT(*) AS total FROM faqs");
+
+  if (Number(rows[0].total) > 0) return;
+
+  // Required here, not at the top: this is the only thing in the migration
+  // that needs it, and it keeps the schema file free of app imports.
+  const { DEFAULT_FAQ } = require("../controllers/helpController");
+
+  const values = [];
+
+  Object.entries(DEFAULT_FAQ).forEach(([role, items]) => {
+    items.forEach((item, index) => {
+      // position in tens, so a question can be slipped between two others
+      // without renumbering the rest.
+      values.push([role, item.question, item.answer, (index + 1) * 10]);
+    });
+  });
+
+  if (!values.length) return;
+
+  await pool.query(
+    "INSERT INTO faqs (role, question, answer, position) VALUES ?",
+    [values]
+  );
+
+  console.log(`Migration: seeded ${values.length} FAQ entries`);
 }
 
 /**

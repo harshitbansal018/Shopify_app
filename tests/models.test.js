@@ -1072,6 +1072,219 @@ async function cleanup() {
 
     check("once accepted it stops awaiting", accepted.awaiting === false);
 
+    /* Paging.
+     *
+     * The screens show fifteen rows at a time, so the filter and the tab have
+     * to be applied IN the query. Doing it after the page is read gives a page
+     * of however many happened to match, and the rest is unreachable. */
+    {
+      // Staged but never offered anywhere -- the one thing "unshared" means.
+      const lonely = await sourceProductModel.upsert(store.id, {
+        id: 6400,
+        title: "Unshared Hat",
+        status: "active",
+        variants: [{ id: 64001, sku: "UH-1", price: "4.00" }],
+      });
+
+      const counts = await sourceProductModel.countsWithMappingStatus(store.id);
+
+      check("the counts add up",
+        counts.shared + counts.unshared === counts.all,
+        JSON.stringify(counts));
+      check("the new product counts as unshared",
+        counts.unshared === 1, String(counts.unshared));
+      check("and the offered ones as shared",
+        counts.shared === counts.all - 1, JSON.stringify(counts));
+
+      const unshared = await sourceProductModel.listWithMappingStatus(store.id, {
+        filter: "unshared",
+      });
+
+      check("the unshared filter returns only unshared rows",
+        unshared.length === 1 && unshared[0].id === lonely.id,
+        unshared.map((r) => r.title).join(", "));
+      check("and the count matches what it returns",
+        unshared.length === counts.unshared);
+
+      const shared = await sourceProductModel.listWithMappingStatus(store.id, {
+        filter: "shared",
+      });
+
+      check("the shared filter returns only shared rows",
+        shared.length === counts.shared &&
+          shared.every((product) => product.allowed > 0),
+        shared.map((r) => `${r.title}:${r.allowed}`).join(", "));
+
+      // A page must not repeat or skip a row. Getting this wrong is invisible
+      // on screen -- the merchant just never sees one of their products.
+      const pageOne = await sourceProductModel.listWithMappingStatus(store.id, {
+        limit: 1,
+        offset: 0,
+      });
+      const pageTwo = await sourceProductModel.listWithMappingStatus(store.id, {
+        limit: 1,
+        offset: 1,
+      });
+
+      check("a limit really limits", pageOne.length === 1 && pageTwo.length === 1);
+      check("and the offset moves on rather than repeating",
+        pageOne[0].id !== pageTwo[0].id,
+        `${pageOne[0].title} / ${pageTwo[0].title}`);
+
+      const past = await sourceProductModel.listWithMappingStatus(store.id, {
+        limit: 15,
+        offset: 5000,
+      });
+      check("an offset past the end is empty, not an error", past.length === 0);
+
+      /* The destination's two tabs, the same way. */
+      const incomingCounts =
+        await sourceProductModel.countsSyncedIntoStore(other.id);
+
+      const syncedTab = await sourceProductModel.listSyncedIntoStore(other.id, {
+        tab: "synced",
+      });
+      const unsyncedTab = await sourceProductModel.listSyncedIntoStore(other.id, {
+        tab: "unsynced",
+      });
+
+      check("the synced tab holds only accepted products",
+        syncedTab.length === incomingCounts.synced &&
+          syncedTab.every((product) => product.awaiting === false),
+        `${syncedTab.length} vs ${incomingCounts.synced}`);
+      check("the unsynced tab holds only the ones awaiting a decision",
+        unsyncedTab.length === incomingCounts.unsynced &&
+          unsyncedTab.every((product) => product.awaiting === true),
+        `${unsyncedTab.length} vs ${incomingCounts.unsynced}`);
+      check("the accepted product is on the synced tab",
+        syncedTab.some((product) => product.mapping_id === offered.id));
+
+      // The dashboard chart. It used to tally 500 loaded rows in JavaScript,
+      // so the bars were quietly wrong for any store past that cap.
+      const bySource = await sourceProductModel.countsSyncedBySource(other.id);
+      const mine = bySource.find(
+        (row) => row.source_shop_domain === `${RUN}-screens.myshopify.com`
+      );
+
+      check("the per-source breakdown names the sending store", Boolean(mine));
+      check("and its two numbers add up to that source's mappings",
+        bySource.reduce((sum, row) => sum + row.synced + row.unsynced, 0) ===
+          incomingCounts.synced + incomingCounts.unsynced,
+        "the chart and the cards would disagree");
+      check("the accepted product counts as synced there",
+        mine.synced >= 1, String(mine.synced));
+
+      // Matched in the query now. It used to read 500 rows and search them, so
+      // a store past 500 products got "not found" for a product on its screen.
+      const one = await sourceProductModel.findOfferedByMapping(
+        other.id,
+        offered.id
+      );
+
+      check("one offered product can be found by its mapping",
+        one && one.mapping_id === offered.id);
+      check("and another store cannot see it",
+        (await sourceProductModel.findOfferedByMapping(store.id, offered.id)) === null,
+        "the destination scope must still hold");
+
+      await sourceProductModel.deleteByShopifyId(store.id, 6400);
+    }
+
+    /* Search. */
+    {
+      const hat = await sourceProductModel.upsert(store.id, {
+        id: 6500,
+        title: "Wool Beanie 50% Off",
+        vendor: "Northwind",
+        product_type: "Headwear",
+        status: "active",
+        variants: [{ id: 65001, sku: "BEANIE-XL", price: "7.00" }],
+      });
+
+      const find = (q) =>
+        sourceProductModel.listWithMappingStatus(store.id, { search: q });
+
+      check("a title matches", (await find("beanie")).length === 1);
+      check("case does not matter", (await find("BEANIE")).length === 1);
+      check("part of a word is enough", (await find("eani")).length === 1);
+      check("a vendor matches", (await find("northwind")).length === 1);
+      check("a product type matches", (await find("headwear")).length === 1);
+
+      // The one that earns the join: a warehouse operator works from a picking
+      // list and has the code, not the marketing name.
+      check("a SKU matches",
+        (await find("BEANIE-XL")).length === 1 &&
+          (await find("beanie-xl"))[0].id === hat.id);
+
+      check("something that is not there matches nothing",
+        (await find("nonexistentzzz")).length === 0);
+
+      // LIKE wildcards MUST be escaped. Unescaped, "50%" matches the whole
+      // catalogue and "_" matches everything -- and the results look real, so
+      // nothing on the screen would say the search was ignored.
+      const percent = await find("50%");
+
+      check("a percent sign is a literal, not a wildcard",
+        percent.length === 1 && percent[0].id === hat.id,
+        `${percent.length} rows -- an unescaped % matches every product`);
+      check("and it really is matching the title, not everything",
+        (await find("99%")).length === 0);
+      check("an underscore is a literal too",
+        (await find("_")).length === 0,
+        "unescaped, _ matches any single character");
+      check("a lone backslash does not break the query",
+        Array.isArray(await find("\\")),
+        "it is LIKE's own escape character");
+
+      // Blank means no search, not "match the empty string".
+      const blank = await sourceProductModel.listWithMappingStatus(store.id, {
+        search: "   ",
+      });
+      const none = await sourceProductModel.listWithMappingStatus(store.id);
+
+      check("whitespace is not a search", blank.length === none.length);
+
+      // The counts have to agree with the list, or the pager offers pages the
+      // list cannot fill and the dropdown advertises hidden rows.
+      const searched = await sourceProductModel.countsWithMappingStatus(store.id, {
+        search: "beanie",
+      });
+
+      check("the counts respect the search",
+        searched.all === 1, JSON.stringify(searched));
+      check("and the new product counts as unshared there",
+        searched.unshared === 1 && searched.shared === 0,
+        JSON.stringify(searched));
+
+      // Search and filter compose rather than replacing one another.
+      check("search narrows within a filter",
+        (await sourceProductModel.listWithMappingStatus(store.id, {
+          search: "beanie",
+          filter: "shared",
+        })).length === 0,
+        "the beanie is unshared, so the shared filter must not show it");
+
+      /* The destination's copy of the same search, which also covers the
+       * supplier -- over there a merchant thinks "what did Warehouse send". */
+      const bySupplier = await sourceProductModel.listSyncedIntoStore(other.id, {
+        search: "screens.myshopify.com",
+      });
+
+      check("a destination can search by the store that sent it",
+        bySupplier.length > 0,
+        "no product column answers 'what came from this supplier'");
+      check("and its counts agree with its list",
+        (await sourceProductModel.countsSyncedIntoStore(other.id, {
+          search: "nonexistentzzz",
+        })).synced === 0);
+      check("a destination search still matches product text",
+        (await sourceProductModel.listSyncedIntoStore(other.id, {
+          search: "Screen Test",
+        })).length > 0);
+
+      await sourceProductModel.deleteByShopifyId(store.id, 6500);
+    }
+
     /* A change at the source, arriving as a webhook. */
     const productSync = require(path.join(SERVER, "services/productSync"));
 
@@ -1278,6 +1491,163 @@ async function cleanup() {
       [link.id]
     );
     check("settings cascade with the connection", Number(after[0].total) === 0);
+  }
+
+  /* A destination removing a supplier, and everything it put in the store.
+   *
+   * The destructive one, so the order is what is being checked: the products
+   * have to leave Shopify BEFORE the connection row does. The row is what
+   * remembers which Shopify products came from this supplier -- drop it first
+   * and anything that failed to delete is stranded in the store with nothing
+   * left to link it back. */
+  console.log("\nRemoving a source store");
+  {
+    const shopify = require(path.join(SERVER, "services/shopify"));
+    const productSync = require(path.join(SERVER, "services/productSync"));
+    const realForShop = shopify.forShop;
+
+    const source = await storeModel.upsertStore({
+      shop_domain: `${RUN}-rmsrc.myshopify.com`,
+      store_name: "Removal Source",
+      access_token: "shpat_rmsrc",
+    });
+    const buyer = await storeModel.upsertStore({
+      shop_domain: `${RUN}-rmdst.myshopify.com`,
+      store_name: "Removal Buyer",
+      access_token: "shpat_rmdst",
+    });
+
+    await pair(source, buyer);
+
+    const link = await connectionModel.createConnection({
+      sourceStoreId: source.id,
+      destinationStoreId: buyer.id,
+    });
+
+    // Three products offered; two actually pushed into the buyer's store.
+    const mappings = [];
+
+    for (const [index, shopifyId] of [7101, 7102, 7103].entries()) {
+      const product = await sourceProductModel.upsert(source.id, {
+        id: shopifyId,
+        title: `Removal Product ${index}`,
+        status: "active",
+        variants: [{ id: shopifyId * 10, sku: `RM-${index}`, price: "5.00" }],
+      });
+
+      const mapping = await productMappingModel.ensure({
+        connectionId: link.id,
+        sourceProductId: product.id,
+        sourceShopifyProductId: product.shopify_product_id,
+      });
+
+      // The third is offered but never pushed, so it has nothing over there.
+      if (index < 2) {
+        await productMappingModel.markSynced(mapping.id, {
+          destinationProductId: 88000 + index,
+          sourceUpdatedAt: null,
+        });
+      }
+
+      mappings.push(mapping);
+    }
+
+    check("only the pushed products count as live in the buyer's store",
+      (await productMappingModel.countLiveForConnection(link.id)) === 2,
+      "a product offered and never accepted has nothing there to delete");
+    check("and the list agrees with the count",
+      (await productMappingModel.listLiveForConnection(link.id)).length === 2);
+
+    /* ---- one product refuses ---- */
+    const deleted = [];
+
+    shopify.forShop = async (shop, body) => {
+      const id = String(body.variables.input.id);
+      deleted.push(id);
+
+      if (id.endsWith("88001")) {
+        return {
+          productDelete: {
+            userErrors: [{ field: ["id"], message: "Product is locked" }],
+          },
+        };
+      }
+      return { productDelete: { deletedProductId: id, userErrors: [] } };
+    };
+
+    const partial = await productSync.deleteConnectionProducts(link.id);
+
+    check("what could go, went", partial.deleted === 1, String(partial.deleted));
+    check("what could not is reported", partial.failed === 1);
+    check("with the reason", /locked/i.test(partial.errors[0] || ""),
+      partial.errors[0]);
+    check("and it is NOT done", partial.done === false,
+      "a partial delete must not let the caller drop the connection");
+    check("the one left is still counted",
+      partial.remaining === 1, String(partial.remaining));
+
+    check("the connection is still there",
+      Boolean(await connectionModel.findById(link.id)),
+      "dropping it now would strand the locked product with no record of it");
+
+    // The successful one is recorded immediately, so a retry does not delete
+    // it twice or count it twice.
+    check("a deleted product loses its link to the buyer's store",
+      (await productMappingModel.findById(mappings[0].id))
+        .destination_shopify_product_id === null);
+
+    /* ---- the merchant fixes it and tries again ---- */
+    shopify.forShop = async (shop, body) => ({
+      productDelete: {
+        deletedProductId: body.variables.input.id,
+        userErrors: [],
+      },
+    });
+
+    const rest = await productSync.deleteConnectionProducts(link.id);
+
+    check("the retry only touches what is left",
+      rest.deleted === 1, String(rest.deleted));
+    check("and now it is done", rest.done === true && rest.remaining === 0);
+
+    /* ---- already gone is success, not a failure ---- */
+    shopify.forShop = async () => ({
+      productDelete: {
+        userErrors: [{ field: ["id"], message: "Product not found" }],
+      },
+    });
+
+    const gone = await productSync.deleteConnectionProducts(link.id);
+    check("a store with nothing left is done", gone.done === true);
+
+    /* ---- an uninstalled buyer cannot be deleted from ---- */
+    await query("UPDATE stores SET is_active = 0 WHERE id = ?", [buyer.id]);
+    await productMappingModel.markSynced(mappings[2].id, {
+      destinationProductId: 88002,
+      sourceUpdatedAt: null,
+    });
+
+    const uninstalled = await productSync.deleteConnectionProducts(link.id);
+
+    check("an uninstalled buyer is skipped, not retried forever",
+      uninstalled.done === true && uninstalled.skipped === 1,
+      "there is no token to delete with, and trapping the merchant is worse");
+
+    await query("UPDATE stores SET is_active = 1 WHERE id = ?", [buyer.id]);
+    shopify.forShop = realForShop;
+
+    /* ---- and the row itself takes the rest with it ---- */
+    await connectionModel.deleteConnection(link.id);
+
+    const leftover = await query(
+      "SELECT COUNT(*) AS total FROM product_mappings WHERE connection_id = ?",
+      [link.id]
+    );
+    check("the mappings go with the connection",
+      Number(leftover[0].total) === 0);
+    check("but the cached source products stay",
+      (await sourceProductModel.countForStore(source.id)) === 3,
+      "they belong to the SOURCE store, which has not removed anything");
   }
 
   await cleanup();

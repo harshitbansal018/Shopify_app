@@ -15,6 +15,8 @@ const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
 const productMappingModel = require("../models/productMappingModel");
+const payoutModel = require("../models/payoutModel");
+const productSync = require("../services/productSync");
 const pairing = require("../services/pairing");
 
 /**
@@ -148,6 +150,42 @@ function liveCode(store) {
   return { code: pairing.formatCode(store.pairing_code), expiresAt };
 }
 
+/**
+ * What removing each supplier would actually cost this store.
+ *
+ * The confirmation dialog has to name real numbers, not "some products". A
+ * merchant cannot weigh a warning that will not say how many products go, or
+ * that the payment history goes with them -- and deleting a connection
+ * cascades to product_mappings, order_mappings and payouts, so all three do.
+ */
+async function withRemovalCost(destinationStoreId, connections) {
+  const money = await payoutModel.summaryForDestination(destinationStoreId);
+  const byConnection = new Map(money.map((row) => [row.connection_id, row]));
+
+  return Promise.all(
+    connections.map(async (connection) => {
+      const supplier = byConnection.get(connection.id);
+
+      return {
+        ...connection,
+        removal: {
+          // Only what is really in the store. A product offered and never
+          // accepted has nothing over here to delete.
+          products: await productMappingModel.countLiveForConnection(connection.id),
+          orders: supplier
+            ? supplier.fulfilled_orders +
+              supplier.open_orders +
+              supplier.cancelled_orders
+            : 0,
+          payments: supplier ? supplier.payments : 0,
+          outstanding: supplier ? supplier.outstanding : 0,
+          currency: supplier ? supplier.currency : null,
+        },
+      };
+    })
+  );
+}
+
 exports.getStores = async (req, res) => {
   try {
     // No role yet: there is nothing to show here until that is decided.
@@ -164,7 +202,9 @@ exports.getStores = async (req, res) => {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      connections,
+      connections: isSource
+        ? connections
+        : await withRemovalCost(req.storeId, connections),
       // Only a source hands a code out; a destination redeems one.
       pairingCode: isSource ? liveCode(req.store) : null,
       codeTtlMinutes: pairing.CODE_TTL_MINUTES,
@@ -350,3 +390,73 @@ exports.postSettings = async (req, res) => {
   }
 };
 
+
+/**
+ * A destination removing a source store, and everything it put here.
+ *
+ * The order is the whole design. Products are deleted from Shopify FIRST and
+ * the connection row only once nothing is left, because the row is what
+ * remembers which Shopify products came from this supplier -- delete it first
+ * and any product that failed to go is stranded in the store with nothing left
+ * to link it back. So a pass that does not finish keeps the connection, and
+ * the merchant presses again.
+ *
+ * It comes back in rounds for the same reason the sync does: a store can hold
+ * a thousand products and a thousand GraphQL calls do not fit in one request.
+ * `done: false` means there is more, not that something went wrong.
+ */
+exports.postDeleteStore = async (req, res) => {
+  if (!destinationOnly(req, res)) return;
+
+  const connectionId = Number(req.params.id);
+
+  try {
+    // The id came from a browser. Prove it belongs to THIS store before
+    // deleting anything: a guessed number must not empty someone else's shop.
+    const mine = await connectionModel.listForDestination(req.storeId);
+    const connection = mine.find((row) => row.id === connectionId);
+
+    if (!connection) {
+      return res.status(404).json({ error: "Store not found." });
+    }
+
+    const result = await productSync.deleteConnectionProducts(connectionId);
+
+    if (!result.done) {
+      // Not an error. Either there is more to do, or something refused --
+      // both leave the connection in place so the work can be finished.
+      return res.json({
+        ok: true,
+        done: false,
+        deleted: result.deleted,
+        failed: result.failed,
+        remaining: result.remaining,
+        error: result.failed ? result.errors[0] || null : null,
+      });
+    }
+
+    // Cascades to product_mappings, sync_settings, order_mappings and payouts.
+    await connectionModel.deleteConnection(connectionId);
+
+    console.log(
+      `${req.shop} removed source ${connection.source.shop_domain}: ` +
+        `${result.deleted} product(s) deleted, ${result.skipped} skipped`
+    );
+
+    return res.json({
+      ok: true,
+      done: true,
+      deleted: result.deleted,
+      skipped: result.skipped,
+      store: connection.source.store_name || connection.source.shop_domain,
+    });
+  } catch (err) {
+    console.error("Removing a source store failed:", err.message);
+    return res.status(err.statusCode || 502).json({
+      error:
+        err.name === "ReauthRequiredError"
+          ? "This store needs to be reconnected before products can be removed."
+          : "Could not remove that store.",
+    });
+  }
+};

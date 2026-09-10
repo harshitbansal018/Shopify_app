@@ -185,6 +185,95 @@ console.log("\nProductSetInput");
     plain.productOptions === undefined);
 }
 
+console.log("\nMetafields");
+{
+  const { splitMetafields } = productSync;
+
+  /* The SEO pair is the whole reason a product synced once and then failed on
+   * every re-sync: Shopify keeps title_tag/description_tag itself, so sending
+   * them back as metafields collides with what is already there. */
+  const seoOnly = splitMetafields([
+    { namespace: "global", key: "title_tag", type: "single_line_text_field", value: "Buy Shirts" },
+    { namespace: "global", key: "description_tag", type: "single_line_text_field", value: "Soft shirts" },
+  ]);
+
+  check("the SEO pair is taken out of metafields",
+    seoOnly.metafields.length === 0,
+    "leaving them in is what produced 'Key must be unique within this namespace'");
+  check("title_tag becomes seo.title", seoOnly.seo.title === "Buy Shirts");
+  check("description_tag becomes seo.description",
+    seoOnly.seo.description === "Soft shirts");
+
+  // Everything else is a normal metafield and must still go across.
+  const mixed = splitMetafields([
+    { namespace: "global", key: "title_tag", value: "Buy Shirts" },
+    { namespace: "custom", key: "care", type: "single_line_text_field", value: "Machine wash" },
+  ]);
+
+  check("ordinary metafields are kept",
+    mixed.metafields.length === 1 && mixed.metafields[0].key === "care");
+  check("and the SEO one is still split off", mixed.seo.title === "Buy Shirts");
+
+  const none = splitMetafields([
+    { namespace: "custom", key: "care", value: "Machine wash" },
+  ]);
+  check("no SEO metafields means no seo field",
+    none.seo === null,
+    "sending seo: {} would blank the destination's own SEO");
+
+  // A metafield is identified by namespace+key. Two entries sharing a pair are
+  // refused, and productSet refuses the ENTIRE product with them.
+  const duplicated = splitMetafields([
+    { namespace: "custom", key: "care", value: "first" },
+    { namespace: "custom", key: "care", value: "second" },
+    { namespace: "other", key: "care", value: "different namespace" },
+  ]);
+
+  check("a duplicated namespace+key is dropped",
+    duplicated.metafields.length === 2, String(duplicated.metafields.length));
+  check("the first one wins", duplicated.metafields[0].value === "first");
+  check("the same key in another namespace is not a duplicate",
+    duplicated.metafields[1].namespace === "other");
+
+  check("a malformed metafield is skipped, not thrown on",
+    splitMetafields([null, {}, { namespace: "custom" }]).metafields.length === 0);
+  check("no metafields at all is fine",
+    splitMetafields(undefined).metafields.length === 0);
+
+  /* And the same product pushed twice must build the same input both times --
+   * that is the bug, stated as a test. */
+  const product = {
+    title: "Blue Shirt",
+    status: "active",
+    product_data: {
+      metafields: [
+        { namespace: "global", key: "title_tag", value: "Buy Shirts" },
+        { namespace: "global", key: "description_tag", value: "Soft shirts" },
+      ],
+    },
+  };
+  const variants = [{ sku: "SH", price: "20.00" }];
+
+  const created = productSync.buildProductInput(product, variants, {}, null);
+  const repushed = productSync.buildProductInput(product, variants, {}, "777");
+
+  check("a re-push sends no reserved metafields",
+    created.metafields === undefined && repushed.metafields === undefined,
+    "this is the push that used to be rejected");
+  check("the SEO values travel on input.seo instead",
+    repushed.seo.title === "Buy Shirts" &&
+      repushed.seo.description === "Soft shirts");
+
+  const off = productSync.buildProductInput(
+    product,
+    variants,
+    { metafields: false },
+    "777"
+  );
+  check("switching metafields off also switches off SEO",
+    off.seo === undefined && off.metafields === undefined);
+}
+
 console.log("\nVariant selection");
 {
   const { selectVariants } = productSync;

@@ -41,17 +41,22 @@
 
     <% if (tab === "install") { %>
 
-      <section class="panel">
-        <h2 class="panel__title">Setting up a destination store</h2>
-        <p class="panel__copy">
-          In order, from installing the app to your first sale. Most of it
-          is one-time; the last step is the work you will do every day.
+      <section class="section">
+        <h2 class="section__title">Setting up a destination store</h2>
+        <p class="section__copy">
+          In order, from installing the app to your first sale. Most of it is
+          one-time; the last step is the work you will do every day.
         </p>
 
         <ol class="steps">
           <% steps.forEach(function (step, index) { %>
             <li class="steps__item">
-              <span class="steps__number"><%= index + 1 %></span>
+              <span class="steps__head">
+                <span class="steps__icon">
+                  <%- include("../partials/icon", { name: step.icon }) %>
+                </span>
+                <span class="steps__number"><%= index + 1 %></span>
+              </span>
               <span class="steps__body">
                 <span class="steps__title"><%= step.title %></span>
                 <span class="steps__detail"><%= step.detail %></span>
@@ -104,30 +109,20 @@
       <section class="panel">
         <h2 class="panel__title">Questions we get asked</h2>
 
-        <dl class="faq">
+        <%# <details>, not a JS accordion: the browser handles opening,
+            keyboard and screen readers, and Ctrl+F still finds text inside a
+            closed one. No script to load and nothing to break in the iframe. %>
+        <div class="faq">
           <% faq.forEach(function (item) { %>
-            <div class="faq__item">
-              <dt class="faq__question"><%= item.question %></dt>
-              <dd class="faq__answer"><%= item.answer %></dd>
-            </div>
+            <details class="faq__item">
+              <summary class="faq__question"><%= item.question %></summary>
+              <p class="faq__answer"><%= item.answer %></p>
+            </details>
           <% }); %>
-        </dl>
+        </div>
       </section>
 
     <% } %>
-
-    <section class="panel">
-      <h2 class="panel__title">Still stuck?</h2>
-      <p class="panel__copy">
-        <%# No fake support desk: the honest answer is that the other merchant
-            and your own Shopify admin solve most of it. %>
-        If a product or an order is not behaving, the fastest check is usually
-        with the supplier directly &mdash; they control what is offered, their
-        prices, and whether an order has shipped. For anything about how a
-        product looks or sells in your shop, your Shopify admin is the source of
-        truth, and nothing this app writes there is locked.
-      </p>
-    </section>
 
   </main>
 

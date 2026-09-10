@@ -10,16 +10,14 @@ const { renderStoreType } = require("./storeController");
 
 /** Products sent out, destinations receiving them, and orders coming back. */
 async function sourceStats(storeId) {
-  const [products, connections, topSellers] = await Promise.all([
-    // The largest seeded plan currently allows 1,000 products; keep the
-    // dashboard comfortably above that so its totals do not stop at one page.
-    sourceProductModel.listWithMappingStatus(storeId, { limit: 5000 }),
+  const [counts, connections, topSellers] = await Promise.all([
+    // Counted in SQL. This used to read 5,000 whole product rows to produce
+    // three numbers, and a store past that cap saw a total that was simply
+    // wrong with nothing on the screen to say so.
+    sourceProductModel.countsWithMappingStatus(storeId),
     connectionModel.listForSource(storeId),
     orderLineItemModel.topSellingSourceProducts(storeId, { limit: 5 }),
   ]);
-
-  const shared = products.filter((product) => product.allowed > 0);
-  const unshared = products.filter((product) => !product.allowed);
 
   const byDestination = await Promise.all(
     connections.map(async (connection) => {
@@ -40,9 +38,9 @@ async function sourceStats(storeId) {
 
   return {
     cards: {
-      staged: products.length,
-      shared: shared.length,
-      unshared: unshared.length,
+      staged: counts.all,
+      shared: counts.shared,
+      unshared: counts.unshared,
       stores: connections.filter(
         (connection) =>
           connection.status === "active" && connection.destination.is_active
@@ -59,14 +57,15 @@ async function sourceStats(storeId) {
 
 /** Everything the destination dashboard shows, from one read of the mappings. */
 async function destinationStats(storeId) {
-  const [offered, connections, topSellers] = await Promise.all([
-    sourceProductModel.listSyncedIntoStore(storeId, { limit: 500 }),
+  // Both counted in SQL. This used to read 500 whole product rows and tally
+  // them here, so a store past 500 got a chart and two cards that were quietly
+  // wrong -- and paid for the full product payload to produce two numbers.
+  const [counts, bySourceCounts, connections, topSellers] = await Promise.all([
+    sourceProductModel.countsSyncedIntoStore(storeId),
+    sourceProductModel.countsSyncedBySource(storeId),
     connectionModel.listForDestination(storeId),
     orderLineItemModel.topSellingProducts(storeId, { limit: 5 }),
   ]);
-
-  const synced = offered.filter((product) => !product.awaiting);
-  const unsynced = offered.filter((product) => product.awaiting);
 
   // Seeded from the CONNECTIONS, not from the products: a store that is
   // connected but has offered nothing yet still belongs on the list. Building
@@ -85,15 +84,15 @@ async function destinationStats(storeId) {
     });
   });
 
-  offered.forEach((product) => {
-    const domain = product.source_shop_domain;
+  bySourceCounts.forEach((row) => {
+    const domain = row.source_shop_domain;
 
     // A product can outlive its connection; keep it counted rather than
     // silently dropping it off the chart.
     if (!bySource.has(domain)) {
       bySource.set(domain, {
         domain,
-        name: product.source_store_name || domain,
+        name: row.source_store_name || domain,
         status: "disconnected",
         active: false,
         synced: 0,
@@ -101,13 +100,15 @@ async function destinationStats(storeId) {
       });
     }
 
-    bySource.get(domain)[product.awaiting ? "unsynced" : "synced"] += 1;
+    const entry = bySource.get(domain);
+    entry.synced += row.synced;
+    entry.unsynced += row.unsynced;
   });
 
   return {
     cards: {
-      synced: synced.length,
-      unsynced: unsynced.length,
+      synced: counts.synced,
+      unsynced: counts.unsynced,
       stores: connections.filter((c) => c.status === "active").length,
     },
     // Biggest first: a bar chart sorted by size is readable, one in insertion

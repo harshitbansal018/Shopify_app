@@ -1,0 +1,28 @@
+<%#
+  The install, in order.
+
+  Numbered, because these are steps and not features -- the number is what
+  tells a reader they happen one after another, and that there are only four
+  of them before anything is live.
+%>
+<section class="section" id="how-it-works">
+  <div class="wrap">
+
+    <header class="section__head">
+      <h2 class="section__title"><%= STEPS.title %></h2>
+      <p class="section__intro"><%= STEPS.intro %></p>
+    </header>
+
+    <ol class="steps">
+      <% STEPS.items.forEach(function (step, index) { %>
+        <li class="step">
+          <span class="step__number"><%= index + 1 %></span>
+          <span class="step__icon"><%- include("./icon", { name: step.icon }) %></span>
+          <h3 class="step__title"><%= step.title %></h3>
+          <p class="step__body"><%= step.body %></p>
+        </li>
+      <% }); %>
+    </ol>
+
+  </div>
+</section>

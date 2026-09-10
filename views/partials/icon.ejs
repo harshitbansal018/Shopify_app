@@ -1,0 +1,81 @@
+<%#
+  One inline SVG icon, by name.
+
+  Inline rather than an icon font or a sprite URL: the app's CSP blocks
+  external stylesheets and images, and a font would be one more request that
+  can fail inside the Shopify iframe. These are drawn with currentColor and a
+  stroke, so they take the colour and weight of whatever they sit in.
+
+  Include it with a `name` local; an unknown name renders nothing rather than
+  a broken box.
+
+  Decorative in every current use, so aria-hidden and no title: the text
+  beside each one already says what the step is.
+%>
+<%
+  var paths = {
+    /* Installing the app: something arriving into the store. */
+    download:
+      '<path d="M12 3v11"/><path d="M7.5 9.5 12 14l4.5-4.5"/>' +
+      '<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+
+    /* Choosing a role: a label you cannot peel off again. */
+    tag:
+      '<path d="M11.6 3H5a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l7.4 7.4a2 2 0 0 0 2.8 0l6.6-6.6a2 2 0 0 0 0-2.8L13 3.6A2 2 0 0 0 11.6 3z"/>' +
+      '<circle cx="7.5" cy="7.5" r="1.4"/>',
+
+    /* Handing out a pairing code. */
+    key:
+      '<circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5 20 3"/>' +
+      '<path d="M17 6l2.5 2.5"/><path d="M14.5 8.5 17 11"/>',
+
+    /* Typing somebody else's code in: two things joined. */
+    link:
+      '<path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/>' +
+      '<path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7"/>',
+
+    /* Products staged, but not yet going anywhere. */
+    box:
+      '<path d="M21 8.5 12 3.5 3 8.5v7l9 5 9-5v-7z"/><path d="m3 8.5 9 5 9-5"/>' +
+      '<path d="M12 13.5v7"/>',
+
+    /* Offering them to another store. */
+    share:
+      '<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/>' +
+      '<circle cx="18" cy="18.5" r="2.5"/><path d="m8.2 10.8 7.6-4.1"/>' +
+      '<path d="m8.2 13.2 7.6 4.1"/>',
+
+    /* Deciding what gets copied. */
+    sliders:
+      '<path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/>' +
+      '<path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/>',
+
+    /* Accepting what has been offered. */
+    check:
+      '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+
+    /* Orders being packed and shipped. */
+    truck:
+      '<path d="M3 7.5h10v9H3z"/><path d="M13 11h4l3 3v2.5h-7z"/>' +
+      '<circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>',
+
+    /* Looking for one product in a long list. */
+    search:
+      '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/>',
+
+    /* Money owed and settled. */
+    wallet:
+      '<path d="M3 7.5A2 2 0 0 1 5 5.5h11a2 2 0 0 1 2 2v1"/>' +
+      '<path d="M3 7.5v9a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-2"/>' +
+      '<path d="M20 10.5h-3.5a2 2 0 0 0 0 4H20a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1z"/>',
+  };
+
+  var path = paths[typeof name !== "undefined" ? name : ""];
+%>
+<% if (path) { %>
+<svg class="icon" viewBox="0 0 24 24" width="20" height="20"
+     fill="none" stroke="currentColor" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <%- path %>
+</svg>
+<% } %>

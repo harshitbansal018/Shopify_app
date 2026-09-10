@@ -1,0 +1,66 @@
+<%#
+  One list's pager. Include it directly under the table it belongs to, passing
+  a `pager` and a `noun`. (No usage example here: a closing EJS tag inside a
+  comment ends the comment early, and the template stops parsing.)
+
+  `pager` comes from controllers/pagination.js. `noun` is what is being counted,
+  used in the summary line -- "of 214 products" rather than "of 214".
+
+  Buttons, not links: this runs inside Shopify's iframe, where a plain href
+  loses the session token. window.appNavigate (shopifyClient.js) attaches a
+  fresh one, and the delegated handler there picks up any [data-navigate].
+
+  Drawn only when there is more than one page. A pager under a table that fits
+  on one screen is noise -- but the summary line stays useful, so it is the
+  whole block that goes, not just the buttons.
+%>
+<% if (pager && pager.pages > 1) { %>
+  <nav class="pager" aria-label="Pagination">
+    <p class="pager__summary">
+      Showing <strong><%= pager.from %>&ndash;<%= pager.to %></strong>
+      of <strong><%= pager.total %></strong> <%= noun || "records" %>
+    </p>
+
+    <div class="pager__controls">
+      <button
+        class="btn btn--small pager__step"
+        type="button"
+        <%= pager.hasPrev ? "" : "disabled" %>
+        data-navigate="<%= pager.hasPrev ? pager.href(pager.page - 1) : "" %>"
+        aria-label="Previous page">
+        &lsaquo; Prev
+      </button>
+
+      <%# The numbers, with gaps collapsed. The current page is a button too,
+          just a disabled one: a number that is sometimes a control and
+          sometimes plain text jumps around as you page through. %>
+      <% pager.numbers.forEach(function (n) { %>
+        <% if (n === null) { %>
+          <span class="pager__gap" aria-hidden="true">&hellip;</span>
+        <% } else { %>
+          <button
+            class="btn btn--small pager__page<%= n === pager.page ? " pager__page--on" : "" %>"
+            type="button"
+            <%= n === pager.page ? "disabled" : "" %>
+            data-navigate="<%= n === pager.page ? "" : pager.href(n) %>"
+            aria-label="Page <%= n %>"
+            <%# Unescaped, because this emits an ATTRIBUTE: the escaping tag
+                would turn its quotes into &#34; and leave the whole thing as
+                text on the face of the button. %>
+            <%- n === pager.page ? 'aria-current="page"' : "" %>>
+            <%= n %>
+          </button>
+        <% } %>
+      <% }); %>
+
+      <button
+        class="btn btn--small pager__step"
+        type="button"
+        <%= pager.hasNext ? "" : "disabled" %>
+        data-navigate="<%= pager.hasNext ? pager.href(pager.page + 1) : "" %>"
+        aria-label="Next page">
+        Next &rsaquo;
+      </button>
+    </div>
+  </nav>
+<% } %>

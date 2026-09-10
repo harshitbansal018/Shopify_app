@@ -1,0 +1,26 @@
+<%#
+  The capability grid. One card per real behaviour of the app.
+
+  A grid rather than alternating image-and-text blocks: there are eight of
+  these, and eight full-width blocks is a page nobody reaches the end of.
+%>
+<section class="section section--tint" id="features">
+  <div class="wrap">
+
+    <header class="section__head">
+      <h2 class="section__title"><%= FEATURES.title %></h2>
+      <p class="section__intro"><%= FEATURES.intro %></p>
+    </header>
+
+    <div class="cards">
+      <% FEATURES.items.forEach(function (item) { %>
+        <article class="card">
+          <span class="card__icon"><%- include("./icon", { name: item.icon }) %></span>
+          <h3 class="card__title"><%= item.title %></h3>
+          <p class="card__body"><%= item.body %></p>
+        </article>
+      <% }); %>
+    </div>
+
+  </div>
+</section>

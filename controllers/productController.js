@@ -23,6 +23,7 @@ const productMappingModel = require("../models/productMappingModel");
 const connectionModel = require("../models/connectionModel");
 const productSync = require("../services/productSync");
 const { renderStoreType } = require("./storeController");
+const { paginate } = require("./pagination");
 
 /* ------------------------------------------------------------------ */
 /* Screen                                                              */
@@ -34,17 +35,41 @@ exports.getProducts = async (req, res) => {
 
     const isSource = req.store.store_type === "source";
 
+    // What the merchant typed in the search box. Trimmed and capped, and empty
+    // means no search at all -- "" must not narrow anything.
+    const search = typeof req.query.q === "string"
+      ? req.query.q.trim().slice(0, 100)
+      : "";
+
     if (!isSource) {
-      const offered = await sourceProductModel.listSyncedIntoStore(req.storeId);
-
-      const synced = offered.filter((product) => !product.awaiting);
-      const unsynced = offered.filter((product) => product.awaiting);
-
       // A destination opens on its established catalogue. Unsynced remains
       // available explicitly when the merchant wants to review new offers.
       const tab = req.query.tab === "unsynced" ? "unsynced" : "synced";
 
-      // One batched query for the whole page, not one per product.
+      // Counted before anything is read: the tab labels have to name a total
+      // the merchant is not looking at, and the pager needs one for the tab
+      // they are. Both counts respect the search, or the tabs would advertise
+      // rows the search has hidden.
+      const counts = await sourceProductModel.countsSyncedIntoStore(req.storeId, {
+        search,
+      });
+
+      const pager = paginate(req, counts[tab], {
+        path: "/products",
+        // The search travels with the page number too. Without it, Next would
+        // silently drop the merchant back into the unsearched list.
+        params: { tab, q: search },
+      });
+
+      const offered = await sourceProductModel.listSyncedIntoStore(req.storeId, {
+        tab,
+        search,
+        limit: pager.limit,
+        offset: pager.offset,
+      });
+
+      // One batched query for the whole page, not one per product -- and now
+      // for fifteen rows rather than the whole catalogue.
       const variants = await mappingVariantProductModel.mapForMappings(
         offered.map((product) => product.mapping_id)
       );
@@ -59,22 +84,51 @@ exports.getProducts = async (req, res) => {
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
         tab,
-        counts: { synced: synced.length, unsynced: unsynced.length },
-        products: (tab === "synced" ? synced : unsynced).map(withVariants),
+        counts,
+        pager,
+        search,
+        products: offered.map(withVariants),
         connections: await connectionModel.listForDestination(req.storeId),
       });
     }
 
-    const [products, connections] = await Promise.all([
-      sourceProductModel.listWithMappingStatus(req.storeId),
+    // ONE list with a filter over it, rather than two tabs. Two tabs made the
+    // catalogue look like two catalogues, and hid from the merchant how much
+    // of it is actually out there.
+    //
+    // Defaults to everything: the screen's job is to show the catalogue, and
+    // narrowing it is the merchant's choice to make.
+    const FILTERS = ["all", "shared", "unshared"];
+    const filter = FILTERS.includes(req.query.filter) ? req.query.filter : "all";
+
+    // Every count, not just the visible one: the filter has to say how many it
+    // would show before the merchant picks it.
+    // While a search is running these count what MATCHES: "Shared (48)" beside
+    // three visible rows would read as a broken filter.
+    const [counts, connections] = await Promise.all([
+      sourceProductModel.countsWithMappingStatus(req.storeId, { search }),
       connectionModel.listForSource(req.storeId),
     ]);
+
+    const pager = paginate(req, counts[filter], {
+      path: "/products",
+      // The filter and the search travel with the page number, or Next would
+      // drop the merchant back into the full catalogue.
+      params: { filter: filter === "all" ? "" : filter, q: search },
+    });
+
+    const products = await sourceProductModel.listWithMappingStatus(req.storeId, {
+      filter,
+      search,
+      limit: pager.limit,
+      offset: pager.offset,
+    });
 
     const variants = await sourceVariantModel.mapForProducts(
       products.map((product) => product.id)
     );
 
-        // effective, not allowed: before a product is shared there is no mapping,
+    // effective, not allowed: before a product is shared there is no mapping,
     // and what counts is the choice made in the picker when it was added.
     const withVariants = (product) => {
       const all = variants.get(product.id) || [];
@@ -88,20 +142,15 @@ exports.getProducts = async (req, res) => {
       };
     };
 
-    const shared = products.filter((product) => product.allowed > 0);
-    const unshared = products.filter((product) => !product.allowed);
-
-    // Land on whichever tab has something to do.
-    const requested = req.query.tab === "shared" ? "shared" : req.query.tab;
-    const tab = requested || (unshared.length ? "unshared" : "shared");
-
     res.render("source/products", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      tab,
-      counts: { shared: shared.length, unshared: unshared.length },
-      products: (tab === "shared" ? shared : unshared).map(withVariants),
+      filter,
+      counts,
+      pager,
+      search,
+      products: products.map(withVariants),
 
       connections,
       // Nothing can be allowed until there is somewhere to send it.

@@ -1,0 +1,33 @@
+<%#
+  The FAQ, as a native details/summary accordion.
+
+  No JavaScript: the browser gives us the open/close, keyboard support, screen
+  reader semantics and -- the one that matters most on a marketing page --
+  Ctrl+F finds text inside a closed answer and opens it.
+
+  Not `name=` grouped, so several can be open at once. Someone comparing two
+  answers should not have the first one shut on them.
+%>
+<section class="section" id="faq">
+  <div class="wrap wrap--narrow">
+
+    <header class="section__head">
+      <h2 class="section__title"><%= FAQ.title %></h2>
+    </header>
+
+    <div class="faq">
+      <% FAQ.items.forEach(function (item) { %>
+        <details class="faq__item">
+          <summary class="faq__q">
+            <span><%= item.q %></span>
+            <%# Two bars, one of which rotates away: a plus that becomes a
+                minus, drawn in CSS so there is no icon to swap out. %>
+            <span class="faq__sign" aria-hidden="true"></span>
+          </summary>
+          <div class="faq__a"><p><%= item.a %></p></div>
+        </details>
+      <% }); %>
+    </div>
+
+  </div>
+</section>

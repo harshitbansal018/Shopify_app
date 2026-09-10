@@ -149,6 +149,13 @@ body {
   padding: 1.15rem;
 }
 
+/* Panels are plain siblings in the shell with nothing between them, so each
+   one after the first has to space itself or two of them share an edge. The
+   screens that stack several -- an order, a payout, help -- all need this. */
+.shell > .panel + .panel {
+  margin-top: 1.15rem;
+}
+
 .panel__title {
   margin: 0 0 0.9rem;
   font-size: 1.02rem;
@@ -379,88 +386,190 @@ body {
 
 /* The preview reuses the storefront classes; keep it readable in the admin. */
 
-/* ---------------- help: numbered steps ---------------- */
+/* A heading and its copy WITHOUT a panel around them, for the times the
+   content below is already carrying its own boxes. */
+.section {
+  margin-bottom: 1.15rem;
+}
 
+.section__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.02rem;
+}
+
+.section__copy {
+  margin: 0 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* ---------------- help: step cards ---------------- */
+
+/* Cards, not rows: a step is a self-contained thing to do, and side by side
+   they show at a glance how much setup there actually is. Still an <ol>, so
+   the order survives for anyone reading it without the stylesheet. */
 .steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.85rem;
   margin: 0;
   padding: 0;
   list-style: none;
-  counter-reset: none;
 }
 
 .steps__item {
   display: flex;
-  gap: 0.85rem;
-  padding: 0.9rem 0;
-  border-top: 1px solid var(--line-soft);
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.05rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
-.steps__item:first-child {
-  border-top: 0;
-  padding-top: 0;
+/* The icon says what the step is about, the number says where it comes. Kept
+   on one row so a card reads left to right before it reads down. */
+.steps__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
 }
 
-/* The number is the whole reason this is a list and not paragraphs: the
-   steps are in order and have to look it. */
+.steps__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 10px;
+}
+
+/* The number is the whole reason this is a list and not a pile of cards: the
+   steps are in order and have to look it. Muted, because the icon is what the
+   eye should land on first. */
 .steps__number {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  color: var(--brand);
-  background: var(--brand-soft);
+  width: 1.6rem;
+  height: 1.6rem;
+  color: var(--muted);
+  background: var(--line-soft);
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* An inline SVG has no intrinsic size once width/height are overridden, so it
+   is pinned here rather than trusted to the attributes. */
+.icon {
+  display: block;
+  flex: none;
 }
 
 .steps__body {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.3rem;
 }
 
 .steps__title {
   font-weight: 600;
+  line-height: 1.3;
 }
 
 .steps__detail {
   color: var(--muted);
   font-size: 0.9rem;
-  max-width: 68ch;
 }
 
 /* ---------------- help: FAQ ---------------- */
 
+/* Built on <details>, so the browser does the opening, the keyboard and the
+   screen-reader work, and Ctrl+F still finds text inside a closed one. */
 .faq {
   margin: 0;
 }
 
 .faq__item {
-  padding: 1rem 0;
   border-top: 1px solid var(--line-soft);
 }
 
 .faq__item:first-child {
   border-top: 0;
-  padding-top: 0;
 }
 
 .faq__question {
-  margin: 0 0 0.35rem;
+  position: relative;
+  padding: 0.95rem 0 0.95rem 1.75rem;
   font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+/* Both are needed: the first hides Safari's triangle, the second everyone
+   else's. Without them the marker sits beside our own caret. */
+.faq__question::-webkit-details-marker {
+  display: none;
 }
 
-/* dd carries a browser default indent that would make the answer look like a
-   child of the question rather than the answer to it. */
+.faq__question::marker {
+  content: "";
+}
+
+.faq__question:hover {
+  color: var(--brand);
+}
+
+.faq__question:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* A plus, drawn as two bars rather than typed as a character: swapping the
+   text "+" for "-" jumps, where a bar that rotates flat has one thing to
+   animate. Closed it reads +, open it reads -.
+
+   Pinned to the first line, not centred, so a question that wraps onto two
+   lines keeps its marker beside the start of it. */
+.faq__question::before,
+.faq__question::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 1.4rem;
+  width: 0.75rem;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: transform 0.18s ease;
+}
+
+.faq__question::after {
+  transform: rotate(90deg);
+}
+
+/* The upright bar lies down on top of the other one, leaving a minus. */
+.faq__item[open] .faq__question::after {
+  transform: rotate(0deg);
+}
+
+.faq__item[open] .faq__question {
+  color: var(--brand);
+}
+
+/* Indented to match the question's text, so an open answer lines up under it
+   rather than under the marker. No width cap: the panel is the measure. */
 .faq__answer {
-  margin: 0;
+  margin: 0 0 1.05rem;
+  padding-left: 1.75rem;
   color: var(--muted);
   font-size: 0.92rem;
-  max-width: 72ch;
 }
 
 /* ---------------- facts list ---------------- */
@@ -634,6 +743,21 @@ body {
   line-height: 1.5;
 }
 
+/* What a destructive confirmation is about to do, one consequence per line.
+   A list rather than a paragraph: nobody reads a wall of text at the moment
+   they are trying to get past a dialog, but they do scan bullets. */
+.modal__list {
+  margin: 0 0 1.1rem;
+  padding-left: 1.1rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.modal__list li + li {
+  margin-top: 0.25rem;
+}
+
 .modal__actions {
   display: flex;
   justify-content: flex-end;
@@ -641,9 +765,16 @@ body {
   margin-top: 1.2rem;
 }
 
+/* inline-block, not inline: an inline box lets its text break mid-phrase and
+   drags the border and padding along with it, so "1 awaiting them" came out
+   as two half-pills stacked on each other. nowrap then keeps the phrase
+   whole; several pills in one cell still wrap, but as whole units. */
 .pill {
+  display: inline-block;
   padding: 0.12rem 0.55rem;
   font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--line);
 }
@@ -767,6 +898,12 @@ body {
 .table td .muted {
   display: block;
   margin-top: 0.15rem;
+}
+
+/* A status cell can hold two or three of these -- synced, awaiting, failed --
+   and without this they touch. */
+.table td .pill {
+  margin: 0.1rem 0.25rem 0.1rem 0;
 }
 
 .table td .pill + .pill {
@@ -1331,6 +1468,58 @@ body {
   border-top: 1px solid var(--line-soft);
 }
 
+/* ---------------- list bar: a filter and its actions ---------------- */
+
+.listbar {
+  display: flex;
+  /* Everything in the row lines up on its middle: the tabs, the filter and
+     the search box are all single-line controls of slightly different
+     heights. */
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.listbar__filter {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+/* The label sits beside the control, so it loses the stacked spacing
+   .field__label carries everywhere else. */
+.listbar__filter .field__label {
+  margin: 0;
+  color: var(--muted);
+}
+
+.listbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* A search sharing the row with the tabs or the filter.
+   Its own bottom margin belongs to the standalone case; here the listbar
+   already spaces the row from the table. */
+.listbar .search {
+  /* Takes the rest of the row and packs its contents to the right, so the row
+     reads: what you are looking at, then find one in it.
+
+     justify-content, not margin-left:auto -- flex-grow resolves first and
+     leaves an auto margin nothing to absorb, and the field's own max-width
+     would then strand the box in the middle of the space it claimed. */
+  flex: 1 1 18rem;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.listbar .tabs {
+  margin-bottom: 0;
+}
+
 /* ---------------- tabs ---------------- */
 
 .tabs {
@@ -1361,6 +1550,139 @@ body {
   background: var(--brand-soft);
   border-color: var(--brand);
   box-shadow: none;
+}
+
+/* ---------------- search ---------------- */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+/* The icon lives INSIDE the field, so the box has to be the positioned
+   element and the input has to make room for it on the left. */
+.search__field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 22rem;
+  /* Past this it stops being a search box and starts being a banner. */
+  max-width: 34rem;
+  color: var(--muted);
+}
+
+.search__field .icon {
+  position: absolute;
+  left: 0.65rem;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.search__input {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.5rem 2.3rem;
+  font: inherit;
+  font-size: 0.92rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.search__input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.search__input::placeholder {
+  color: var(--muted);
+}
+
+/* Safari draws its own clear button; ours is a real control that navigates,
+   so the native one would be a second, differently-behaved X. */
+.search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+@media (max-width: 34rem) {
+  .search {
+    flex-wrap: wrap;
+  }
+
+  .search__field {
+    flex-basis: 100%;
+  }
+}
+
+/* ---------------- pager ---------------- */
+
+/* Sits under the table it belongs to. The summary goes on the left and the
+   controls on the right, so on a wide screen the buttons stay near the scroll
+   bar rather than stranded in the middle. */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.pager__summary {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.pager__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Square-ish, so a row of numbers reads as a row of numbers. min-width rather
+   than width: a four-digit page still has to fit. */
+.pager__page {
+  min-width: 2.1rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  text-align: center;
+}
+
+/* The current page. Disabled, but this is where you ARE -- so it must not look
+   like the greyed-out unavailable controls beside it. */
+.pager__page--on:disabled {
+  color: var(--brand);
+  font-weight: 600;
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  opacity: 1;
+  cursor: default;
+}
+
+.pager__gap {
+  padding: 0 0.15rem;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* Narrow screens: the summary above, the controls below and centred, rather
+   than a squeezed row that wraps mid-number. */
+@media (max-width: 34rem) {
+  .pager {
+    justify-content: center;
+  }
+
+  .pager__summary {
+    width: 100%;
+    text-align: center;
+  }
 }
 
 /* Zero stock is worth noticing before accepting a product. */
@@ -1463,7 +1785,7 @@ body {
   border-color: var(--ok-line);
 }
 
-/* ---------------- next-steps list ---------------- */
+/* ---------------- panel copy ---------------- */
 
 .panel__copy {
   margin: 0 0 0.9rem;
@@ -1471,18 +1793,6 @@ body {
   color: var(--muted);
 }
 
-.steps {
-  margin: 0 0 0.9rem;
-  padding-left: 1.25rem;
-  max-width: 62ch;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
-.steps code,
 .panel__copy code {
   padding: 0.08em 0.35em;
   font-size: 0.86em;

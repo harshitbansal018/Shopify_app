@@ -16,6 +16,7 @@ const orderMappingModel = require("../models/orderMappingModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const orderSync = require("../services/orderSync");
 const { renderStoreType } = require("./storeController");
+const { paginate } = require("./pagination");
 
 /** Money for display. The DB gives DECIMAL back as a string. */
 function toNumber(value) {
@@ -30,27 +31,41 @@ exports.getOrders = async (req, res) => {
 
     const isSource = req.store.store_type === "source";
 
-    const rows = isSource
-      ? await orderMappingModel.listForSource(req.storeId)
-      : await orderMappingModel.listForDestination(req.storeId);
+    const side = isSource ? "source" : "destination";
 
-    const counts = await orderMappingModel.statusCounts(req.storeId, {
-      side: isSource ? "source" : "destination",
+    const statusCounts = await orderMappingModel.statusCounts(req.storeId, {
+      side,
     });
 
     // Tabs mirror Products: one for what still needs doing, one for what is
     // done. Cancelled sits with the finished ones -- it is settled, even if it
     // did not end well.
-    const requested = req.query.tab === "done" ? "done" : req.query.tab;
-    const open = rows.filter(
-      (row) => row.source_fulfillment_status === "unfulfilled"
-    );
-    const done = rows.filter(
-      (row) => row.source_fulfillment_status !== "unfulfilled"
-    );
+    const counts = {
+      open: statusCounts.unfulfilled,
+      done: statusCounts.fulfilled + statusCounts.cancelled,
+    };
 
-    // Land on whichever tab has something to act on.
-    const tab = requested || (open.length ? "open" : "done");
+    // Land on whichever tab has something to act on. Anything else in the
+    // query string is not a third tab -- it has to resolve to one of the two,
+    // or the page would ask the database for a state that does not exist.
+    const tab = ["open", "done"].includes(req.query.tab)
+      ? req.query.tab
+      : counts.open
+        ? "open"
+        : "done";
+
+    const pager = paginate(req, counts[tab], {
+      path: "/orders",
+      params: { tab },
+    });
+
+    // Narrowed in the query, not here: a page filtered after it is read is a
+    // page of however many happened to match.
+    const options = { tab, limit: pager.limit, offset: pager.offset };
+
+    const rows = isSource
+      ? await orderMappingModel.listForSource(req.storeId, options)
+      : await orderMappingModel.listForDestination(req.storeId, options);
 
     // Each role has its own screen under views/<role>/.
     res.render(`${req.store.store_type}/orders`, {
@@ -58,13 +73,14 @@ exports.getOrders = async (req, res) => {
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
       tab,
-      counts: { open: open.length, done: done.length },
-      orders: (tab === "done" ? done : open).map((row) => ({
+      counts,
+      pager,
+      orders: rows.map((row) => ({
         ...row,
         destination_total: toNumber(row.destination_total),
         source_total: toNumber(row.source_total),
       })),
-      statusCounts: counts,
+      statusCounts,
     });
   } catch (err) {
     console.error("Orders screen failed:", err.message);

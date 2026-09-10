@@ -9,6 +9,7 @@ const {
   getStores,
   postPairingCode,
   postConnect,
+  postDeleteStore,
   getSettings,
   postSettings,
 } = require("../controllers/storeController");
@@ -28,5 +29,10 @@ router.post("/settings", postSettings);
 router.get("/stores", getStores);
 router.post("/stores/code", postPairingCode); // destination: show a code
 router.post("/stores/connect", postConnect); // source: enter a code
+
+// Destination-only, and the destructive one: it deletes the supplier's
+// products out of this store's Shopify catalogue before dropping the link.
+// Parameterised, so it stays below the fixed paths above it.
+router.post("/stores/:id/delete", postDeleteStore);
 
 module.exports = router;

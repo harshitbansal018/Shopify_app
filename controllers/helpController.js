@@ -10,6 +10,7 @@
 // Everything below describes what the app REALLY does today. A help page that
 // promises behaviour the code does not have is worse than no help page, so
 // each answer names the screen or the rule it comes from.
+const faqModel = require("../models/faqModel");
 const { renderStoreType } = require("./storeController");
 
 /* ------------------------------------------------------------------ */
@@ -19,6 +20,7 @@ const { renderStoreType } = require("./storeController");
 const INSTALL_STEPS = {
   source: [
     {
+      icon: "download",
       title: "Add the app from the Shopify App Store",
       detail:
         "Search for Product Sync, press Add app, and approve the permissions " +
@@ -29,6 +31,7 @@ const INSTALL_STEPS = {
         "here does not reach them.",
     },
     {
+      icon: "tag",
       title: "Choose Source, once",
       detail:
         "The first time the app opens it asks whether this store is a Source " +
@@ -38,6 +41,7 @@ const INSTALL_STEPS = {
         "again.",
     },
     {
+      icon: "key",
       title: "Generate a pairing code on Stores",
       detail:
         "Open Stores and press Generate a code. Give that code to whoever " +
@@ -46,6 +50,7 @@ const INSTALL_STEPS = {
         "someone you mean to supply.",
     },
     {
+      icon: "box",
       title: "Stage your products",
       detail:
         "On Products press Add products and pick them from your catalogue. " +
@@ -54,6 +59,7 @@ const INSTALL_STEPS = {
         "if you only want some of them sold.",
     },
     {
+      icon: "share",
       title: "Share what you want them to sell",
       detail:
         "Tick the products on the Unshared tab and press Allow selected. They " +
@@ -61,6 +67,7 @@ const INSTALL_STEPS = {
         "Nothing reaches their store until they accept it.",
     },
     {
+      icon: "truck",
       title: "Work the orders here",
       detail:
         "When they sell one of your products it appears on Orders with the " +
@@ -72,6 +79,7 @@ const INSTALL_STEPS = {
 
   destination: [
     {
+      icon: "download",
       title: "Add the app from the Shopify App Store",
       detail:
         "Search for Product Sync, press Add app, and approve the permissions " +
@@ -82,6 +90,7 @@ const INSTALL_STEPS = {
         "the app on their own store separately.",
     },
     {
+      icon: "tag",
       title: "Choose Destination, once",
       detail:
         "The first time the app opens it asks whether this store is a Source " +
@@ -91,6 +100,7 @@ const INSTALL_STEPS = {
         "again.",
     },
     {
+      icon: "link",
       title: "Connect a supplier on Stores",
       detail:
         "Ask the source store for its pairing code and enter it on Stores. " +
@@ -98,6 +108,7 @@ const INSTALL_STEPS = {
         "appearing for you to accept.",
     },
     {
+      icon: "sliders",
       title: "Set what you want copied",
       detail:
         "On Settings, tick the fields you want kept in step with the supplier " +
@@ -106,6 +117,7 @@ const INSTALL_STEPS = {
         "blanked.",
     },
     {
+      icon: "check",
       title: "Accept the products you want",
       detail:
         "Products opens on the Unsynced tab, which is what your suppliers " +
@@ -114,6 +126,7 @@ const INSTALL_STEPS = {
         "priced with your margin, and published to your Online Store.",
     },
     {
+      icon: "wallet",
       title: "Watch the orders and settle up",
       detail:
         "When a shopper buys a supplied product, Orders shows what the " +
@@ -127,8 +140,17 @@ const INSTALL_STEPS = {
 /* ------------------------------------------------------------------ */
 /* FAQ                                                                 */
 /* ------------------------------------------------------------------ */
-
-const FAQ = {
+/*
+ * The STARTING questions only. What the screen actually shows comes from the
+ * `faqs` table, so support can reword an answer, add a question or hide one
+ * without a deploy.
+ *
+ * This list is used exactly once, to seed a database that has none -- see
+ * seedFaqs() in config/migrate.js. Editing it changes nothing on an install
+ * that has already been seeded, which is the point: the database wins, or the
+ * next boot would undo somebody's edits.
+ */
+const DEFAULT_FAQ = {
   source: [
     {
       question: "Can I change this store from Source to Destination later?",
@@ -230,6 +252,11 @@ exports.getHelp = async (req, res) => {
     // install. The steps are one click away for the times it is the other way.
     const tab = req.query.tab === "install" ? "install" : "faq";
 
+    // Read every time rather than cached: the whole reason these are in the
+    // database is that somebody can change them, and a cache would mean the
+    // change does not show until the next restart.
+    const faq = await faqModel.listForRole(role);
+
     // Each role has its own screen under views/<role>/.
     res.render(`${role}/help`, {
       shop: req.shop,
@@ -237,7 +264,7 @@ exports.getHelp = async (req, res) => {
       store: req.store,
       tab,
       steps: INSTALL_STEPS[role],
-      faq: FAQ[role],
+      faq,
     });
   } catch (err) {
     console.error("Help screen failed:", err.message);
@@ -245,7 +272,11 @@ exports.getHelp = async (req, res) => {
   }
 };
 
-// Exported so a test can prove both roles keep their full set, and that no
-// step or answer is left empty.
+// INSTALL_STEPS stays in code: each step is tied to an icon and to the screens
+// it names, so changing one without a deploy would only produce instructions
+// that no longer match the app.
 exports.INSTALL_STEPS = INSTALL_STEPS;
-exports.FAQ = FAQ;
+
+// The seed, read by config/migrate.js and used as fixture data by the view
+// tests. NOT what the Help screen renders -- that comes from the faqs table.
+exports.DEFAULT_FAQ = DEFAULT_FAQ;

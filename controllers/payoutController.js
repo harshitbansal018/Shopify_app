@@ -19,6 +19,7 @@ const payoutModel = require("../models/payoutModel");
 const orderMappingModel = require("../models/orderMappingModel");
 const connectionModel = require("../models/connectionModel");
 const { renderStoreType } = require("./storeController");
+const { paginate } = require("./pagination");
 
 function destinationOnly(req, res) {
   if (req.store.store_type !== "destination") {
@@ -145,9 +146,41 @@ async function renderSourceBuyer(req, res, connectionId) {
   const buyers = await payoutModel.summaryForSource(req.storeId);
   const buyer = buyers.find((row) => row.connection_id === connectionId);
 
+  // Two lists on one page, so two page numbers. Each pager carries the other's
+  // current page, or turning the page on one would reset the other.
+  const [paymentCount, orderCount] = await Promise.all([
+    payoutModel.countForConnection(connectionId),
+    orderMappingModel.countForStore(req.storeId, {
+      side: "source",
+      connectionId,
+    }),
+  ]);
+
+  const path = `/payouts/${connectionId}`;
+
+  const orderPager = paginate(req, orderCount, {
+    path,
+    params: { payments: req.query.payments },
+  });
+  const paymentPager = paginate(req, paymentCount, {
+    path,
+    param: "payments",
+    params: { page: req.query.page },
+  });
+
   const [payments, orders] = await Promise.all([
-    payoutModel.listForConnection(connectionId),
-    orderMappingModel.listForSource(req.storeId, { limit: 200 }),
+    payoutModel.listForConnection(connectionId, {
+      limit: paymentPager.limit,
+      offset: paymentPager.offset,
+    }),
+    // Scoped to this connection in the query. It used to read 200 of the
+    // store's orders and filter them here, so a busy source store simply never
+    // saw the older sales behind a quiet buyer's balance.
+    orderMappingModel.listForSource(req.storeId, {
+      connectionId,
+      limit: orderPager.limit,
+      offset: orderPager.offset,
+    }),
   ]);
 
   return res.render("source/payoutDetail", {
@@ -160,9 +193,12 @@ async function renderSourceBuyer(req, res, connectionId) {
       ...payment,
       amount: toNumber(payment.amount),
     })),
-    orders: orders
-      .filter((order) => order.connection_id === connectionId)
-      .map((order) => ({ ...order, source_total: toNumber(order.source_total) })),
+    orders: orders.map((order) => ({
+      ...order,
+      source_total: toNumber(order.source_total),
+    })),
+    orderPager,
+    paymentPager,
     currency: buyer?.currency || req.store.currency || "",
   });
 }
@@ -187,9 +223,41 @@ exports.getSupplier = async (req, res) => {
     const suppliers = await payoutModel.summaryForDestination(req.storeId);
     const supplier = suppliers.find((row) => row.connection_id === connectionId);
 
+    // Two lists on one page, so two page numbers. Each pager carries the
+    // other's current page, or turning the page on one would reset the other.
+    const [paymentCount, orderCount] = await Promise.all([
+      payoutModel.countForConnection(connectionId),
+      orderMappingModel.countForStore(req.storeId, {
+        side: "destination",
+        connectionId,
+      }),
+    ]);
+
+    const path = `/payouts/${connectionId}`;
+
+    const orderPager = paginate(req, orderCount, {
+      path,
+      params: { payments: req.query.payments },
+    });
+    const paymentPager = paginate(req, paymentCount, {
+      path,
+      param: "payments",
+      params: { page: req.query.page },
+    });
+
     const [payments, orders] = await Promise.all([
-      payoutModel.listForConnection(connectionId),
-      orderMappingModel.listForDestination(req.storeId, { limit: 200 }),
+      payoutModel.listForConnection(connectionId, {
+        limit: paymentPager.limit,
+        offset: paymentPager.offset,
+      }),
+      // Scoped to this supplier in the query. It used to read 200 of the
+      // store's orders and filter them here, so a busy store simply never saw
+      // the older sales behind a quiet supplier's balance.
+      orderMappingModel.listForDestination(req.storeId, {
+        connectionId,
+        limit: orderPager.limit,
+        offset: orderPager.offset,
+      }),
     ]);
 
     res.render("destination/payoutDetail", {
@@ -202,13 +270,13 @@ exports.getSupplier = async (req, res) => {
         ...payment,
         amount: toNumber(payment.amount),
       })),
-      orders: orders
-        .filter((order) => order.connection_id === connectionId)
-        .map((order) => ({
-          ...order,
-          destination_total: toNumber(order.destination_total),
-          source_total: toNumber(order.source_total),
-        })),
+      orders: orders.map((order) => ({
+        ...order,
+        destination_total: toNumber(order.destination_total),
+        source_total: toNumber(order.source_total),
+      })),
+      orderPager,
+      paymentPager,
       currency: supplier?.currency || req.store.currency || "",
     });
   } catch (err) {

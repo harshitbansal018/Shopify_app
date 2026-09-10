@@ -1,0 +1,56 @@
+<%#
+  A list's search box. Locals:
+
+    action       where the search goes, e.g. "/products"
+    search       what is currently being searched for, "" when nothing
+    placeholder  what the box says when empty -- name the fields it covers,
+                 or a merchant will not know a SKU works
+    hidden       [{ name, value }] carried along, so searching inside a filter
+                 or a tab stays inside it
+
+  A real form, so Enter submits and the browser offers previous searches. The
+  submit handler in shopifyClient.js turns it into an appNavigate: a plain GET
+  form would post to the top window and lose the session token.
+
+  `page` is deliberately NOT carried. A new search is a new list, and landing
+  on page 7 of it -- usually empty -- is not what anyone means by searching.
+%>
+<form
+  class="search"
+  role="search"
+  action="<%= action %>"
+  data-navigate-form>
+
+  <% (typeof hidden !== "undefined" ? hidden : []).forEach(function (field) { %>
+    <% if (field.value) { %>
+      <input type="hidden" name="<%= field.name %>" value="<%= field.value %>">
+    <% } %>
+  <% }); %>
+
+  <span class="search__field">
+    <%- include("./icon", { name: "search" }) %>
+    <%# type="search" rather than text: phone keyboards show a Search key, and
+        the browser offers what was typed here before. %>
+    <input
+      class="search__input"
+      type="search"
+      name="q"
+      value="<%= search || "" %>"
+      placeholder="<%= placeholder || "Search" %>"
+      aria-label="<%= placeholder || "Search" %>"
+      autocomplete="off">
+  </span>
+
+  <button class="btn btn--small" type="submit">Search</button>
+
+  <%# Only when there is something to clear. An always-present Clear next to an
+      empty box is a control that does nothing. %>
+  <% if (search) { %>
+    <button
+      class="btn btn--small search__clear"
+      type="button"
+      data-navigate="<%= clearHref %>">
+      Clear
+    </button>
+  <% } %>
+</form>

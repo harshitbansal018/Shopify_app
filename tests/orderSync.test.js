@@ -320,6 +320,76 @@ function shopifyOrder(overrides = {}) {
           .fulfilled === 1 &&
           (await orderMappingModel.statusCounts(destination.id)).fulfilled === 1);
 
+      /* The tabs page, so they narrow in SQL. A tab applied to an
+       * already-read page would leave whatever survived of fifteen rows, and
+       * the rest of that tab would be unreachable. */
+      {
+        const done = await orderMappingModel.listForSource(source.id, {
+          tab: "done",
+        });
+        const open = await orderMappingModel.listForSource(source.id, {
+          tab: "open",
+        });
+
+        check("the done tab holds the shipped sale",
+          done.some((row) => row.id === queued.id));
+        check("and the open tab does not",
+          !open.some((row) => row.id === queued.id),
+          "a shipped sale still listed as outstanding is the wrong job twice");
+        check("every row on the open tab really is unfulfilled",
+          open.every((row) => row.source_fulfillment_status === "unfulfilled"));
+
+        check("the count matches the tab it counts",
+          (await orderMappingModel.countForStore(source.id, {
+            side: "source",
+            tab: "done",
+          })) === done.length,
+          "the pager would promise pages the list cannot fill");
+
+        check("the destination counts its own side",
+          (await orderMappingModel.countForStore(destination.id, {
+            tab: "done",
+          })) === (await orderMappingModel.listForDestination(destination.id, {
+            tab: "done",
+          })).length);
+
+        // The payout screens list one supplier's sales, so the connection has
+        // to narrow in SQL too -- it used to read 200 rows and filter them.
+        const mine = await orderMappingModel.listForDestination(destination.id, {
+          connectionId: queued.connection_id,
+        });
+
+        check("a connection scope returns only that connection's sales",
+          mine.length &&
+            mine.every((row) => row.connection_id === queued.connection_id));
+        check("and counts the same rows",
+          (await orderMappingModel.countForStore(destination.id, {
+            connectionId: queued.connection_id,
+          })) === mine.length);
+        check("another connection's id returns nothing",
+          (await orderMappingModel.listForDestination(destination.id, {
+            connectionId: queued.connection_id + 9999,
+          })).length === 0);
+
+        // Paging itself: no row seen twice, none skipped.
+        const first = await orderMappingModel.listForDestination(destination.id, {
+          limit: 1,
+          offset: 0,
+        });
+        const second = await orderMappingModel.listForDestination(destination.id, {
+          limit: 1,
+          offset: 1,
+        });
+
+        check("a limit really limits", first.length === 1);
+        check("and an offset past the end is empty, not an error",
+          (await orderMappingModel.listForDestination(destination.id, {
+            offset: 5000,
+          })).length === 0);
+        check("consecutive pages do not repeat a row",
+          !second.length || second[0].id !== first[0].id);
+      }
+
       await orderMappingModel.markUnfulfilled(queued.id);
 
       const reopened = await orderMappingModel.findById(queued.id);
