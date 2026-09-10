@@ -1,0 +1,821 @@
+/* landing/public/landing.css
+ *
+ * The public marketing page, and nothing else.
+ *
+ * Deliberately NOT sharing public/css/app.css. That file dresses a dashboard
+ * inside Shopify's admin iframe, where the job is to disappear into the
+ * surrounding chrome; this page has to hold a stranger's attention on its own.
+ * The two want opposite things from the same class names, so they get separate
+ * files and a shared brand colour instead.
+ *
+ * Everything is self-hosted: system fonts, inline SVG, no CDN. Fewer requests,
+ * nothing to fail behind a proxy, and no third party told who visited.
+ */
+
+:root {
+  /* Brand, taken from the app so the site and the product match. */
+  --brand: #0b5368;
+  --brand-dark: #083f50;
+  --brand-light: #1c7d99;
+  --brand-soft: #e7f2f5;
+
+  --ink: #12191f;
+  --ink-soft: #48555f;
+  --ink-faint: #6f7c86;
+
+  --bg: #ffffff;
+  --bg-tint: #f5f8f9;
+  --line: #e2e7ea;
+
+  --accent: #f0a500; /* the one warm note, used sparingly */
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 1px 2px rgba(18, 25, 31, .05), 0 8px 24px rgba(18, 25, 31, .06);
+  --shadow-lift: 0 2px 4px rgba(18, 25, 31, .06), 0 18px 46px rgba(18, 25, 31, .12);
+
+  --wrap: 1280px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+/* Anchors land under the sticky bar without this. */
+:target { scroll-margin-top: 5.5rem; }
+
+/* Respect a system setting that asks for no motion. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; animation: none !important; }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { line-height: 1.2; letter-spacing: -0.02em; margin: 0; }
+
+p { margin: 0; }
+
+a { color: var(--brand); }
+
+img { max-width: 100%; height: auto; }
+
+/* Keyboard users get a visible focus ring everywhere; mouse users do not. */
+:focus-visible {
+  outline: 2px solid var(--brand-light);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The first tab stop on the page, hidden until it is focused. */
+.skip {
+  position: absolute;
+  left: -9999px;
+  padding: .6rem 1rem;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 0 0 var(--radius-sm) 0;
+  z-index: 100;
+}
+
+.skip:focus { left: 0; top: 0; }
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+/* Prose that is read straight through -- the FAQ, the closing pitch -- rather
+   than scanned in columns. Long lines are hard to track back from. */
+.wrap--narrow { max-width: 760px; }
+
+.icon { flex: 0 0 auto; }
+
+/* ---------------- buttons ---------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  padding: .7rem 1.25rem;
+  font: inherit;
+  font-size: .95rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s, transform .1s, box-shadow .15s;
+}
+
+.btn:hover { border-color: #cdd5da; transform: translateY(-1px); }
+
+.btn:active { transform: none; }
+
+.btn--primary {
+  color: #fff;
+  background: var(--brand);
+  border-color: var(--brand);
+  box-shadow: 0 6px 18px rgba(11, 83, 104, .25);
+}
+
+.btn--primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+
+.btn--outline {
+  color: var(--brand);
+  background: transparent;
+  border-color: var(--brand);
+}
+
+.btn--outline:hover { background: var(--brand-soft); }
+
+.btn--small { padding: .5rem .95rem; font-size: .88rem; }
+
+.btn--large { padding: .85rem 1.75rem; font-size: 1.02rem; }
+
+/* ---------------- nav ---------------- */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, .88);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.nav__inner {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  height: 4.25rem;
+}
+
+.nav__brand {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  color: var(--ink);
+  text-decoration: none;
+  margin-right: auto;
+}
+
+.nav__logo { border-radius: 8px; }
+
+.nav__name { font-size: 1.12rem; font-weight: 700; letter-spacing: -0.02em; }
+
+.nav__by { color: var(--ink-faint); font-size: .82rem; }
+
+.nav__links { display: flex; gap: 1.5rem; }
+
+.nav__links a {
+  color: var(--ink-soft);
+  font-size: .92rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.nav__links a:hover { color: var(--brand); }
+
+/* Under this the four section links crowd the logo out. The sections are all
+   on this page, so scrolling reaches them; a burger menu would be one more
+   thing to build for no new destination. */
+@media (max-width: 860px) {
+  .nav__links, .nav__by { display: none; }
+}
+
+/* ---------------- hero ---------------- */
+
+.hero {
+  position: relative;
+  padding: 4rem 0 4.5rem;
+  background:
+    radial-gradient(900px 520px at 78% -8%, var(--brand-soft), transparent 70%),
+    linear-gradient(180deg, #fbfdfd, var(--bg) 55%);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+/* The pitch and the picture, side by side. The copy column is the wider of
+   the two: it carries the headline and the form, which is the work the
+   section is actually doing. */
+.hero__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 3.5rem;
+}
+
+/* Guards, belt and braces, against the one way this layout could break.
+   A grid track's minimum defaults to min-content, and the art column holds
+   nowrap prices and unbreakable domains -- so without minmax(0, …) on the
+   track and min-width: 0 on the item, a narrow enough screen would be pushed
+   sideways by the picture rather than the picture shrinking. The failure shows
+   up as a sideways-scrolling page and a headline clipped mid-word, a long way
+   from the element that caused it. */
+.hero__copy,
+.hero__art { min-width: 0; }
+
+/* One column under this, with the copy first. The art is supporting material
+   and must never push the headline or the install form below the fold. */
+@media (max-width: 1000px) {
+  .hero { padding: 3.25rem 0 3.5rem; }
+
+  .hero__inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.75rem;
+  }
+}
+
+.hero__eyebrow {
+  display: inline-block;
+  margin-bottom: 1.1rem;
+  padding: .35rem .85rem;
+  color: var(--brand);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.hero__title {
+  /* Held to a headline measure so it breaks into two or three strong lines
+     rather than one long one on a wide screen. */
+  max-width: 15ch;
+  /* Grows with the viewport between two fixed ends, so there is no jump at a
+     breakpoint and no 60px headline on a phone. */
+  font-size: clamp(2.1rem, 4.4vw, 3.35rem);
+  font-weight: 750;
+}
+
+.hero__sub {
+  max-width: 52ch;
+  margin-top: 1.15rem;
+  color: var(--ink-soft);
+  font-size: clamp(1rem, 1.5vw, 1.09rem);
+}
+
+/* ---------------- the install form ---------------- */
+
+.install { max-width: 520px; margin-top: 2rem; }
+
+.install__label {
+  display: block;
+  margin-bottom: .4rem;
+  color: var(--ink-soft);
+  font-size: .85rem;
+  font-weight: 600;
+}
+
+.install__row { display: flex; gap: .5rem; }
+
+.install__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: .75rem 1rem;
+  font: inherit;
+  font-size: .97rem;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+
+.install__input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+
+.install__note {
+  margin-top: .6rem;
+  color: var(--ink-faint);
+  font-size: .82rem;
+}
+
+@media (max-width: 520px) {
+  .install__row { flex-direction: column; }
+  .install__row .btn { width: 100%; }
+}
+
+.hero__proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.5rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-soft);
+  font-size: .88rem;
+}
+
+.hero__proof li { display: flex; align-items: center; gap: .4rem; }
+
+.hero__proof .icon { color: var(--brand); }
+
+/* ---------------- the hero artwork ----------------
+
+   Two mocked store panels, the same products in each at two prices. Built
+   from markup rather than exported as a screenshot: a screenshot goes stale
+   the day the UI changes, needs re-exporting at two resolutions, and turns to
+   mush on a phone. This stays sharp at any size and weighs nothing. */
+
+.hero__art { position: relative; }
+
+.shot {
+  position: relative;
+  display: grid;
+  gap: .9rem;
+  /* Tipped a degree off square so it reads as an illustration of the product
+     rather than a claim to be a real screenshot of it. */
+  transform: rotate(-1.1deg);
+}
+
+.shot__card {
+  padding: .9rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lift);
+}
+
+/* The destination card is the one the reader is being sold, so it carries the
+   brand edge and sits slightly forward of the supplier's. */
+.shot__card--live {
+  border-color: rgba(11, 83, 104, .35);
+  box-shadow: 0 3px 6px rgba(18, 25, 31, .06), 0 24px 54px rgba(11, 83, 104, .18);
+}
+
+.shot__head {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: 0 .35rem .7rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Three window dots, drawn as one element with two shadows -- cheaper than
+   three spans and impossible to misalign. */
+.shot__dots {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: #e0e4e7;
+  box-shadow: 11px 0 0 #e0e4e7, 22px 0 0 #e0e4e7;
+}
+
+.shot__store { display: grid; margin-left: .85rem; line-height: 1.35; }
+
+.shot__store strong { font-size: .82rem; }
+
+.shot__store span { color: var(--ink-faint); font-size: .72rem; }
+
+.shot__row {
+  display: grid;
+  grid-template-columns: 2rem 1fr auto;
+  align-items: center;
+  gap: .7rem;
+  padding: .6rem .35rem;
+}
+
+.shot__row + .shot__row { border-top: 1px solid #f0f3f4; }
+
+/* Stand-ins for product photos. Gradients rather than stock images: nothing to
+   licence, nothing to load, and no pretence that these are real products. */
+.shot__thumb { width: 2rem; height: 2rem; border-radius: 7px; }
+
+.shot__thumb--a { background: linear-gradient(135deg, #9fc3cf, #5f92a4); }
+.shot__thumb--b { background: linear-gradient(135deg, #d8c39b, #b6935c); }
+.shot__thumb--c { background: linear-gradient(135deg, #b6b1cd, #837da8); }
+
+.shot__text { display: flex; align-items: center; gap: .45rem; min-width: 0; }
+
+.shot__text strong {
+  font-size: .8rem;
+  font-weight: 600;
+  /* One line: a wrapped product name would change the row height and break
+     the alignment between the two cards. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shot__text > span:not(.shot__pill) {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: .72rem;
+}
+
+.shot__pill {
+  flex: 0 0 auto;
+  padding: .1rem .4rem;
+  color: #0f7b46;
+  background: #eef8f2;
+  border-radius: 999px;
+  font-size: .64rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.shot__price {
+  font-size: .82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+/* The number the shopper pays. It is the payoff of the whole picture, so it
+   is the only thing in it wearing the brand colour. */
+.shot__price--retail { color: var(--brand); }
+
+.shot__join { display: grid; place-items: center; }
+
+.shot__badge {
+  padding: .4rem .95rem;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(11, 83, 104, .3);
+  white-space: nowrap;
+}
+
+/* The domains and the "3 variants" notes are the first things to become
+   unreadable as the card narrows, and the least worth keeping. */
+@media (max-width: 420px) {
+  .shot__store span,
+  .shot__text > span:not(.shot__pill) { display: none; }
+}
+
+/* ---------------- sections ---------------- */
+
+.section { padding: 4.5rem 0; }
+
+.section--tint {
+  background: var(--bg-tint);
+  border-block: 1px solid var(--line);
+}
+
+.section__head { max-width: 62ch; margin: 0 auto 2.75rem; text-align: center; }
+
+.section__title { font-size: clamp(1.6rem, 3.2vw, 2.2rem); font-weight: 700; }
+
+.section__intro { margin-top: .8rem; color: var(--ink-soft); }
+
+/* ---------------- ticks ---------------- */
+
+.ticks { margin: 0; padding: 0; list-style: none; display: grid; gap: .5rem; }
+
+.ticks li {
+  display: grid;
+  /* Fixed first column so a wrapped line lines up under the text, not under
+     the tick. */
+  grid-template-columns: 1.1rem 1fr;
+  gap: .55rem;
+  align-items: start;
+  font-size: .92rem;
+  color: var(--ink-soft);
+}
+
+.ticks .icon { margin-top: .28rem; color: var(--brand); }
+
+/* ---------------- roles ---------------- */
+
+.roles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 1.25rem;
+}
+
+.role {
+  padding: 1.75rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.role__icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 12px;
+}
+
+.role__label { margin-top: 1.1rem; font-size: 1.25rem; }
+
+.role__role {
+  margin-top: .2rem;
+  color: var(--brand);
+  font-size: .85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.role__body { margin: .85rem 0 1.25rem; color: var(--ink-soft); font-size: .95rem; }
+
+/* ---------------- feature cards ---------------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1.1rem;
+}
+
+.card {
+  padding: 1.5rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: transform .15s, box-shadow .15s, border-color .15s;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: #cfd9dd;
+  box-shadow: var(--shadow-lift);
+}
+
+.card__icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 10px;
+}
+
+.card__title { margin-top: 1rem; font-size: 1.02rem; }
+
+.card__body { margin-top: .5rem; color: var(--ink-soft); font-size: .91rem; }
+
+/* ---------------- steps ---------------- */
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 1.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.step {
+  position: relative;
+  padding: 1.75rem 1.5rem 1.5rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Half outside the card, so the sequence reads as a track of numbers across
+   the row rather than four separate cards that happen to be numbered. */
+.step__number {
+  position: absolute;
+  top: -.9rem;
+  left: 1.5rem;
+  display: grid;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 50%;
+  font-size: .88rem;
+  font-weight: 700;
+}
+
+.step__icon { display: block; margin-bottom: .75rem; color: var(--brand-light); }
+
+.step__title { font-size: 1rem; }
+
+.step__body { margin-top: .45rem; color: var(--ink-soft); font-size: .9rem; }
+
+/* ---------------- pricing ---------------- */
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.plan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 1.85rem 1.6rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* The recommended plan, lifted out of the row. is_popular in the database is
+   what decides which one -- nothing here names a plan. */
+.plan--popular {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-lift);
+}
+
+.plan__badge {
+  position: absolute;
+  top: -.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: .28rem .8rem;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 999px;
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.plan__name { font-size: 1.15rem; }
+
+.plan__price { margin-top: .6rem; display: flex; align-items: baseline; gap: .3rem; }
+
+.plan__amount { font-size: 2.4rem; font-weight: 750; letter-spacing: -0.03em; }
+
+.plan__period { color: var(--ink-faint); font-size: .92rem; }
+
+/* The gap the limit line used to fill. The price still needs air under it
+   before the feature list starts. */
+.plan .ticks { margin-top: 1.1rem; }
+
+.plan .ticks { margin-bottom: 1.5rem; }
+
+/* margin-top:auto pins the button to the bottom, so buttons line up across
+   cards whose feature lists are different lengths. */
+.plan__cta { margin-top: auto; width: 100%; }
+
+.plans__note {
+  margin-top: 1.5rem;
+  color: var(--ink-faint);
+  font-size: .86rem;
+  text-align: center;
+}
+
+/* ---------------- faq ---------------- */
+
+.faq {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+
+.faq__item + .faq__item { border-top: 1px solid var(--line); }
+
+.faq__q {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Safari draws its own disclosure triangle; ours is the plus on the right. */
+.faq__q::-webkit-details-marker { display: none; }
+
+.faq__q:hover { color: var(--brand); }
+
+/* A plus made of two bars. The vertical one rotates flat when the item opens,
+   which turns it into a minus with nothing to swap out. */
+.faq__sign {
+  position: relative;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.faq__sign::before,
+.faq__sign::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 2px;
+  background: var(--brand);
+  border-radius: 2px;
+  transition: transform .18s ease;
+}
+
+.faq__sign::after { transform: rotate(90deg); }
+
+.faq__item[open] .faq__sign::after { transform: rotate(0deg); }
+
+.faq__a { padding: 0 1.4rem 1.3rem; }
+
+.faq__a p { color: var(--ink-soft); font-size: .95rem; max-width: 66ch; }
+
+/* ---------------- closing ---------------- */
+
+.closing {
+  padding: 4.5rem 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-light));
+  color: #fff;
+}
+
+.closing__inner { text-align: center; }
+
+.closing__title { font-size: clamp(1.6rem, 3.2vw, 2.2rem); }
+
+.closing__body {
+  max-width: 55ch;
+  margin: .9rem auto 1.9rem;
+  color: rgba(255, 255, 255, .88);
+}
+
+/* On the gradient the white primary button would vanish, so it inverts. */
+.closing .btn--primary {
+  color: var(--brand);
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+
+.closing .btn--primary:hover { background: #f2f7f8; border-color: #f2f7f8; }
+
+/* ---------------- footer ---------------- */
+
+.foot {
+  padding: 3.25rem 0 1.75rem;
+  background: #0d161b;
+  color: #b9c4cb;
+  font-size: .92rem;
+}
+
+.foot__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 2rem;
+  padding-bottom: 2.25rem;
+}
+
+.foot .nav__brand { color: #fff; margin-right: 0; }
+
+.foot__tagline { margin-top: .85rem; max-width: 34ch; color: #8f9ea8; font-size: .88rem; }
+
+.foot__contact { margin-top: .75rem; }
+
+.foot a { color: #b9c4cb; text-decoration: none; }
+
+.foot a:hover { color: #fff; text-decoration: underline; }
+
+.foot__title {
+  margin-bottom: .75rem;
+  color: #fff;
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.foot__col ul { margin: 0; padding: 0; list-style: none; display: grid; gap: .5rem; }
+
+.foot__legal {
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+  color: #7f8d97;
+  font-size: .84rem;
+}
+
+.foot__small { margin-top: .35rem; font-size: .78rem; color: #6b7982; }
+
+@media (max-width: 720px) {
+  .foot__inner { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
+}

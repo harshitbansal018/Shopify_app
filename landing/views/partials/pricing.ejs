@@ -1,0 +1,75 @@
+<%#
+  Pricing, read from the `plans` table by pricing.js.
+
+  Nothing here is typed in. Change a price, a feature line or a limit in the
+  database and this section follows on the next page load -- which is the only
+  way the page and the actual Shopify charge can be guaranteed to agree.
+
+  The whole section is skipped when the list is empty. That happens when the
+  database is unreachable, and a page with no pricing still explains the app
+  and still leads to the install; a page that 500s does neither.
+%>
+<% if (plans.length) { %>
+<section class="section section--tint" id="pricing">
+  <div class="wrap">
+
+    <header class="section__head">
+      <h2 class="section__title">Pricing that follows your catalogue</h2>
+      <p class="section__intro">
+        Billed monthly through Shopify, on the same invoice as everything else.
+        Change plan or cancel whenever you like.
+      </p>
+    </header>
+
+    <div class="plans">
+      <% plans.forEach(function (plan) { %>
+        <article class="plan <%= plan.popular ? "plan--popular" : "" %>">
+
+          <% if (plan.popular) { %>
+            <span class="plan__badge">Most popular</span>
+          <% } %>
+
+          <h3 class="plan__name"><%= plan.name %></h3>
+
+          <p class="plan__price">
+            <span class="plan__amount"><%= plan.priceLabel %></span>
+            <% if (plan.period) { %>
+              <span class="plan__period">/ <%= plan.period %></span>
+            <% } %>
+          </p>
+
+          <%# The product limit is deliberately NOT printed separately here.
+              Every seeded plan already leads its plan_content with it, so a
+              line of its own rendered the same sentence twice on every card.
+              plan_content is the one an admin edits, so that is the one that
+              stays. `plan.limit` is still carried on the card for anyone who
+              wants to sort or badge on it. %>
+          <ul class="ticks">
+            <% plan.features.forEach(function (feature) { %>
+              <li>
+                <%- include("./icon", { name: "tick", size: 16 }) %>
+                <span><%= feature %></span>
+              </li>
+            <% }); %>
+          </ul>
+
+          <%# Every plan leads to the same place: a visitor has no store
+              connected yet, so a plan cannot be chosen until the app is
+              installed. Pretending otherwise would dead-end them at a login. %>
+          <a class="btn <%= plan.popular ? "btn--primary" : "btn--outline" %> plan__cta"
+             href="#install">
+            <%= plan.cta %>
+          </a>
+
+        </article>
+      <% }); %>
+    </div>
+
+    <p class="plans__note">
+      Plans apply to the store that receives products. A supplier's store uses
+      SyncHub free.
+    </p>
+
+  </div>
+</section>
+<% } %>

@@ -1,0 +1,42 @@
+<%#
+  The footer: who made it, how to reach them, and the section links again for
+  anyone who reached the bottom still looking for something.
+%>
+<footer class="foot">
+  <div class="wrap foot__inner">
+
+    <div class="foot__brand">
+      <a class="nav__brand" href="/home">
+        <img class="nav__logo" src="/images/product-sync-logo-256.png"
+             alt="" width="34" height="34">
+        <span class="nav__name"><%= PRODUCT.name %></span>
+      </a>
+      <p class="foot__tagline"><%= COMPANY.tagline %></p>
+      <p class="foot__contact">
+        <a href="mailto:<%= COMPANY.email %>"><%= COMPANY.email %></a>
+      </p>
+    </div>
+
+    <% FOOTER.columns.forEach(function (column) { %>
+      <nav class="foot__col" aria-label="<%= column.title %>">
+        <h3 class="foot__title"><%= column.title %></h3>
+        <ul>
+          <% column.links.forEach(function (link) { %>
+            <li><a href="<%= link.href %>"><%= link.label %></a></li>
+          <% }); %>
+        </ul>
+      </nav>
+    <% }); %>
+
+  </div>
+
+  <div class="wrap foot__legal">
+    <p>
+      &copy; <%= year %>
+      <a href="<%= COMPANY.site %>" target="_blank" rel="noopener noreferrer">
+        <%= COMPANY.name %>
+      </a>. All rights reserved.
+    </p>
+    <p class="foot__small"><%= FOOTER.legal %></p>
+  </div>
+</footer>

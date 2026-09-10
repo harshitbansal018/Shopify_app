@@ -1,0 +1,14 @@
+<%#
+  The last ask, for anyone who scrolled past the hero without acting.
+
+  It points back at the install form rather than repeating it: two forms with
+  the same field on one page is two things for a browser to autofill and two
+  ids to keep unique, for no gain.
+%>
+<section class="closing">
+  <div class="wrap wrap--narrow closing__inner">
+    <h2 class="closing__title"><%= CLOSING.title %></h2>
+    <p class="closing__body"><%= CLOSING.body %></p>
+    <a class="btn btn--primary btn--large" href="#install"><%= CLOSING.cta %></a>
+  </div>
+</section>

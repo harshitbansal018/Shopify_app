@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title><%= PRODUCT.name %> &mdash; <%= PRODUCT.summary.split(".")[0] %></title>
+  <meta name="description" content="<%= PRODUCT.summary %>">
+
+  <%# Open Graph, so a link pasted into a chat or a post shows something. The
+      image is the app icon already in /public -- one asset, one place. %>
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="<%= PRODUCT.name %> by <%= COMPANY.name %>">
+  <meta property="og:description" content="<%= PRODUCT.summary %>">
+  <% if (host) { %>
+    <meta property="og:url" content="<%= host %>/home">
+    <meta property="og:image" content="<%= host %>/images/product-sync-app-icon-1200.jpg">
+  <% } %>
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/images/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+
+  <%# The landing page's OWN stylesheet, served from landing/public. It shares
+      nothing with the admin screens' app.css: this page has a different job,
+      a different audience and a different set of components, and one file
+      trying to serve both is how a change to a button in the marketing hero
+      moves a button in a merchant's dashboard. %>
+  <link rel="stylesheet" href="/landing-assets/landing.css">
+</head>
+
+<body>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <%- include("./partials/nav") %>
+
+  <main id="main">
+    <%- include("./partials/hero") %>
+    <%- include("./partials/roles") %>
+    <%- include("./partials/steps") %>
+    <%- include("./partials/features") %>
+    <%- include("./partials/pricing") %>
+    <%- include("./partials/faq") %>
+    <%- include("./partials/closing") %>
+  </main>
+
+  <%- include("./partials/footer") %>
+
+</body>
+
+</html>

@@ -1,0 +1,39 @@
+<%#
+  The two roles, side by side.
+
+  Placed immediately after the hero because everything further down the page --
+  the features, the steps, the pricing -- assumes the reader knows which side
+  they are on. A visitor who has not understood this yet reads the rest as a
+  list of unrelated capabilities.
+%>
+<section class="section" id="roles">
+  <div class="wrap">
+
+    <header class="section__head">
+      <h2 class="section__title"><%= ROLES.title %></h2>
+      <p class="section__intro"><%= ROLES.intro %></p>
+    </header>
+
+    <div class="roles">
+      <% ROLES.cards.forEach(function (card) { %>
+        <article class="role">
+          <span class="role__icon"><%- include("./icon", { name: card.icon }) %></span>
+
+          <h3 class="role__label"><%= card.label %></h3>
+          <p class="role__role"><%= card.role %></p>
+          <p class="role__body"><%= card.body %></p>
+
+          <ul class="ticks">
+            <% card.points.forEach(function (point) { %>
+              <li>
+                <%- include("./icon", { name: "tick", size: 16 }) %>
+                <span><%= point %></span>
+              </li>
+            <% }); %>
+          </ul>
+        </article>
+      <% }); %>
+    </div>
+
+  </div>
+</section>

@@ -1,0 +1,31 @@
+<%#
+  The top bar. Sticky, because the install button is the point of the page and
+  a visitor who has scrolled to the FAQ should not have to scroll back up.
+
+  The section links are plain anchors to ids on this page -- no JavaScript, so
+  they work before any script runs and the browser handles the back button.
+%>
+<header class="nav" id="top">
+  <div class="wrap nav__inner">
+
+    <a class="nav__brand" href="/home">
+      <img class="nav__logo" src="/images/product-sync-logo-256.png"
+           alt="" width="34" height="34">
+      <span class="nav__name"><%= PRODUCT.name %></span>
+      <span class="nav__by">by <%= COMPANY.name %></span>
+    </a>
+
+    <%# Hidden on narrow screens rather than folded into a burger menu: four
+        anchors to sections of the SAME page are not worth a menu, and the
+        page can simply be scrolled. %>
+    <nav class="nav__links" aria-label="Sections">
+      <a href="#how-it-works">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+
+    <a class="btn btn--primary btn--small" href="#install">Install</a>
+
+  </div>
+</header>

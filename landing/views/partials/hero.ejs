@@ -1,0 +1,133 @@
+<%#
+  The first screen: the pitch on the left, a picture of the product on the
+  right.
+
+  Split rather than centred because the install form belongs in the reading
+  column. Centred, a merchant's eye has to travel back to the middle for every
+  line; left-aligned it runs straight down eyebrow, headline, sentence, field,
+  button -- which is the order they are meant to be read in.
+
+  The form GETs /api/auth/install, which is the app's real install route. It
+  already accepts ?shop=, already validates the domain, and already shows its
+  own form when the address is missing or wrong -- so there is no validation
+  here to fall out of step with it.
+%>
+<section class="hero">
+  <div class="wrap hero__inner">
+
+    <div class="hero__copy">
+
+      <p class="hero__eyebrow"><%= HERO.eyebrow %></p>
+
+      <h1 class="hero__title"><%= HERO.title %></h1>
+
+      <p class="hero__sub"><%= HERO.subtitle %></p>
+
+      <form class="install" id="install" method="get" action="/api/auth/install">
+        <label class="install__label" for="shop">Your Shopify store address</label>
+
+        <div class="install__row">
+          <input
+            class="install__input"
+            type="text"
+            id="shop"
+            name="shop"
+            placeholder="mystore.myshopify.com"
+            autocomplete="off"
+            spellcheck="false"
+            required>
+          <button class="btn btn--primary" type="submit">
+            <%= HERO.primaryCta %>
+          </button>
+        </div>
+
+        <p class="install__note">
+          You will be taken to Shopify to approve the permissions. Nothing is
+          installed until you do.
+        </p>
+      </form>
+
+      <ul class="hero__proof">
+        <% HERO.proof.forEach(function (line) { %>
+          <li>
+            <%- include("./icon", { name: "tick", size: 16 }) %>
+            <%= line %>
+          </li>
+        <% }); %>
+      </ul>
+
+    </div>
+
+    <%#
+      The picture: the same three products in both stores, at two prices.
+
+      aria-hidden because it is decoration -- every claim it makes is already
+      written in the copy beside it, and reading a mocked-up table aloud would
+      be noise to a screen reader rather than information.
+    %>
+    <div class="hero__art" aria-hidden="true">
+      <%
+        var preview = HERO.preview;
+        // Calculated, never typed: the two prices on screen and the percentage
+        // between them are then guaranteed to agree.
+        var retail = function (cost) {
+          return (cost * (1 + preview.markup / 100)).toFixed(2);
+        };
+      %>
+
+      <div class="shot">
+
+        <article class="shot__card">
+          <header class="shot__head">
+            <span class="shot__dots"></span>
+            <span class="shot__store">
+              <strong><%= preview.source.label %></strong>
+              <span><%= preview.source.domain %></span>
+            </span>
+          </header>
+
+          <% preview.rows.forEach(function (row) { %>
+            <div class="shot__row">
+              <span class="shot__thumb shot__thumb--<%= row.tone %>"></span>
+              <span class="shot__text">
+                <strong><%= row.title %></strong>
+                <span><%= row.meta %></span>
+              </span>
+              <span class="shot__price">$<%= row.cost.toFixed(2) %></span>
+            </div>
+          <% }); %>
+        </article>
+
+        <%# The join between the two cards, and the whole point of the app. %>
+        <div class="shot__join">
+          <span class="shot__badge">+<%= preview.markup %>% your margin</span>
+        </div>
+
+        <article class="shot__card shot__card--live">
+          <header class="shot__head">
+            <span class="shot__dots"></span>
+            <span class="shot__store">
+              <strong><%= preview.destination.label %></strong>
+              <span><%= preview.destination.domain %></span>
+            </span>
+          </header>
+
+          <% preview.rows.forEach(function (row) { %>
+            <div class="shot__row">
+              <span class="shot__thumb shot__thumb--<%= row.tone %>"></span>
+              <span class="shot__text">
+                <strong><%= row.title %></strong>
+                <span class="shot__pill">synced</span>
+              </span>
+              <span class="shot__price shot__price--retail">
+                $<%= retail(row.cost) %>
+              </span>
+            </div>
+          <% }); %>
+        </article>
+
+      </div>
+    </div>
+
+  </div>
+</section>
