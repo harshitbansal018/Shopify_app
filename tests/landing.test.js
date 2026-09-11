@@ -1,15 +1,3 @@
-/* The public marketing page.
- *
- * Two things are worth guarding here, and they are not the wording:
- *
- *   1. The routing. "/" is shared with the embedded app, so a mistake in
- *      telling the two apart shows a merchant a marketing page instead of
- *      their dashboard -- or shows a visitor an OAuth redirect.
- *
- *   2. The pricing. It is read from the `plans` table so the page and the
- *      Shopify charge cannot disagree, and a page that 500s because the
- *      database hiccuped is worse than one with no prices on it.
- */
 require("dotenv").config({ quiet: true });
 
 const path = require("path");

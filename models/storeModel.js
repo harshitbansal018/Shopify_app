@@ -328,7 +328,21 @@ async function deleteStore(shopDomain) {
   return result.affectedRows > 0;
 }
 
+/**
+ * The store owner's email, as Shopify reports it.
+ *
+ * Saved the first time an email goes to the store rather than at install, so
+ * stores installed before notifications existed get theirs too.
+ */
+async function setEmail(id, email) {
+  await query("UPDATE stores SET email = ? WHERE id = ?", [
+    email ? String(email).trim().slice(0, 255) : null,
+    id,
+  ]);
+}
+
 module.exports = {
+  setEmail,
   ROLES,
   findByDomain,
   findById,

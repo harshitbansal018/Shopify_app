@@ -17,10 +17,35 @@
       <div>
         <h1>Settings</h1>
         <p class="shell__sub">
-          What each source store is allowed to copy into
+          What the selected source store is allowed to copy into
           <%= store.store_name || shop %>.
         </p>
       </div>
+
+      <%# One store at a time. A GET form, so the choice lives in the URL --
+          reload, back and a shared link all land on the same store -- and
+          data-navigate-form hands it to appNavigate, which keeps the session
+          token a plain submit inside the admin iframe would lose.
+
+          Shown even with a single store: it is also the label saying WHOSE
+          settings these are, and it is where a second store will appear. %>
+      <% if (connections.length) { %>
+        <div class="shell__actions">
+          <form class="store-switch" action="/settings" data-navigate-form>
+            <label class="store-switch__label" for="store-switch">Source store</label>
+            <select class="field__input field__input--compact" id="store-switch" name="connection">
+              <% connections.forEach(function (connection) { %>
+                <option
+                  value="<%= connection.id %>"
+                  <%= current && connection.id === current.id ? "selected" : "" %>>
+                  <%= connection.source.store_name || connection.source.shop_domain %><%=
+                    connection.status !== "active" ? " (" + connection.status + ")" : "" %>
+                </option>
+              <% }); %>
+            </select>
+          </form>
+        </div>
+      <% } %>
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
@@ -37,11 +62,13 @@
 
     <% } else { %>
 
-      <% connections.forEach(function (connection) { %>
-        <%
-          var sync = connection.sync;
-          var id = connection.id;
-        %>
+      <%# Only the store picked in the header. `current` is null only when
+          there are no connections, which is the empty state above. %>
+      <%
+        var connection = current;
+        var sync = connection.sync;
+        var id = connection.id;
+      %>
 
         <section class="panel settings" data-connection="<%= id %>">
 
@@ -153,7 +180,60 @@
           </footer>
 
         </section>
-      <% }); %>
+
+        <%# Email notifications for the same store, on a panel of their own with
+            their own Save: these are about inboxes, not products, and saving
+            them must not re-queue every product the way the sync Save does. %>
+        <section class="panel notify" data-connection="<%= id %>">
+
+          <header class="settings__head">
+            <div class="settings__who">
+              <span class="settings__eyebrow">Email notifications for</span>
+              <h2 class="settings__store">
+                <%= connection.source.store_name || connection.source.shop_domain %>
+              </h2>
+            </div>
+          </header>
+
+          <div class="settings__group">
+            <p class="settings__hint">
+              You decide every email on this connection &mdash; including the
+              ones that go to the source store. Each one says whose inbox it
+              lands in.
+            </p>
+
+            <div class="notify__list">
+              <% emails.forEach(function (email) { %>
+                <label class="notify__item">
+                  <input
+                    type="checkbox"
+                    name="<%= email.key %>"
+                    <%= notifications[email.key] ? "checked" : "" %>>
+                  <span class="notify__text">
+                    <span class="notify__label">
+                      <%= email.label %>
+                      <%# Named, not just "source": the destination is choosing
+                          for someone else's inbox, so say whose. %>
+                      <span class="notify__to notify__to--<%= email.to %>">
+                        to <%= email.to === "source"
+                          ? (connection.source.store_name || connection.source.shop_domain)
+                          : "you" %>
+                      </span>
+                    </span>
+                    <span class="notify__hint"><%= email.hint %></span>
+                  </span>
+                </label>
+              <% }); %>
+            </div>
+          </div>
+
+          <footer class="settings__foot">
+            <button class="btn btn--primary save-notifications" type="button">
+              Save
+            </button>
+          </footer>
+
+        </section>
 
     <% } %>
 
@@ -166,6 +246,50 @@
       function fail(message) {
         pageError.textContent = message;
         pageError.hidden = false;
+      }
+
+      /* ---------------- switching store ----------------
+
+         Changing the dropdown submits its GET form, and the delegated handler
+         in shopifyClient.js turns that into an appNavigate. But a switch
+         reloads the page, so ticks made and not saved would vanish without a
+         word -- hence the guard. */
+
+      var switcher = document.getElementById("store-switch");
+
+      /* Unsaved work is marked ON the panel (data-dirty) rather than in one
+         variable, so each panel's Save clears only its own -- saving the
+         emails must not make an unsaved sync change look saved. */
+      Array.prototype.slice.call(document.querySelectorAll(".settings, .notify"))
+        .forEach(function (section) {
+          function mark() { section.setAttribute("data-dirty", "1"); }
+
+          // Both events: a checkbox fires change, a number box fires input on
+          // every keystroke but change only on blur.
+          section.addEventListener("input", mark);
+          section.addEventListener("change", mark);
+        });
+
+      function hasUnsaved() {
+        return Boolean(document.querySelector('[data-dirty="1"]'));
+      }
+
+      if (switcher) {
+        var shown = switcher.value;
+
+        switcher.addEventListener("change", function () {
+          if (hasUnsaved() && !window.confirm(
+            "You have unsaved changes for this store.\n\n" +
+            "Switch anyway? They will be lost."
+          )) {
+            // Put the dropdown back, or it would name a store whose settings
+            // are not the ones on screen.
+            switcher.value = shown;
+            return;
+          }
+
+          switcher.form.requestSubmit();
+        });
       }
 
       Array.prototype.slice.call(document.querySelectorAll(".settings"))
@@ -214,6 +338,9 @@
                 window.appToast(
                   "Saved. " + data.queued + " product(s) queued for the next sync."
                 );
+
+                // Saved, so this panel no longer holds unsaved work.
+                panel.removeAttribute("data-dirty");
               } catch (err) {
                 fail(err.message);
               } finally {
@@ -223,6 +350,54 @@
             });
 
         });
+
+      /* ---------------- email notifications ---------------- */
+
+      var notifyPanel = document.querySelector(".notify");
+
+      if (notifyPanel) {
+        notifyPanel.querySelector(".save-notifications")
+          .addEventListener("click", async function (event) {
+            var button = event.currentTarget;
+
+            pageError.hidden = true;
+            button.disabled = true;
+            button.textContent = "Saving…";
+
+            // Every switch by name, ticked or not. An unticked box has to be
+            // sent as false: the server reads a missing key as "on".
+            var notifications = {};
+
+            Array.prototype.slice.call(
+              notifyPanel.querySelectorAll('input[type="checkbox"]')
+            ).forEach(function (input) {
+              notifications[input.name] = input.checked;
+            });
+
+            try {
+              var response = await window.appFetch("/settings/notifications", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  connection_id: notifyPanel.dataset.connection,
+                  notifications: notifications
+                })
+              });
+
+              var data = await response.json().catch(function () { return {}; });
+
+              if (!response.ok) throw new Error(data.error || "Request failed");
+
+              window.appToast("Email settings saved.");
+              notifyPanel.removeAttribute("data-dirty");
+            } catch (err) {
+              fail(err.message);
+            } finally {
+              button.disabled = false;
+              button.textContent = "Save";
+            }
+          });
+      }
     })();
   </script>
 

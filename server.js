@@ -133,6 +133,10 @@ const PORT = process.env.PORT || 3000;
   // an order that keeps failing must not stall the catalogue.
   require("./services/orderSync").startOrderSync();
 
+  // Sends queued notification emails. Its own loop, so a slow or unreachable
+  // mail server never holds up an order or a product push.
+  require("./services/notifications").startOutbox();
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });

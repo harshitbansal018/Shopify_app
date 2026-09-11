@@ -95,12 +95,17 @@ async function queueForSources(destinationStoreId, order) {
       0
     );
 
-    await orderMappingModel.claim(connectionId, order.id, {
+    const mapping = await orderMappingModel.claim(connectionId, order.id, {
       sourceTotal: money(sourceTotal),
       destinationTotal: money(destinationTotal),
       currency: order.currency || null,
       lineCount: group.length,
     });
+
+    // Tell the source it has an order to ship, if this destination has that
+    // email on. Queued, never thrown, and keyed on the mapping -- so a
+    // redelivered webhook does not email the source twice.
+    await require("./notifications").orderCreated(mapping);
 
     queued += 1;
   }

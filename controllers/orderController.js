@@ -188,6 +188,11 @@ exports.postFulfil = async (req, res) => {
 
     await orderMappingModel.markFulfilled(mapping.id, parcels);
 
+    // Emails, as this connection's destination has chosen them. Queued, never
+    // thrown: the order is marked shipped now, and that has to stand whatever
+    // the mail server does.
+    await require("../services/notifications").orderFulfilled(mapping.id);
+
     return res.json({ ok: true, tracking: parcels.length });
   } catch (err) {
     console.error("Marking an order fulfilled failed:", err.message);
@@ -264,6 +269,10 @@ exports.postCancel = async (req, res) => {
     );
 
     const queued = await orderMappingModel.queueCancellation(mapping.id);
+
+    // The destination hears about it by email too, if it has order updates on.
+    // Queued, never thrown -- the cancellation is already recorded.
+    await require("../services/notifications").orderCancelled(mapping.id);
 
     console.log(
       `${req.shop} cannot supply ${mapping.destination_order_name}; ` +

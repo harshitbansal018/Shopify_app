@@ -960,10 +960,13 @@ const CREATE_MEMBERSHIP_PAYMENTS = `
 
 async function seedPlans() {
   const plans = [
-    ["Free", 0, 0, 25, JSON.stringify(["Up to 25 synced products", "1 source store", "Manual product sync", "Community support"])],
-    ["Basic", 10, 0, 250, JSON.stringify(["Up to 250 synced products", "Up to 3 source stores", "Automatic product sync", "Email support"])],
-    ["Pro", 25, 1, 1000, JSON.stringify(["Up to 1,000 synced products", "Unlimited source stores", "Automatic product sync", "Priority support"])],
-  ];
+  ["Free",       0,  0, 10,    JSON.stringify(["Up to 10 synced products",    "Up to 50 orders / month",    "Up to 100 emails / month",   "1 source store",          "Community support"])],
+  ["Starter",    10,  0, 25,   JSON.stringify(["Up to 25 synced products",   "Up to 200 orders / month",   "Up to 500 emails / month",   "Up to 2 source stores",   "Email support"])],
+  ["Basic",      25, 0, 100,   JSON.stringify(["Up to 100 synced products",   "Up to 500 orders / month",   "Up to 1,000 emails / month", "Up to 3 source stores",   "Email support"])],
+  ["Pro",        50, 1, 500,  JSON.stringify(["Up to 500 synced products", "Up to 2,000 orders / month", "Up to 5,000 emails / month", "Unlimited source stores", "Priority support"])],
+  ["Enterprise", 100, 0, 9999,  JSON.stringify(["Unlimited synced products", "Unlimited orders",           "Unlimited emails",           "Unlimited source stores", "Dedicated support"])],
+];
+
 
   for (const [name, price, isPopular, maxLimit, content] of plans) {
     await query(
@@ -1046,7 +1049,113 @@ async function runMigrations() {
   await query(CREATE_PAYOUTS);
   await query(CREATE_FAQS);
   await seedFaqs();
+  // Email notifications: where each store's address is kept, which emails each
+  // connection sends, and the queue they go out from. Last, because both new
+  // tables have foreign keys onto stores and store_connections.
+  await addStoreEmail();
+  await query(CREATE_NOTIFICATION_SETTINGS);
+  await query(CREATE_EMAIL_OUTBOX);
 }
+
+/* ------------------------------------------------------------------ */
+/* Email notifications                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The store owner's address, as Shopify reports it.
+ *
+ * Filled in the first time an email goes to the store rather than at install,
+ * so stores installed before notifications existed get one too.
+ */
+async function addStoreEmail() {
+  await safeAlter(
+    "stores.email",
+    "ALTER TABLE stores ADD COLUMN email VARCHAR(255) DEFAULT NULL"
+  );
+}
+
+/*
+ * Which emails one connection sends.
+ *
+ * Decided by the DESTINATION alone -- including the two that go to the source.
+ * One row per connection, so a destination with two suppliers decides for each
+ * separately, and only ever about its own orders. Every switch defaults ON: a
+ * connection nobody has configured must still tell the source it has an order.
+ */
+const CREATE_NOTIFICATION_SETTINGS = `
+  CREATE TABLE IF NOT EXISTS notification_settings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- To the SOURCE: a sale in the destination included its products.
+    email_order_created       TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the DESTINATION: the source shipped or cancelled an order.
+    email_order_updates       TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the DESTINATION: what it now owes, each time an order is fulfilled.
+    email_payout_destination  TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the SOURCE: a payment the destination has recorded to it -- the
+    -- settlement. (Named from when it went out on every fulfilment.)
+    email_payout_source       TINYINT(1) NOT NULL DEFAULT 1,
+
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uniq_notification_connection (connection_id),
+
+    CONSTRAINT fk_notification_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/*
+ * Every email, written when the event happens and sent from here afterwards.
+ *
+ * A queue rather than sending inline, for the same reason the order sync is
+ * one: a slow or down mail provider must never hold up marking an order
+ * shipped, and a failed send is retried instead of lost.
+ *
+ * dedupe_key is what stops a redelivered webhook or a double click emailing
+ * someone twice about the same thing.
+ *
+ * 'sending' is a claim. Two app processes can run this queue at once, and
+ * without it both would pick the same row and send the same email twice. A
+ * claim older than a few minutes belongs to a process that died mid-send, and
+ * is picked up again.
+ */
+const CREATE_EMAIL_OUTBOX = `
+  CREATE TABLE IF NOT EXISTS email_outbox (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id      INT NOT NULL,
+    -- Resolved to an address only when sending: the address may not be known
+    -- yet when the event happens.
+    recipient_store_id INT NOT NULL,
+
+    kind       VARCHAR(40)  NOT NULL,
+    dedupe_key VARCHAR(191) NOT NULL,
+
+    subject    VARCHAR(255) NOT NULL,
+    html       MEDIUMTEXT   NOT NULL,
+    text_body  MEDIUMTEXT   NOT NULL,
+
+    status     ENUM('pending','sending','sent','failed','skipped')
+               NOT NULL DEFAULT 'pending',
+    attempts   INT NOT NULL DEFAULT 0,
+    error      VARCHAR(500) DEFAULT NULL,
+    -- The address it actually went to, recorded at send time.
+    to_email   VARCHAR(255) DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claimed_at DATETIME DEFAULT NULL,
+    sent_at    DATETIME DEFAULT NULL,
+
+    UNIQUE KEY uniq_outbox_dedupe (dedupe_key),
+    KEY idx_outbox_queue (status, attempts, id),
+
+    CONSTRAINT fk_outbox_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE,
+    CONSTRAINT fk_outbox_recipient
+      FOREIGN KEY (recipient_store_id) REFERENCES stores(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
 
 /**
  * Put the starting questions in, once.

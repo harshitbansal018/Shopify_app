@@ -1301,6 +1301,105 @@ body {
   margin-top: 1.15rem;
 }
 
+/* The store picker in the Settings header. Label beside the control, not
+   above it, so it lines up with the page title on the left. */
+.store-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.store-switch__label {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Store names vary a lot in length; wide enough for a typical one, capped so
+   a very long name cannot shove the title off the row. */
+.store-switch .field__input {
+  min-width: 12rem;
+  max-width: 20rem;
+}
+
+/* ---------------- email notifications ---------------- */
+
+/* Same frame as the sync panel above it; the sibling rule on .shell > .panel
+   already spaces the two apart. */
+.notify {
+  padding: 0;
+  overflow: hidden;
+}
+
+.notify__list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+/* The whole row is the label, so the tick target is the full width rather
+   than a 13px box. */
+.notify__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.notify__item:hover {
+  background: var(--line-soft);
+}
+
+.notify__item input {
+  flex: 0 0 auto;
+  margin-top: 0.22rem;
+}
+
+.notify__text {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.notify__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.notify__hint {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+/* Whose inbox. Amber for the source, because ticking it sends mail to a
+   different business -- that should never look the same as mailing yourself. */
+.notify__to {
+  padding: 0.06rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.notify__to--source {
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+  border: 1px solid var(--waiting-line);
+}
+
+.notify__to--destination {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid rgba(11, 83, 104, 0.25);
+}
+
 .settings__head {
   display: flex;
   align-items: center;

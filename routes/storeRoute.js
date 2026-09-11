@@ -12,6 +12,7 @@ const {
   postDeleteStore,
   getSettings,
   postSettings,
+  postNotifications,
 } = require("../controllers/storeController");
 
 // Every route here is behind a verified session token, so req.storeId is the
@@ -25,6 +26,9 @@ router.post("/store-type", postStoreType);
 // accepts, which a source has no say in. The handlers re-check the role.
 router.get("/settings", getSettings);
 router.post("/settings", postSettings);
+// One connection's email switches. Separate from /settings because saving
+// them must not re-queue every product the way a sync change does.
+router.post("/settings/notifications", postNotifications);
 
 router.get("/stores", getStores);
 router.post("/stores/code", postPairingCode); // destination: show a code

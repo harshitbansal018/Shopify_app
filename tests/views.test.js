@@ -1219,14 +1219,22 @@ const STORE_ROW = {
       destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
     };
 
-    const settingsPage = (sync) =>
+    // `connections` feeds the store picker; `current` is the one store whose
+    // settings are on screen.
+    const settingsPage = (sync, extra = {}) =>
       render("destination/settings", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
-        connections: [{ ...CONN, sync }],
+        connections: [CONN],
+        current: { ...CONN, sync },
         productFields: syncSettingsModel.PRODUCT_FIELDS,
         variantFields: syncSettingsModel.VARIANT_FIELDS,
         labels: controller.FIELD_LABELS,
+        // The email panel's locals, exactly as getSettings passes them.
+        notifications: require(path.join(SERVER, "models/notificationSettingsModel"))
+          .defaults(9),
+        emails: require(path.join(SERVER, "models/notificationSettingsModel")).EMAILS,
+        ...extra,
       });
 
     const allOn = await settingsPage(syncSettingsModel.defaults(9));
@@ -1245,9 +1253,46 @@ const STORE_ROW = {
     // offers: Variants is a section heading, not a parent switch.
     const shown = syncSettingsModel.TOGGLES.filter((f) => f !== "variants");
 
+    // The sync toggles, plus one switch per email: the email panel sits on the
+    // same page, under them.
+    const notifyModel = require(path.join(SERVER, "models/notificationSettingsModel"));
+    const emailCount = notifyModel.EMAILS.length;
+
     check("every toggle is rendered",
-      boxes(allOn).length === shown.length,
-      `${boxes(allOn).length} of ${shown.length}`);
+      boxes(allOn).length === shown.length + emailCount,
+      `${boxes(allOn).length} of ${shown.length} + ${emailCount}`);
+
+    /* ---- email notifications, on a panel of their own ---- */
+    check("the email panel is on the page", allOn.includes('class="panel notify"'));
+    check("with one switch per email",
+      notifyModel.EMAILS.every((email) =>
+        new RegExp(`<input[^>]*name="${email.key}"`).test(allOn)));
+    check("all on by default",
+      notifyModel.EMAILS.every((email) =>
+        new RegExp(`<input[^>]*name="${email.key}"[^>]*checked`).test(allOn)),
+      "an unconfigured connection must still tell the source it has an order");
+    check("each switch names whose inbox it reaches",
+      allOn.includes("to Warehouse") && allOn.includes("to you"),
+      "the destination is choosing for someone else's inbox");
+    check("the source's emails look different from the destination's",
+      allOn.includes("notify__to--source") && allOn.includes("notify__to--destination"));
+    check("it has its own Save, to its own route",
+      allOn.includes("save-notifications") && allOn.includes('"/settings/notifications"'),
+      "the sync Save re-queues every product; an email switch must not");
+    check("an unticked switch is sent as false, not left out",
+      allOn.includes("notifications[input.name] = input.checked"),
+      "the server reads a missing key as on");
+    check("each Save clears only its own panel's unsaved flag",
+      allOn.includes('panel.removeAttribute("data-dirty")') &&
+        allOn.includes('notifyPanel.removeAttribute("data-dirty")'),
+      "saving the emails must not make an unsaved sync change look saved");
+
+    const someOff = await settingsPage(syncSettingsModel.defaults(9), {
+      notifications: { ...notifyModel.defaults(9), order_created: false },
+    });
+
+    check("a switched-off email renders unticked",
+      /<input[^>]*name="order_created"(?![^>]*checked)[^>]*>/.test(someOff));
     check("there is no variants master switch",
       !/<input[^>]*name="variants"/.test(allOn),
       "it read as a checkbox in front of a heading");
@@ -1289,6 +1334,7 @@ const STORE_ROW = {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
       connections: [],
+      current: null,
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: controller.FIELD_LABELS,
@@ -1298,6 +1344,63 @@ const STORE_ROW = {
       noConnection.includes("No source store connected") &&
         noConnection.includes("/stores"));
     check("and renders no form", boxes(noConnection).length === 0);
+    check("and offers no store picker",
+      !noConnection.includes('id="store-switch"'),
+      "a dropdown with nothing in it");
+
+    /* ---- one store at a time, picked from the header ---- */
+    const OTHER = {
+      ...CONN,
+      id: 12,
+      status: "paused",
+      source: { id: 3, shop_domain: "second.myshopify.com", store_name: "Second Supplier" },
+    };
+
+    const two = await settingsPage(syncSettingsModel.defaults(12), {
+      connections: [CONN, OTHER],
+      current: { ...OTHER, sync: syncSettingsModel.defaults(12) },
+    });
+
+    check("the store picker sits in the page header",
+      /class="shell__header"[\s\S]*id="store-switch"[\s\S]*<\/header>/.test(two));
+    check("it lists every connected store",
+      two.includes('value="9"') && two.includes('value="12"'));
+    check("the store on screen is the one selected",
+      /value="12"\s+selected/.test(two) && !/value="9"\s+selected/.test(two));
+    check("a paused store says so in the list",
+      two.includes("Second Supplier (paused)"));
+
+    check("only ONE store's settings are on the page",
+      (two.match(/class="panel settings"/g) || []).length === 1,
+      "the stacked panels put each Save a scroll away from its store");
+    check("and it is the selected one",
+      two.includes('data-connection="12"') && !two.includes('data-connection="9"'));
+
+    check("switching is a real navigation that keeps the session",
+      /<form class="store-switch" action="\/settings" data-navigate-form>/.test(two) &&
+        two.includes('name="connection"'),
+      "a plain submit inside the admin iframe loses the token");
+    check("unsaved ticks are not thrown away silently",
+      two.includes("unsaved changes") && two.includes("switcher.value = shown"),
+      "a switch reloads the page");
+
+    check("a single store still gets the picker, as the label of whose these are",
+      allOn.includes('id="store-switch"'));
+
+    /* ---- which store the controller picks ---- */
+    const { pickConnection } = controller;
+    const list = [{ id: 9 }, { id: 12 }];
+
+    check("a requested store is picked", pickConnection(list, "12").id === 12);
+    check("no request means the first store", pickConnection(list, undefined).id === 9);
+    check("an unknown id falls back to the first",
+      pickConnection(list, "999").id === 9,
+      "a stale bookmark must land on a working screen, not an error");
+    check("a repeated ?connection is not trusted",
+      pickConnection(list, ["12", "9"]).id === 9,
+      "Express hands a repeated key over as an array");
+    check("no connections means nothing to show",
+      pickConnection([], "9") === null);
 
     // Every toggle needs a label, or a checkbox ships with a raw column name.
     check("every toggle has a label",
