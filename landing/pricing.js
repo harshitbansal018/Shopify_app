@@ -36,7 +36,9 @@ function toCard(plan) {
     priceLabel: price > 0 ? `$${price.toFixed(0)}` : "Free",
     period: price > 0 ? periodOf(plan) : null,
     popular: Boolean(plan.is_popular),
-    features: featuresOf(plan),
+    // The limits first, written from the plan's columns, then its extras --
+    // the same lines the in-app Plans screen shows, from the same function.
+    features: planModel.featureLines(plan),
     // The headline limit, which is what most people actually compare on.
     limit: Number(plan.max_limit) || null,
     cta: price > 0 ? `Choose ${plan.name}` : "Start free",

@@ -2254,6 +2254,114 @@ const STORE_ROW = {
       "200 numbered buttons is not a control");
   }
 
+  console.log("\nPlans and limits");
+  {
+    const planLimits = require(path.join(SERVER, "services/planLimits"));
+
+    const status = {
+      plan: { id: 2, name: "Starter", price: 10 },
+      chosen: true,
+      period: {
+        start: new Date("2026-09-01T00:00:00Z"),
+        end: new Date("2026-10-01T00:00:00Z"),
+      },
+      limits: { products: 25, orders: 200, emails: 500, sources: 2 },
+      usage: { products: 25, orders: 170, emails: 500, sources: 3 },
+      state: { products: "full", orders: "near", emails: "full", sources: "over" },
+    };
+
+    const cards = [
+      { id: 1, name: "Free", price: 0, popular: false,
+        lines: ["Up to 10 synced products", "Community support"],
+        current: false, direction: "downgrade" },
+      { id: 2, name: "Starter", price: 10, popular: false,
+        lines: ["Up to 25 synced products"], current: true, direction: "current" },
+      { id: 4, name: "Pro", price: 50, popular: true,
+        lines: ["Up to 500 synced products"], current: false, direction: "upgrade" },
+    ];
+
+    const plansPage = (overrides = {}) =>
+      render("destination/plans", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        plans: cards,
+        planStatus: status,
+        planBanner: planLimits.bannerItems(status),
+        billingResult: null,
+        billingTest: false,
+        ...overrides,
+      });
+
+    const plans = await plansPage();
+
+    check("the usage panel shows every limit",
+      ["products", "orders", "emails", "sources"].every((key) =>
+        plans.includes(`data-meter="${key}"`)));
+    check("with what is used against what is allowed",
+      /data-meter="orders"[\s\S]{0,300}170[\s\S]{0,40}\/ 200/.test(plans));
+    check("a limit past its line is marked over",
+      plans.includes('meter meter--over" data-meter="sources"'));
+    check("one at its line is marked full",
+      plans.includes('meter meter--full" data-meter="emails"'));
+
+    check("the current plan says so instead of offering a button",
+      plans.includes("Current plan") && !plans.includes("Switch to Starter"));
+    check("cheaper plans are downgrades",
+      plans.includes("Downgrade to Free") && plans.includes('data-direction="downgrade"'));
+    check("dearer ones are upgrades", plans.includes("Upgrade to Pro"));
+    check("card lines are the ones the controller wrote",
+      plans.includes("Up to 500 synced products"));
+
+    check("the downgrade chooser is there, and starts closed",
+      /<dialog[^>]*id="downgrade-modal"/.test(plans) &&
+        !/<dialog[^>]*id="downgrade-modal"[^>]*\sopen/.test(plans));
+    check("it promises nothing is deleted", plans.includes("Nothing is deleted"));
+    check("and that counts restart on the new plan", plans.includes("start again from zero"));
+    check("its lists are built as text, not HTML",
+      plans.includes("name.textContent = title") && !/innerHTML/.test(plans),
+      "product titles are text a supplier typed");
+    check("Continue waits until enough is chosen",
+      plans.includes("continueButton.disabled =") &&
+        /id="dg-continue" disabled/.test(plans));
+    check("focus starts on Cancel", plans.includes("cancelButton.focus()"),
+      "a stray Enter must not unsync a catalogue");
+
+    check("the banner is on the screen", plans.includes('class="plan-banner"'));
+    check("a store over its sources, and paused emails, are errors",
+      /notice--error plan-banner__item"\s+data-limit="sources"/.test(plans) &&
+        /notice--error plan-banner__item"\s+data-limit="emails"/.test(plans));
+    check("orders are only ever a warning",
+      /notice--warn plan-banner__item"\s+data-limit="orders"/.test(plans));
+
+    const neverChose = await plansPage({ planStatus: { ...status, chosen: false }, planBanner: [] });
+    check("a store that never chose is told the Free plan applies",
+      neverChose.includes("the Free plan applies"));
+
+    const quiet = await render("partials/nav", {});
+    check("with nothing to say there is no banner", !quiet.includes("plan-banner"));
+
+    const pausedStores = await render("destination/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      connections: [{
+        id: 7,
+        status: "paused",
+        sync_mode: "manual",
+        source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Src" },
+        destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
+        removal: { products: 3, orders: 0, payments: 0, outstanding: 0, currency: null },
+      }],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+    });
+
+    check("a paused store can be resumed",
+      /class="btn btn--small resume-store"[^>]*data-connection="7"/.test(pausedStores),
+      "a downgrade pauses it; this is the way back");
+    check("through its own route",
+      pausedStores.includes('"/stores/" + button.dataset.connection + "/resume"'));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exitCode = failed ? 1 : 0;
 })();

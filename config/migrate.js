@@ -958,27 +958,65 @@ const CREATE_MEMBERSHIP_PAYMENTS = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 `;
 
-async function seedPlans() {
-  const plans = [
-  ["Free",       0,  0, 10,    JSON.stringify(["Up to 10 synced products",    "Up to 50 orders / month",    "Up to 100 emails / month",   "1 source store",          "Community support"])],
-  ["Starter",    10,  0, 25,   JSON.stringify(["Up to 25 synced products",   "Up to 200 orders / month",   "Up to 500 emails / month",   "Up to 2 source stores",   "Email support"])],
-  ["Basic",      25, 0, 100,   JSON.stringify(["Up to 100 synced products",   "Up to 500 orders / month",   "Up to 1,000 emails / month", "Up to 3 source stores",   "Email support"])],
-  ["Pro",        50, 1, 500,  JSON.stringify(["Up to 500 synced products", "Up to 2,000 orders / month", "Up to 5,000 emails / month", "Unlimited source stores", "Priority support"])],
-  ["Enterprise", 100, 0, 9999,  JSON.stringify(["Unlimited synced products", "Unlimited orders",           "Unlimited emails",           "Unlimited source stores", "Dedicated support"])],
+/*
+ * The plans, and what each one allows. Edit here and restart: this runs on
+ * every boot and writes these values into the `plans` table.
+ *
+ *   price     USD per 30-day billing month. Whole numbers only -- the cards
+ *             show it rounded, and Shopify charges it exactly.
+ *   popular   true on ONE plan: its card gets the "Most popular" badge.
+ *   products, orders, emails, sources
+ *             the limits. null means unlimited. These are what the app
+ *             ENFORCES (services/planLimits.js), and the cards' "Up to ..."
+ *             lines are written from them -- so a card can never promise
+ *             something different from what the app does.
+ *   extras    any other card lines (support level etc.), after the limits.
+ *
+ * The name is how a plan is found in the database: renaming one creates a new
+ * plan and leaves the old one on sale. Removing a line does not remove a plan.
+ */
+const PLANS = [
+  { name: "Free",       price: 0,   popular: false, products: 10,   orders: 50,   emails: 100,  sources: 1,    extras: ["Community support"] },
+  { name: "Starter",    price: 10,  popular: false, products: 25,   orders: 200,  emails: 500,  sources: 2,    extras: ["Email support"] },
+  { name: "Basic",      price: 25,  popular: false, products: 100,  orders: 500,  emails: 1000, sources: 3,    extras: ["Email support"] },
+  { name: "Pro",        price: 50,  popular: true,  products: 500,  orders: 2000, emails: 5000, sources: null, extras: ["Priority support"] },
+  { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, extras: ["Dedicated support"] },
 ];
 
+/** The limit columns. NULL means unlimited; max_limit (products) already existed. */
+async function addPlanLimitColumns() {
+  await safeAlter("plans.max_orders", "ALTER TABLE plans ADD COLUMN max_orders INT NULL DEFAULT NULL");
+  await safeAlter("plans.max_emails", "ALTER TABLE plans ADD COLUMN max_emails INT NULL DEFAULT NULL");
+  await safeAlter("plans.max_sources", "ALTER TABLE plans ADD COLUMN max_sources INT NULL DEFAULT NULL");
+}
 
-  for (const [name, price, isPopular, maxLimit, content] of plans) {
+async function seedPlans() {
+  // The columns first: they are written below, and databases created before
+  // limits existed do not have them yet.
+  await addPlanLimitColumns();
+
+  for (const plan of PLANS) {
     await query(
       `INSERT INTO plans
-        (name, price, is_popular, is_active, created_at, updated_at, days, status, plan_for, plan_content, max_limit)
-       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?)
+        (name, price, is_popular, is_active, created_at, updated_at, days, status,
+         plan_for, plan_content, max_limit, max_orders, max_emails, max_sources)
+       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          price = VALUES(price), is_popular = VALUES(is_popular), is_active = 1,
          updated_at = NOW(), days = VALUES(days), status = VALUES(status),
          plan_for = VALUES(plan_for), plan_content = VALUES(plan_content),
-         max_limit = VALUES(max_limit)`,
-      [name, price, isPopular, content, maxLimit]
+         max_limit = VALUES(max_limit), max_orders = VALUES(max_orders),
+         max_emails = VALUES(max_emails), max_sources = VALUES(max_sources)`,
+      [
+        plan.name,
+        plan.price,
+        plan.popular ? 1 : 0,
+        JSON.stringify(plan.extras || []),
+        plan.products,
+        plan.orders,
+        plan.emails,
+        plan.sources,
+      ]
     );
   }
 }

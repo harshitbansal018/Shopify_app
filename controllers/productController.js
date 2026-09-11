@@ -656,13 +656,27 @@ exports.postAccept = async (req, res) => {
 
   try {
     // Scoped to this store inside the model, so a guessed id cannot push a
-    // product into someone else's shop.
-    const accepted = await productMappingModel.acceptForDestination(
-      req.storeId,
+    // product into someone else's shop -- and held to the plan's product
+    // limit in the same transaction, so two tabs cannot both take the last
+    // slot. All or nothing: a partly-accepted pick leaves the merchant
+    // guessing which ones made it.
+    const result = await require("../services/planLimits").acceptProducts(
+      req.store,
       ids
     );
 
-    if (!accepted) {
+    if (result.refused) {
+      return res.status(409).json({
+        error: result.message,
+        limit: {
+          used: result.used,
+          limit: result.limit,
+          remaining: result.remaining,
+        },
+      });
+    }
+
+    if (!result.accepted) {
       return res.status(409).json({
         error: "Those products are not waiting for this store.",
       });

@@ -249,6 +249,37 @@ exports.postPairingCode = async (req, res) => {
  * who owns what, and is worth keeping even if the connection insert then fails
  * -- the merchant can retry the connection without redeeming a second code.
  */
+/**
+ * A destination resuming a paused source store.
+ *
+ * Usually paused by a downgrade. Held to the plan's source-store limit in the
+ * same transaction as the change, so two clicks cannot both take the last
+ * slot. Its products never left the store; on resume they pick up every change
+ * the supplier made while it was paused.
+ */
+exports.postResumeStore = async (req, res) => {
+  if (req.store.store_type !== "destination") {
+    return res.status(403).json({
+      error: "Only a destination store resumes a source store.",
+    });
+  }
+
+  try {
+    const result = await require("../services/planLimits").resumeSource(
+      req.store,
+      Number(req.params.id)
+    );
+
+    if (result.notFound) return res.status(404).json({ error: "Store not found." });
+    if (result.refused) return res.status(409).json({ error: result.message });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Resuming a source store failed:", err.message);
+    return res.status(500).json({ error: "Could not resume that store." });
+  }
+};
+
 exports.postConnect = async (req, res) => {
   if (req.store.store_type !== "destination") {
     return res.status(403).json({
@@ -260,6 +291,17 @@ exports.postConnect = async (req, res) => {
 
   if (!code) {
     return res.status(400).json({ error: "Enter the source store's code." });
+  }
+
+  // Checked BEFORE the code is redeemed: redeeming spends it, and a merchant
+  // told their plan is full should still hold a usable code after upgrading.
+  try {
+    const room = await require("../services/planLimits").sourceRoom(req.store);
+
+    if (!room.ok) return res.status(409).json({ error: room.message });
+  } catch (err) {
+    console.error("Checking the source store limit failed:", err.message);
+    return res.status(500).json({ error: "Could not use that code." });
   }
 
   let source;

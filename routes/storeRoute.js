@@ -10,6 +10,7 @@ const {
   postPairingCode,
   postConnect,
   postDeleteStore,
+  postResumeStore,
   getSettings,
   postSettings,
   postNotifications,
@@ -38,5 +39,7 @@ router.post("/stores/connect", postConnect); // source: enter a code
 // products out of this store's Shopify catalogue before dropping the link.
 // Parameterised, so it stays below the fixed paths above it.
 router.post("/stores/:id/delete", postDeleteStore);
+// Destination-only: bring back a store a downgrade paused, within the plan.
+router.post("/stores/:id/resume", postResumeStore);
 
 module.exports = router;

@@ -10,11 +10,21 @@
 <body>
   <%- include("../partials/nav") %>
 
+  <%
+    var shortDate = function (value) {
+      return new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    };
+    var count = function (value) { return Number(value).toLocaleString("en-US"); };
+    var status = typeof planStatus !== "undefined" ? planStatus : null;
+  %>
+
   <main class="shell shell--wide">
     <header class="shell__header">
       <div>
         <h1>Plans</h1>
-        <p class="shell__sub">Choose the product sync plan for this destination store.</p>
+        <p class="shell__sub">
+          What this store can sync, and how much of it you are using this billing month.
+        </p>
       </div>
     </header>
 
@@ -32,27 +42,84 @@
 
     <p class="notice notice--error" id="page-error" hidden></p>
 
+    <%# Usage first: before choosing a plan, the merchant needs to know what
+        they actually use. %>
+    <% if (status && status.plan) { %>
+      <section class="panel usage" aria-label="Your usage">
+        <header class="usage__head">
+          <div>
+            <span class="settings__eyebrow">Your plan</span>
+            <h2 class="usage__plan"><%= status.plan.name %></h2>
+          </div>
+          <p class="muted usage__period">
+            Billing month <%= shortDate(status.period.start) %> &ndash; <%= shortDate(status.period.end) %>
+            <% if (!status.chosen) { %>
+              <br>You haven't chosen a plan yet, so the Free plan applies.
+            <% } %>
+          </p>
+        </header>
+
+        <div class="usage__grid">
+          <% [
+               ["products", "Synced products"],
+               ["orders", "Orders this billing month"],
+               ["emails", "Emails this billing month"],
+               ["sources", "Active source stores"]
+             ].forEach(function (meter) {
+               var used = status.usage[meter[0]];
+               var limit = status.limits[meter[0]];
+               var state = status.state[meter[0]];
+          %>
+            <div class="meter meter--<%= state %>" data-meter="<%= meter[0] %>">
+              <span class="meter__label"><%= meter[1] %></span>
+              <span class="meter__value">
+                <strong><%= count(used) %></strong>
+                <%= limit === null ? "· unlimited" : "/ " + count(limit) %>
+              </span>
+              <% if (limit !== null) { %>
+                <span class="meter__bar">
+                  <span style="width: <%= limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : 100 %>%"></span>
+                </span>
+              <% } %>
+            </div>
+          <% }); %>
+        </div>
+      </section>
+    <% } %>
+
     <section class="plans" aria-label="Product sync plans">
       <% plans.forEach(function (plan) { %>
-        <%
-          var active = currentPlan && Number(currentPlan.membership_id) === Number(plan.id);
-          var features = [];
-          try { features = JSON.parse(plan.plan_content || "[]"); } catch (error) { features = []; }
-        %>
-        <article class="plan <%= plan.is_popular ? "plan--popular" : "" %>">
+        <article class="plan<%= plan.popular ? " plan--popular" : "" %><%= plan.current ? " plan--current" : "" %>">
           <div class="plan__heading">
-            <h2><%= plan.name %> Plan</h2>
-            <% if (plan.is_popular) { %><span class="plan__badge">Popular</span><% } %>
+            <h2><%= plan.name %></h2>
+            <% if (plan.popular) { %><span class="plan__badge">Popular</span><% } %>
           </div>
-          <p class="plan__price"><span>$<%= Number(plan.price).toFixed(0) %></span> / month</p>
+
+          <p class="plan__price">
+            <span><%= plan.price ? "$" + plan.price.toFixed(0) : "Free" %></span>
+            <% if (plan.price) { %> / month<% } %>
+          </p>
+
+          <%# Every line here is written from the plan's columns by
+              planModel.featureLines -- the same numbers the app enforces. %>
           <ul class="plan__features">
-            <% features.forEach(function (feature) { %><li><%= feature %></li><% }); %>
+            <% plan.lines.forEach(function (line) { %><li><%= line %></li><% }); %>
           </ul>
-          <% if (active) { %>
+
+          <% if (plan.current) { %>
             <span class="plan__current">Current plan</span>
           <% } else { %>
-            <button class="btn <%= plan.price ? "btn--primary" : "" %> plan__select" type="button" data-plan="<%= plan.id %>">
-              <%= plan.price ? "Buy " + plan.name : "Get started" %>
+            <button
+              class="btn <%= plan.direction === "upgrade" ? "btn--primary" : "" %> plan__select"
+              type="button"
+              data-plan="<%= plan.id %>"
+              data-name="<%= plan.name %>"
+              data-direction="<%= plan.direction %>">
+              <%= plan.direction === "upgrade"
+                  ? "Upgrade to " + plan.name
+                  : plan.direction === "downgrade"
+                    ? "Downgrade to " + plan.name
+                    : "Switch to " + plan.name %>
             </button>
           <% } %>
         </article>
@@ -60,41 +127,297 @@
     </section>
   </main>
 
+  <%# The downgrade chooser. Opened when the server says the store does not
+      fit the plan it picked; filled from what the server sends back. Built
+      with textContent, never innerHTML: product titles are text a supplier
+      typed. %>
+  <dialog class="modal modal--wide" id="downgrade-modal" aria-labelledby="dg-title">
+    <div class="modal__body">
+
+      <h2 class="modal__title" id="dg-title">
+        Make room for the <span id="dg-plan"></span> plan
+      </h2>
+      <p class="modal__copy" id="dg-intro"></p>
+
+      <section class="dg-section" id="dg-products" hidden>
+        <h3 class="dg-section__title">Choose products to unsync</h3>
+        <p class="dg-section__copy" id="dg-products-copy"></p>
+        <input
+          class="field__input dg-search"
+          type="search"
+          id="dg-search"
+          placeholder="Search products"
+          aria-label="Search products"
+          autocomplete="off">
+        <div class="dg-list" id="dg-product-list"></div>
+        <p class="dg-count" id="dg-product-count"></p>
+      </section>
+
+      <section class="dg-section" id="dg-sources" hidden>
+        <h3 class="dg-section__title">Choose source stores to pause</h3>
+        <p class="dg-section__copy" id="dg-sources-copy"></p>
+        <div class="dg-list" id="dg-source-list"></div>
+        <p class="dg-count" id="dg-source-count"></p>
+      </section>
+
+      <p class="modal__copy muted dg-note">
+        Nothing is deleted. Unsynced products stay in your Shopify store exactly
+        as they are; they just stop receiving updates. A paused store's products
+        stay too, but stop updating &mdash; including stock &mdash; and its
+        orders still reach it. You can resume a store from Stores later. Order
+        and email counts start again from zero on the new plan.
+      </p>
+
+      <p class="notice notice--error" id="dg-error" hidden></p>
+
+      <div class="modal__actions">
+        <button class="btn" type="button" id="dg-cancel">Cancel</button>
+        <button class="btn btn--primary" type="button" id="dg-continue" disabled>
+          Continue
+        </button>
+      </div>
+
+    </div>
+  </dialog>
+
   <script>
     (function () {
       var pageError = document.getElementById("page-error");
+      var modal = document.getElementById("downgrade-modal");
+      var continueButton = document.getElementById("dg-continue");
+      var cancelButton = document.getElementById("dg-cancel");
+      var dgError = document.getElementById("dg-error");
+      var search = document.getElementById("dg-search");
+
+      // What the open chooser is for, and how many of each it needs.
+      var choice = null;
+
+      function showPageError(message) {
+        pageError.textContent = message;
+        pageError.hidden = false;
+      }
+
+      async function select(planId, extra) {
+        var response = await window.appFetch("/plans/select", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({ plan_id: planId }, extra || {}))
+        });
+
+        var data = await response.json().catch(function () { return {}; });
+        return { ok: response.ok, status: response.status, data: data };
+      }
+
+      /** The plan changed, or Shopify has to approve it first. */
+      function finish(data) {
+        if (data.confirmation_url) {
+          window.top.location.href = data.confirmation_url;
+          return;
+        }
+        window.appToast("Plan updated.");
+        window.appNavigate("/plans");
+      }
+
+      function ticked(listId) {
+        return Array.prototype.slice
+          .call(document.querySelectorAll("#" + listId + " input:checked"))
+          .map(function (input) { return Number(input.value); });
+      }
+
+      function refreshCounts() {
+        if (!choice) return;
+
+        var products = ticked("dg-product-list").length;
+        var sources = ticked("dg-source-list").length;
+
+        document.getElementById("dg-product-count").textContent =
+          products + " of " + choice.needProducts + " chosen";
+        document.getElementById("dg-source-count").textContent =
+          sources + " of " + choice.needSources + " chosen";
+
+        // Only enabled once the choice is enough -- the server checks it again
+        // either way, against the store as it is at that moment.
+        continueButton.disabled =
+          products < choice.needProducts || sources < choice.needSources;
+      }
+
+      function addItem(list, value, title, detail) {
+        var label = document.createElement("label");
+        label.className = "dg-item";
+
+        var input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = value;
+        input.addEventListener("change", refreshCounts);
+
+        var text = document.createElement("span");
+        text.className = "dg-item__text";
+
+        var name = document.createElement("strong");
+        name.textContent = title;
+
+        var meta = document.createElement("span");
+        meta.className = "muted";
+        meta.textContent = detail;
+
+        text.appendChild(name);
+        text.appendChild(meta);
+        label.appendChild(input);
+        label.appendChild(text);
+        list.appendChild(label);
+      }
+
+      function openChooser(planId, message, options) {
+        choice = {
+          planId: planId,
+          needProducts: options.products.excess || 0,
+          needSources: options.sources.excess || 0
+        };
+
+        document.getElementById("dg-plan").textContent = options.plan.name;
+        document.getElementById("dg-intro").textContent = message;
+        dgError.hidden = true;
+
+        var productSection = document.getElementById("dg-products");
+        var productList = document.getElementById("dg-product-list");
+        productList.textContent = "";
+        productSection.hidden = !choice.needProducts;
+
+        if (choice.needProducts) {
+          document.getElementById("dg-products-copy").textContent =
+            "The " + options.plan.name + " plan allows " + options.products.limit +
+            " products and your store has " + options.products.used +
+            ". Choose at least " + choice.needProducts + " to unsync.";
+
+          options.products.items.forEach(function (product) {
+            addItem(productList, product.id, product.title || "Untitled product", product.source || "");
+          });
+        }
+
+        var sourceSection = document.getElementById("dg-sources");
+        var sourceList = document.getElementById("dg-source-list");
+        sourceList.textContent = "";
+        sourceSection.hidden = !choice.needSources;
+
+        if (choice.needSources) {
+          document.getElementById("dg-sources-copy").textContent =
+            "The " + options.plan.name + " plan allows " + options.sources.limit +
+            " active source store(s) and you have " + options.sources.used +
+            ". Choose at least " + choice.needSources + " to pause.";
+
+          options.sources.items.forEach(function (source) {
+            addItem(sourceList, source.id, source.name, source.products + " product(s) in your store");
+          });
+        }
+
+        search.value = "";
+        continueButton.textContent = "Continue";
+        refreshCounts();
+
+        if (!modal.open) {
+          if (typeof modal.showModal === "function") modal.showModal();
+          else modal.setAttribute("open", "");
+        }
+
+        // Focus on Cancel: a stray Enter must not unsync a catalogue.
+        cancelButton.focus();
+      }
+
+      function closeChooser() {
+        if (typeof modal.close === "function") modal.close();
+        else modal.removeAttribute("open");
+        choice = null;
+      }
+
+      cancelButton.addEventListener("click", closeChooser);
+
+      // Filters the product list in place. Ticked products stay ticked while
+      // hidden, so a search never undoes a choice.
+      search.addEventListener("input", function () {
+        var term = search.value.trim().toLowerCase();
+
+        Array.prototype.slice
+          .call(document.querySelectorAll("#dg-product-list .dg-item"))
+          .forEach(function (row) {
+            row.hidden = term && row.textContent.toLowerCase().indexOf(term) === -1;
+          });
+      });
+
+      continueButton.addEventListener("click", async function () {
+        if (!choice) return;
+
+        dgError.hidden = true;
+        continueButton.disabled = true;
+        continueButton.textContent = "Switching…";
+
+        try {
+          var result = await select(choice.planId, {
+            unsync_mapping_ids: ticked("dg-product-list"),
+            pause_connection_ids: ticked("dg-source-list")
+          });
+
+          if (result.ok) {
+            closeChooser();
+            finish(result.data);
+            return;
+          }
+
+          if (result.status === 409 && result.data.downgrade) {
+            // Something changed underneath -- the server says so and sends the
+            // lists as they are now.
+            openChooser(choice.planId, result.data.error, result.data.downgrade);
+          }
+
+          dgError.textContent = result.data.error || "Could not change your plan.";
+          dgError.hidden = false;
+        } catch (err) {
+          dgError.textContent = "Could not reach the app. Try again.";
+          dgError.hidden = false;
+        }
+
+        continueButton.textContent = "Continue";
+        refreshCounts();
+      });
+
       Array.prototype.slice.call(document.querySelectorAll(".plan__select"))
         .forEach(function (button) {
           button.addEventListener("click", async function () {
             pageError.hidden = true;
-            button.disabled = true;
-            var label = button.textContent;
-            button.textContent = "Updating…";
-            try {
-              var response = await window.appFetch("/plans/select", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ plan_id: Number(button.dataset.plan) })
-              });
-              var data = await response.json().catch(function () { return {}; });
-              if (!response.ok) throw new Error(data.error || "Could not update your plan.");
 
-              if (data.confirmation_url) {
-                window.top.location.href = data.confirmation_url;
+            if (button.dataset.direction === "downgrade" && !window.confirm(
+              "Downgrade to " + button.dataset.name + "?\n\n" +
+              "If your store has more than this plan allows, you will choose " +
+              "what to unsync or pause next. Nothing is deleted."
+            )) return;
+
+            var label = button.textContent;
+            button.disabled = true;
+            button.textContent = "Updating…";
+
+            try {
+              var planId = Number(button.dataset.plan);
+              var result = await select(planId);
+
+              if (result.ok) {
+                finish(result.data);
                 return;
               }
 
-              window.appToast("Plan updated.");
-              window.appNavigate("/plans");
-            } catch (error) {
-              pageError.textContent = error.message;
-              pageError.hidden = false;
-              button.disabled = false;
-              button.textContent = label;
+              if (result.status === 409 && result.data.downgrade) {
+                openChooser(planId, result.data.error, result.data.downgrade);
+              } else {
+                showPageError(result.data.error || "Could not update your plan.");
+              }
+            } catch (err) {
+              showPageError("Could not reach the app. Try again.");
             }
+
+            button.disabled = false;
+            button.textContent = label;
           });
         });
     })();
   </script>
 </body>
+
 </html>

@@ -72,6 +72,11 @@ app.use(express.static(path.join(__dirname, "public")));
    After express.static, so CSS and JS still cache normally. */
 app.use(noStore);
 
+/* ---------------- PLAN STATUS ----------------
+   Every destination screen carries the plan banner, so its status is attached
+   at render time here rather than fetched by each controller. */
+app.use(require("./middleware/planStatus"));
+
 /* ---------------- ROUTES ----------------
    Add feature routes here, e.g.:
      app.use("/widgets", require("./routes/widgetRoute"));

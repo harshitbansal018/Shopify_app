@@ -343,11 +343,52 @@ function paymentSettled(p) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* To the DESTINATION: its plan's emails have run out                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sent ONCE per billing month, the moment the plan's email allowance is used
+ * up. It is the only email that goes out past the limit: the app telling the
+ * merchant about their plan is not the merchant's email use, and without it
+ * they would find out their suppliers had gone quiet by noticing the silence.
+ */
+function emailsPaused({ planName, used, limit, resumesOn }) {
+  const date = dateOnly(resumesOn) || "your next billing date";
+
+  const rows = [
+    ["Plan", planName],
+    ["Emails this billing month", `${used} of ${limit}`],
+    ["Emails start again", date],
+  ];
+
+  const intro =
+    `Your ${planName} plan includes ${limit} notification emails each billing ` +
+    `month, and they have all been used. Until ${date}, SyncHub will not send ` +
+    `order, shipping or payment emails for your store -- to you or to your ` +
+    `source stores.`;
+
+  const rest =
+    "Nothing else stops: products keep syncing and orders keep going to your " +
+    "source stores. Upgrade your plan in SyncHub to start sending emails again " +
+    "straight away.";
+
+  return {
+    subject: `SyncHub emails are paused: ${used} of ${limit} used this billing month`,
+    html: layout({
+      heading: "Notification emails are paused",
+      blocks: [para(escapeHtml(intro)), facts(rows), para(escapeHtml(rest))],
+    }),
+    text: `Notification emails are paused\n\n${intro}\n\n${textFacts(rows)}\n\n${rest}\n`,
+  };
+}
+
 module.exports = {
   orderCreated,
   orderFulfilled,
   orderCancelled,
   paymentSettled,
+  emailsPaused,
   money,
   safeUrl,
 };

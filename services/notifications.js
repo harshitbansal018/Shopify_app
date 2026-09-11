@@ -9,9 +9,15 @@
 //   paymentRecorded()  the destination recorded paying the source
 //
 // Each one reads the connection's switches (set by the DESTINATION, for both
-// stores -- see models/notificationSettingsModel.js), writes the emails into
-// email_outbox, and returns. Nothing is sent inline: the background round
-// below does that, so a slow mail server can never hold up the order.
+// stores -- see models/notificationSettingsModel.js), checks the destination's
+// plan still has emails left this billing month (services/planLimits.js),
+// writes the emails into email_outbox, and returns. Nothing is sent inline:
+// the background round below does that, so a slow mail server can never hold
+// up the order.
+//
+// Past the plan's email limit an email is recorded as skipped, with the
+// reason, and the destination is emailed ONCE per billing month that its
+// emails have stopped -- the one message that goes out past the limit.
 //
 // None of them ever throws. They are called straight after an order or a
 // payment has been changed, and that change has to stand whatever happens to
@@ -19,6 +25,7 @@
 const shopify = require("./shopify");
 const mailer = require("./mailer");
 const templates = require("./emailTemplates");
+const planLimits = require("./planLimits");
 const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
 const orderMappingModel = require("../models/orderMappingModel");
@@ -49,13 +56,82 @@ async function quietly(label, fn) {
   }
 }
 
-function queue(mapping, recipientStoreId, kind, dedupeKey, email) {
+/**
+ * Tell the destination, once per billing month, that its emails have stopped.
+ *
+ * Keyed on the store and the start of the billing month, so however many
+ * emails are held back after the limit, this goes exactly once -- and again
+ * next month if it happens again. Its kind, plan_notice, is not counted
+ * against the plan: it is the app talking about the plan.
+ */
+async function noticeEmailsPaused(connectionId, destinationStoreId, allowance) {
+  const email = templates.emailsPaused({
+    planName: allowance.planName,
+    used: allowance.used,
+    limit: allowance.limit,
+    resumesOn: allowance.period.end,
+  });
+
+  await emailOutboxModel.enqueue({
+    connectionId,
+    recipientStoreId: destinationStoreId,
+    kind: "plan_notice",
+    dedupeKey: `plan_notice:emails:${destinationStoreId}:${allowance.period.start.getTime()}`,
+    ...email,
+  });
+}
+
+/**
+ * Queue one email, if the destination's plan has any left this month.
+ *
+ * Past the limit it is written anyway, as skipped with the reason -- so "why
+ * did I not get an email" has an answer -- and the destination is told once.
+ */
+async function gatedEnqueue({
+  connectionId,
+  destinationStoreId,
+  recipientStoreId,
+  kind,
+  dedupeKey,
+  email,
+}) {
+  const allowance = await planLimits.emailAllowance(destinationStoreId);
+
+  if (!allowance.ok) {
+    await emailOutboxModel.enqueue({
+      connectionId,
+      recipientStoreId,
+      kind,
+      dedupeKey,
+      ...email,
+      status: "skipped",
+      error:
+        `Plan email limit reached: ${allowance.used} of ${allowance.limit} ` +
+        `used this billing month.`,
+    });
+
+    await noticeEmailsPaused(connectionId, destinationStoreId, allowance);
+    return false;
+  }
+
   return emailOutboxModel.enqueue({
-    connectionId: mapping.connection_id,
+    connectionId,
     recipientStoreId,
     kind,
     dedupeKey,
     ...email,
+  });
+}
+
+/** An order-event email: the mapping says which destination's plan pays. */
+function queue(mapping, recipientStoreId, kind, dedupeKey, email) {
+  return gatedEnqueue({
+    connectionId: mapping.connection_id,
+    destinationStoreId: mapping.destination_store_id,
+    recipientStoreId,
+    kind,
+    dedupeKey,
+    email,
   });
 }
 
@@ -103,8 +179,7 @@ function orderCreated(mapping) {
  * what it now owes -- combined into ONE email when both are on.
  *
  * Nothing goes to the source here. Its money email is the settlement, sent
- * when the destination actually records paying it (paymentRecorded below):
- * "you earned X" on every shipment was a figure nobody had paid yet.
+ * when the destination actually records paying it (paymentRecorded below).
  *
  * Read back from the database rather than taken from the caller, so the
  * tracking in the email is the tracking that was actually saved.
@@ -206,24 +281,23 @@ function paymentRecorded(paymentId) {
     const buyers = await payoutModel.summaryForSource(connection.source.id);
     const buyer = buyers.find((row) => row.connection_id === connection.id);
 
-    const email = templates.paymentSettled({
-      destinationName:
-        connection.destination.store_name || connection.destination.shop_domain,
-      amount: payment.amount,
-      currency: payment.currency || (buyer && buyer.currency) || null,
-      reference: payment.reference,
-      note: payment.note,
-      paidAt: payment.paid_at,
-      received: buyer ? buyer.received : null,
-      outstanding: buyer ? buyer.outstanding : null,
-    });
-
-    const queued = await emailOutboxModel.enqueue({
+    const queued = await gatedEnqueue({
       connectionId: connection.id,
+      destinationStoreId: connection.destination.id,
       recipientStoreId: connection.source.id,
       kind: "payment_settled",
       dedupeKey: `payment_settled:${payment.id}`,
-      ...email,
+      email: templates.paymentSettled({
+        destinationName:
+          connection.destination.store_name || connection.destination.shop_domain,
+        amount: payment.amount,
+        currency: payment.currency || (buyer && buyer.currency) || null,
+        reference: payment.reference,
+        note: payment.note,
+        paidAt: payment.paid_at,
+        received: buyer ? buyer.received : null,
+        outstanding: buyer ? buyer.outstanding : null,
+      }),
     });
 
     return { queued: queued ? 1 : 0 };

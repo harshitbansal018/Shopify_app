@@ -29,11 +29,17 @@ async function enqueue({
   subject,
   html,
   text,
+  // 'skipped' records an email that was decided against at the moment it
+  // happened -- the plan's allowance ran out -- so "why did I not get an
+  // email" still has an answer.
+  status = "pending",
+  error = null,
 }) {
   const [result] = await pool.query(
     `INSERT IGNORE INTO email_outbox
-       (connection_id, recipient_store_id, kind, dedupe_key, subject, html, text_body)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (connection_id, recipient_store_id, kind, dedupe_key, subject, html,
+        text_body, status, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       connectionId,
       recipientStoreId,
@@ -42,6 +48,8 @@ async function enqueue({
       String(subject).slice(0, 255),
       html,
       text,
+      status === "skipped" ? "skipped" : "pending",
+      error ? String(error).slice(0, 500) : null,
     ]
   );
 

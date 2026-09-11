@@ -202,6 +202,15 @@
               lands in.
             </p>
 
+            <%# The plan's allowance is for the whole store, every supplier
+                together -- so it is said here, where the emails are chosen. %>
+            <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.emails !== null) { %>
+              <p class="plan-meter<%= planStatus.usage.emails >= planStatus.limits.emails ? " plan-meter--full" : "" %>">
+                <strong><%= planStatus.usage.emails %> / <%= planStatus.limits.emails %></strong>
+                emails used this billing month, across all your source stores
+              </p>
+            <% } %>
+
             <div class="notify__list">
               <% emails.forEach(function (email) { %>
                 <label class="notify__item">
