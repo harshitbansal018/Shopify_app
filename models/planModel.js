@@ -147,6 +147,100 @@ async function finishPaidPurchase(storeId, planId, chargeId, approved) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Limits and card lines                                               */
+/* ------------------------------------------------------------------ */
+
+/** A column's value as a limit: a number, or null for unlimited. */
+function limitValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+/**
+ * What a plan allows, read from its COLUMNS -- never from the card text. The
+ * card says what the plan allows; these decide it, and a typo in the text must
+ * not change what the app enforces. null means unlimited.
+ */
+function limitsOf(plan) {
+  return {
+    products: limitValue(plan && plan.max_limit),
+    orders: limitValue(plan && plan.max_orders),
+    emails: limitValue(plan && plan.max_emails),
+    sources: limitValue(plan && plan.max_sources),
+  };
+}
+
+/** plan_content: the card's extra lines (support level etc.), as a JSON list. */
+function extraLines(plan) {
+  try {
+    const parsed = JSON.parse((plan && plan.plan_content) || "[]");
+    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+const count = (value) => Number(value).toLocaleString("en-US");
+
+/**
+ * Every line a plan card shows: the limits first, written FROM the columns,
+ * then the extras.
+ *
+ * Generated rather than typed so the card and the enforced limit cannot say
+ * different things. A column the row does not have at all (undefined) adds no
+ * line; a column that is NULL reads "Unlimited".
+ */
+function featureLines(plan) {
+  const lines = [];
+
+  const add = (column, limited, unlimited) => {
+    if (!plan || plan[column] === undefined) return;
+    const value = limitValue(plan[column]);
+    lines.push(value === null ? unlimited : limited(value));
+  };
+
+  add("max_limit", (n) => `Up to ${count(n)} synced products`, "Unlimited synced products");
+  add("max_orders", (n) => `Up to ${count(n)} orders / month`, "Unlimited orders");
+  add("max_emails", (n) => `Up to ${count(n)} emails / month`, "Unlimited emails");
+  add(
+    "max_sources",
+    (n) => (n === 1 ? "1 source store" : `Up to ${count(n)} source stores`),
+    "Unlimited source stores"
+  );
+
+  return [...lines, ...extraLines(plan)];
+}
+
+/** The free plan: where a store that has never chosen a plan sits. */
+async function findFree() {
+  const rows = await query(
+    "SELECT * FROM plans WHERE is_active = 1 AND price = 0 ORDER BY id LIMIT 1"
+  );
+  return rows[0] || null;
+}
+
+/**
+ * The plan a store is on right now, with when it was activated -- which is
+ * where its billing month starts. Null when it has never chosen one.
+ *
+ * A paid plan still waiting for Shopify approval is status 0, so it is not
+ * here: the store stays on its old plan until the charge is approved.
+ */
+async function activeMembership(storeId) {
+  const rows = await query(
+    `SELECT p.*, m.updated_at AS activated_at, m.created_at AS membership_created_at
+       FROM user_memberships m
+       JOIN plans p ON p.id = m.membership_id
+      WHERE m.user_id = ? AND m.status = 1
+      ORDER BY m.updated_at DESC, m.id DESC
+      LIMIT 1`,
+    [storeId]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   listActive,
   findById,
@@ -156,4 +250,9 @@ module.exports = {
   startPaidPurchase,
   pendingChargeForStorePlan,
   finishPaidPurchase,
+  limitsOf,
+  featureLines,
+  extraLines,
+  findFree,
+  activeMembership,
 };

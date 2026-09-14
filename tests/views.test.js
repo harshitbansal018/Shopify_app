@@ -1219,14 +1219,22 @@ const STORE_ROW = {
       destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
     };
 
-    const settingsPage = (sync) =>
+    // `connections` feeds the store picker; `current` is the one store whose
+    // settings are on screen.
+    const settingsPage = (sync, extra = {}) =>
       render("destination/settings", {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
-        connections: [{ ...CONN, sync }],
+        connections: [CONN],
+        current: { ...CONN, sync },
         productFields: syncSettingsModel.PRODUCT_FIELDS,
         variantFields: syncSettingsModel.VARIANT_FIELDS,
         labels: controller.FIELD_LABELS,
+        // The email panel's locals, exactly as getSettings passes them.
+        notifications: require(path.join(SERVER, "models/notificationSettingsModel"))
+          .defaults(9),
+        emails: require(path.join(SERVER, "models/notificationSettingsModel")).EMAILS,
+        ...extra,
       });
 
     const allOn = await settingsPage(syncSettingsModel.defaults(9));
@@ -1245,9 +1253,46 @@ const STORE_ROW = {
     // offers: Variants is a section heading, not a parent switch.
     const shown = syncSettingsModel.TOGGLES.filter((f) => f !== "variants");
 
+    // The sync toggles, plus one switch per email: the email panel sits on the
+    // same page, under them.
+    const notifyModel = require(path.join(SERVER, "models/notificationSettingsModel"));
+    const emailCount = notifyModel.EMAILS.length;
+
     check("every toggle is rendered",
-      boxes(allOn).length === shown.length,
-      `${boxes(allOn).length} of ${shown.length}`);
+      boxes(allOn).length === shown.length + emailCount,
+      `${boxes(allOn).length} of ${shown.length} + ${emailCount}`);
+
+    /* ---- email notifications, on a panel of their own ---- */
+    check("the email panel is on the page", allOn.includes('class="panel notify"'));
+    check("with one switch per email",
+      notifyModel.EMAILS.every((email) =>
+        new RegExp(`<input[^>]*name="${email.key}"`).test(allOn)));
+    check("all on by default",
+      notifyModel.EMAILS.every((email) =>
+        new RegExp(`<input[^>]*name="${email.key}"[^>]*checked`).test(allOn)),
+      "an unconfigured connection must still tell the source it has an order");
+    check("each switch names whose inbox it reaches",
+      allOn.includes("to Warehouse") && allOn.includes("to you"),
+      "the destination is choosing for someone else's inbox");
+    check("the source's emails look different from the destination's",
+      allOn.includes("notify__to--source") && allOn.includes("notify__to--destination"));
+    check("it has its own Save, to its own route",
+      allOn.includes("save-notifications") && allOn.includes('"/settings/notifications"'),
+      "the sync Save re-queues every product; an email switch must not");
+    check("an unticked switch is sent as false, not left out",
+      allOn.includes("notifications[input.name] = input.checked"),
+      "the server reads a missing key as on");
+    check("each Save clears only its own panel's unsaved flag",
+      allOn.includes('panel.removeAttribute("data-dirty")') &&
+        allOn.includes('notifyPanel.removeAttribute("data-dirty")'),
+      "saving the emails must not make an unsaved sync change look saved");
+
+    const someOff = await settingsPage(syncSettingsModel.defaults(9), {
+      notifications: { ...notifyModel.defaults(9), order_created: false },
+    });
+
+    check("a switched-off email renders unticked",
+      /<input[^>]*name="order_created"(?![^>]*checked)[^>]*>/.test(someOff));
     check("there is no variants master switch",
       !/<input[^>]*name="variants"/.test(allOn),
       "it read as a checkbox in front of a heading");
@@ -1289,6 +1334,7 @@ const STORE_ROW = {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
       connections: [],
+      current: null,
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: controller.FIELD_LABELS,
@@ -1298,6 +1344,63 @@ const STORE_ROW = {
       noConnection.includes("No source store connected") &&
         noConnection.includes("/stores"));
     check("and renders no form", boxes(noConnection).length === 0);
+    check("and offers no store picker",
+      !noConnection.includes('id="store-switch"'),
+      "a dropdown with nothing in it");
+
+    /* ---- one store at a time, picked from the header ---- */
+    const OTHER = {
+      ...CONN,
+      id: 12,
+      status: "paused",
+      source: { id: 3, shop_domain: "second.myshopify.com", store_name: "Second Supplier" },
+    };
+
+    const two = await settingsPage(syncSettingsModel.defaults(12), {
+      connections: [CONN, OTHER],
+      current: { ...OTHER, sync: syncSettingsModel.defaults(12) },
+    });
+
+    check("the store picker sits in the page header",
+      /class="shell__header"[\s\S]*id="store-switch"[\s\S]*<\/header>/.test(two));
+    check("it lists every connected store",
+      two.includes('value="9"') && two.includes('value="12"'));
+    check("the store on screen is the one selected",
+      /value="12"\s+selected/.test(two) && !/value="9"\s+selected/.test(two));
+    check("a paused store says so in the list",
+      two.includes("Second Supplier (paused)"));
+
+    check("only ONE store's settings are on the page",
+      (two.match(/class="panel settings"/g) || []).length === 1,
+      "the stacked panels put each Save a scroll away from its store");
+    check("and it is the selected one",
+      two.includes('data-connection="12"') && !two.includes('data-connection="9"'));
+
+    check("switching is a real navigation that keeps the session",
+      /<form class="store-switch" action="\/settings" data-navigate-form>/.test(two) &&
+        two.includes('name="connection"'),
+      "a plain submit inside the admin iframe loses the token");
+    check("unsaved ticks are not thrown away silently",
+      two.includes("unsaved changes") && two.includes("switcher.value = shown"),
+      "a switch reloads the page");
+
+    check("a single store still gets the picker, as the label of whose these are",
+      allOn.includes('id="store-switch"'));
+
+    /* ---- which store the controller picks ---- */
+    const { pickConnection } = controller;
+    const list = [{ id: 9 }, { id: 12 }];
+
+    check("a requested store is picked", pickConnection(list, "12").id === 12);
+    check("no request means the first store", pickConnection(list, undefined).id === 9);
+    check("an unknown id falls back to the first",
+      pickConnection(list, "999").id === 9,
+      "a stale bookmark must land on a working screen, not an error");
+    check("a repeated ?connection is not trusted",
+      pickConnection(list, ["12", "9"]).id === 9,
+      "Express hands a repeated key over as an array");
+    check("no connections means nothing to show",
+      pickConnection([], "9") === null);
 
     // Every toggle needs a label, or a checkbox ships with a raw column name.
     check("every toggle has a label",
@@ -2149,6 +2252,114 @@ const STORE_ROW = {
       (await pager(3000, { page: 100 })).includes("&hellip;") ||
         (await pager(3000, { page: 100 })).includes("…"),
       "200 numbered buttons is not a control");
+  }
+
+  console.log("\nPlans and limits");
+  {
+    const planLimits = require(path.join(SERVER, "services/planLimits"));
+
+    const status = {
+      plan: { id: 2, name: "Starter", price: 10 },
+      chosen: true,
+      period: {
+        start: new Date("2026-09-01T00:00:00Z"),
+        end: new Date("2026-10-01T00:00:00Z"),
+      },
+      limits: { products: 25, orders: 200, emails: 500, sources: 2 },
+      usage: { products: 25, orders: 170, emails: 500, sources: 3 },
+      state: { products: "full", orders: "near", emails: "full", sources: "over" },
+    };
+
+    const cards = [
+      { id: 1, name: "Free", price: 0, popular: false,
+        lines: ["Up to 10 synced products", "Community support"],
+        current: false, direction: "downgrade" },
+      { id: 2, name: "Starter", price: 10, popular: false,
+        lines: ["Up to 25 synced products"], current: true, direction: "current" },
+      { id: 4, name: "Pro", price: 50, popular: true,
+        lines: ["Up to 500 synced products"], current: false, direction: "upgrade" },
+    ];
+
+    const plansPage = (overrides = {}) =>
+      render("destination/plans", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        plans: cards,
+        planStatus: status,
+        planBanner: planLimits.bannerItems(status),
+        billingResult: null,
+        billingTest: false,
+        ...overrides,
+      });
+
+    const plans = await plansPage();
+
+    check("the usage panel shows every limit",
+      ["products", "orders", "emails", "sources"].every((key) =>
+        plans.includes(`data-meter="${key}"`)));
+    check("with what is used against what is allowed",
+      /data-meter="orders"[\s\S]{0,300}170[\s\S]{0,40}\/ 200/.test(plans));
+    check("a limit past its line is marked over",
+      plans.includes('meter meter--over" data-meter="sources"'));
+    check("one at its line is marked full",
+      plans.includes('meter meter--full" data-meter="emails"'));
+
+    check("the current plan says so instead of offering a button",
+      plans.includes("Current plan") && !plans.includes("Switch to Starter"));
+    check("cheaper plans are downgrades",
+      plans.includes("Downgrade to Free") && plans.includes('data-direction="downgrade"'));
+    check("dearer ones are upgrades", plans.includes("Upgrade to Pro"));
+    check("card lines are the ones the controller wrote",
+      plans.includes("Up to 500 synced products"));
+
+    check("the downgrade chooser is there, and starts closed",
+      /<dialog[^>]*id="downgrade-modal"/.test(plans) &&
+        !/<dialog[^>]*id="downgrade-modal"[^>]*\sopen/.test(plans));
+    check("it promises nothing is deleted", plans.includes("Nothing is deleted"));
+    check("and that counts restart on the new plan", plans.includes("start again from zero"));
+    check("its lists are built as text, not HTML",
+      plans.includes("name.textContent = title") && !/innerHTML/.test(plans),
+      "product titles are text a supplier typed");
+    check("Continue waits until enough is chosen",
+      plans.includes("continueButton.disabled =") &&
+        /id="dg-continue" disabled/.test(plans));
+    check("focus starts on Cancel", plans.includes("cancelButton.focus()"),
+      "a stray Enter must not unsync a catalogue");
+
+    check("the banner is on the screen", plans.includes('class="plan-banner"'));
+    check("a store over its sources, and paused emails, are errors",
+      /notice--error plan-banner__item"\s+data-limit="sources"/.test(plans) &&
+        /notice--error plan-banner__item"\s+data-limit="emails"/.test(plans));
+    check("orders are only ever a warning",
+      /notice--warn plan-banner__item"\s+data-limit="orders"/.test(plans));
+
+    const neverChose = await plansPage({ planStatus: { ...status, chosen: false }, planBanner: [] });
+    check("a store that never chose is told the Free plan applies",
+      neverChose.includes("the Free plan applies"));
+
+    const quiet = await render("partials/nav", {});
+    check("with nothing to say there is no banner", !quiet.includes("plan-banner"));
+
+    const pausedStores = await render("destination/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      connections: [{
+        id: 7,
+        status: "paused",
+        sync_mode: "manual",
+        source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Src" },
+        destination: { id: 2, shop_domain: "dst.myshopify.com", store_name: null },
+        removal: { products: 3, orders: 0, payments: 0, outstanding: 0, currency: null },
+      }],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+    });
+
+    check("a paused store can be resumed",
+      /class="btn btn--small resume-store"[^>]*data-connection="7"/.test(pausedStores),
+      "a downgrade pauses it; this is the way back");
+    check("through its own route",
+      pausedStores.includes('"/stores/" + button.dataset.connection + "/resume"'));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

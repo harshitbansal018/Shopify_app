@@ -958,24 +958,65 @@ const CREATE_MEMBERSHIP_PAYMENTS = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 `;
 
-async function seedPlans() {
-  const plans = [
-    ["Free", 0, 0, 25, JSON.stringify(["Up to 25 synced products", "1 source store", "Manual product sync", "Community support"])],
-    ["Basic", 10, 0, 250, JSON.stringify(["Up to 250 synced products", "Up to 3 source stores", "Automatic product sync", "Email support"])],
-    ["Pro", 25, 1, 1000, JSON.stringify(["Up to 1,000 synced products", "Unlimited source stores", "Automatic product sync", "Priority support"])],
-  ];
+/*
+ * The plans, and what each one allows. Edit here and restart: this runs on
+ * every boot and writes these values into the `plans` table.
+ *
+ *   price     USD per 30-day billing month. Whole numbers only -- the cards
+ *             show it rounded, and Shopify charges it exactly.
+ *   popular   true on ONE plan: its card gets the "Most popular" badge.
+ *   products, orders, emails, sources
+ *             the limits. null means unlimited. These are what the app
+ *             ENFORCES (services/planLimits.js), and the cards' "Up to ..."
+ *             lines are written from them -- so a card can never promise
+ *             something different from what the app does.
+ *   extras    any other card lines (support level etc.), after the limits.
+ *
+ * The name is how a plan is found in the database: renaming one creates a new
+ * plan and leaves the old one on sale. Removing a line does not remove a plan.
+ */
+const PLANS = [
+  { name: "Free",       price: 0,   popular: false, products: 10,   orders: 50,   emails: 100,  sources: 1,    extras: ["Community support"] },
+  { name: "Starter",    price: 10,  popular: false, products: 25,   orders: 200,  emails: 500,  sources: 2,    extras: ["Email support"] },
+  { name: "Basic",      price: 25,  popular: false, products: 100,  orders: 500,  emails: 1000, sources: 3,    extras: ["Email support"] },
+  { name: "Pro",        price: 50,  popular: true,  products: 500,  orders: 2000, emails: 5000, sources: null, extras: ["Priority support"] },
+  { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, extras: ["Dedicated support"] },
+];
 
-  for (const [name, price, isPopular, maxLimit, content] of plans) {
+/** The limit columns. NULL means unlimited; max_limit (products) already existed. */
+async function addPlanLimitColumns() {
+  await safeAlter("plans.max_orders", "ALTER TABLE plans ADD COLUMN max_orders INT NULL DEFAULT NULL");
+  await safeAlter("plans.max_emails", "ALTER TABLE plans ADD COLUMN max_emails INT NULL DEFAULT NULL");
+  await safeAlter("plans.max_sources", "ALTER TABLE plans ADD COLUMN max_sources INT NULL DEFAULT NULL");
+}
+
+async function seedPlans() {
+  // The columns first: they are written below, and databases created before
+  // limits existed do not have them yet.
+  await addPlanLimitColumns();
+
+  for (const plan of PLANS) {
     await query(
       `INSERT INTO plans
-        (name, price, is_popular, is_active, created_at, updated_at, days, status, plan_for, plan_content, max_limit)
-       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?)
+        (name, price, is_popular, is_active, created_at, updated_at, days, status,
+         plan_for, plan_content, max_limit, max_orders, max_emails, max_sources)
+       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          price = VALUES(price), is_popular = VALUES(is_popular), is_active = 1,
          updated_at = NOW(), days = VALUES(days), status = VALUES(status),
          plan_for = VALUES(plan_for), plan_content = VALUES(plan_content),
-         max_limit = VALUES(max_limit)`,
-      [name, price, isPopular, content, maxLimit]
+         max_limit = VALUES(max_limit), max_orders = VALUES(max_orders),
+         max_emails = VALUES(max_emails), max_sources = VALUES(max_sources)`,
+      [
+        plan.name,
+        plan.price,
+        plan.popular ? 1 : 0,
+        JSON.stringify(plan.extras || []),
+        plan.products,
+        plan.orders,
+        plan.emails,
+        plan.sources,
+      ]
     );
   }
 }
@@ -1046,7 +1087,113 @@ async function runMigrations() {
   await query(CREATE_PAYOUTS);
   await query(CREATE_FAQS);
   await seedFaqs();
+  // Email notifications: where each store's address is kept, which emails each
+  // connection sends, and the queue they go out from. Last, because both new
+  // tables have foreign keys onto stores and store_connections.
+  await addStoreEmail();
+  await query(CREATE_NOTIFICATION_SETTINGS);
+  await query(CREATE_EMAIL_OUTBOX);
 }
+
+/* ------------------------------------------------------------------ */
+/* Email notifications                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The store owner's address, as Shopify reports it.
+ *
+ * Filled in the first time an email goes to the store rather than at install,
+ * so stores installed before notifications existed get one too.
+ */
+async function addStoreEmail() {
+  await safeAlter(
+    "stores.email",
+    "ALTER TABLE stores ADD COLUMN email VARCHAR(255) DEFAULT NULL"
+  );
+}
+
+/*
+ * Which emails one connection sends.
+ *
+ * Decided by the DESTINATION alone -- including the two that go to the source.
+ * One row per connection, so a destination with two suppliers decides for each
+ * separately, and only ever about its own orders. Every switch defaults ON: a
+ * connection nobody has configured must still tell the source it has an order.
+ */
+const CREATE_NOTIFICATION_SETTINGS = `
+  CREATE TABLE IF NOT EXISTS notification_settings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+
+    -- To the SOURCE: a sale in the destination included its products.
+    email_order_created       TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the DESTINATION: the source shipped or cancelled an order.
+    email_order_updates       TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the DESTINATION: what it now owes, each time an order is fulfilled.
+    email_payout_destination  TINYINT(1) NOT NULL DEFAULT 1,
+    -- To the SOURCE: a payment the destination has recorded to it -- the
+    -- settlement. (Named from when it went out on every fulfilment.)
+    email_payout_source       TINYINT(1) NOT NULL DEFAULT 1,
+
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uniq_notification_connection (connection_id),
+
+    CONSTRAINT fk_notification_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/*
+ * Every email, written when the event happens and sent from here afterwards.
+ *
+ * A queue rather than sending inline, for the same reason the order sync is
+ * one: a slow or down mail provider must never hold up marking an order
+ * shipped, and a failed send is retried instead of lost.
+ *
+ * dedupe_key is what stops a redelivered webhook or a double click emailing
+ * someone twice about the same thing.
+ *
+ * 'sending' is a claim. Two app processes can run this queue at once, and
+ * without it both would pick the same row and send the same email twice. A
+ * claim older than a few minutes belongs to a process that died mid-send, and
+ * is picked up again.
+ */
+const CREATE_EMAIL_OUTBOX = `
+  CREATE TABLE IF NOT EXISTS email_outbox (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id      INT NOT NULL,
+    -- Resolved to an address only when sending: the address may not be known
+    -- yet when the event happens.
+    recipient_store_id INT NOT NULL,
+
+    kind       VARCHAR(40)  NOT NULL,
+    dedupe_key VARCHAR(191) NOT NULL,
+
+    subject    VARCHAR(255) NOT NULL,
+    html       MEDIUMTEXT   NOT NULL,
+    text_body  MEDIUMTEXT   NOT NULL,
+
+    status     ENUM('pending','sending','sent','failed','skipped')
+               NOT NULL DEFAULT 'pending',
+    attempts   INT NOT NULL DEFAULT 0,
+    error      VARCHAR(500) DEFAULT NULL,
+    -- The address it actually went to, recorded at send time.
+    to_email   VARCHAR(255) DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claimed_at DATETIME DEFAULT NULL,
+    sent_at    DATETIME DEFAULT NULL,
+
+    UNIQUE KEY uniq_outbox_dedupe (dedupe_key),
+    KEY idx_outbox_queue (status, attempts, id),
+
+    CONSTRAINT fk_outbox_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE,
+    CONSTRAINT fk_outbox_recipient
+      FOREIGN KEY (recipient_store_id) REFERENCES stores(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
 
 /**
  * Put the starting questions in, once.

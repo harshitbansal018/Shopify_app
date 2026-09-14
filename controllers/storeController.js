@@ -15,6 +15,7 @@ const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
 const productMappingModel = require("../models/productMappingModel");
+const notificationSettingsModel = require("../models/notificationSettingsModel");
 const payoutModel = require("../models/payoutModel");
 const productSync = require("../services/productSync");
 const pairing = require("../services/pairing");
@@ -248,6 +249,37 @@ exports.postPairingCode = async (req, res) => {
  * who owns what, and is worth keeping even if the connection insert then fails
  * -- the merchant can retry the connection without redeeming a second code.
  */
+/**
+ * A destination resuming a paused source store.
+ *
+ * Usually paused by a downgrade. Held to the plan's source-store limit in the
+ * same transaction as the change, so two clicks cannot both take the last
+ * slot. Its products never left the store; on resume they pick up every change
+ * the supplier made while it was paused.
+ */
+exports.postResumeStore = async (req, res) => {
+  if (req.store.store_type !== "destination") {
+    return res.status(403).json({
+      error: "Only a destination store resumes a source store.",
+    });
+  }
+
+  try {
+    const result = await require("../services/planLimits").resumeSource(
+      req.store,
+      Number(req.params.id)
+    );
+
+    if (result.notFound) return res.status(404).json({ error: "Store not found." });
+    if (result.refused) return res.status(409).json({ error: result.message });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Resuming a source store failed:", err.message);
+    return res.status(500).json({ error: "Could not resume that store." });
+  }
+};
+
 exports.postConnect = async (req, res) => {
   if (req.store.store_type !== "destination") {
     return res.status(403).json({
@@ -259,6 +291,17 @@ exports.postConnect = async (req, res) => {
 
   if (!code) {
     return res.status(400).json({ error: "Enter the source store's code." });
+  }
+
+  // Checked BEFORE the code is redeemed: redeeming spends it, and a merchant
+  // told their plan is full should still hold a usable code after upgrading.
+  try {
+    const room = await require("../services/planLimits").sourceRoom(req.store);
+
+    if (!room.ok) return res.status(409).json({ error: room.message });
+  } catch (err) {
+    console.error("Checking the source store limit failed:", err.message);
+    return res.status(500).json({ error: "Could not use that code." });
   }
 
   let source;
@@ -322,27 +365,57 @@ function destinationOnly(req, res) {
   return true;
 }
 
+/**
+ * Which connection the Settings screen is showing.
+ *
+ * One store at a time, picked from the dropdown: with several suppliers the
+ * old stacked panels made a long page where each Save button sat a scroll
+ * away from the store it belonged to.
+ *
+ * The id comes from the query string, so it is only ever matched against THIS
+ * store's own connections -- a guessed number simply is not in the list. An
+ * unknown id, a repeated ?connection (Express hands over an array) or none at
+ * all falls back to the first store rather than an error: a stale bookmark
+ * should land on a working screen.
+ */
+function pickConnection(connections, requested) {
+  if (!connections.length) return null;
+
+  const id = typeof requested === "string" ? Number(requested) : NaN;
+
+  return connections.find((connection) => connection.id === id) || connections[0];
+}
+
+exports.pickConnection = pickConnection;
+
 exports.getSettings = async (req, res) => {
   try {
     if (!req.store.store_type) return renderStoreType(req, res);
     if (!destinationOnly(req, res)) return;
 
+    // All of them, for the dropdown; settings for just the one on screen.
     const connections = await connectionModel.listForDestination(req.storeId);
+    const current = pickConnection(connections, req.query.connection);
 
-    // One batched read, and every connection gets settings whether or not it
-    // has a row yet -- an unconfigured connection behaves as "sync everything".
-    const settings = await syncSettingsModel.mapForConnections(
-      connections.map((connection) => connection.id)
-    );
+    // Every connection gets settings whether or not it has a row yet -- an
+    // unconfigured connection behaves as "sync everything".
+    const settings = current
+      ? await syncSettingsModel.mapForConnections([current.id])
+      : null;
+
+    // The same store's email switches, for the panel under the sync settings.
+    const notifications = current
+      ? await notificationSettingsModel.forConnection(current.id)
+      : null;
 
     res.render("destination/settings", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
-      connections: connections.map((connection) => ({
-        ...connection,
-        sync: settings.get(connection.id),
-      })),
+      connections,
+      current: current ? { ...current, sync: settings.get(current.id) } : null,
+      notifications,
+      emails: notificationSettingsModel.EMAILS,
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: FIELD_LABELS,
@@ -350,6 +423,42 @@ exports.getSettings = async (req, res) => {
   } catch (err) {
     console.error("Settings screen failed:", err.message);
     res.status(500).send("Error loading settings");
+  }
+};
+
+/**
+ * Save one connection's email switches.
+ *
+ * Its own route rather than part of POST /settings: that one re-queues every
+ * product on the connection so a changed sync field reaches the store, and
+ * turning an email on or off changes nothing about any product.
+ *
+ * Destination-only, including the switches for emails that go to the SOURCE.
+ * That is the product decision: the destination runs these settings for both.
+ */
+exports.postNotifications = async (req, res) => {
+  if (!destinationOnly(req, res)) return;
+
+  const connectionId = Number(req.body.connection_id);
+
+  try {
+    // The id came from a browser. Prove it belongs to THIS store before
+    // writing: a guessed number must not switch off another store's emails.
+    const mine = await connectionModel.listForDestination(req.storeId);
+
+    if (!mine.some((connection) => connection.id === connectionId)) {
+      return res.status(404).json({ error: "Connection not found." });
+    }
+
+    const saved = await notificationSettingsModel.save(
+      connectionId,
+      req.body.notifications || {}
+    );
+
+    return res.json({ ok: true, notifications: saved });
+  } catch (err) {
+    console.error("Saving email settings failed:", err.message);
+    return res.status(500).json({ error: "Could not save those email settings." });
   }
 };
 

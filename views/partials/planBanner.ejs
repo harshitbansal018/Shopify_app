@@ -1,0 +1,19 @@
+<%#
+  Plan warnings, at the top of every destination screen.
+
+  The items come from services/planLimits.bannerItems(), attached to every
+  destination page by middleware/planStatus.js -- so no screen has to know
+  about plans to warn about them. Nothing renders when there is nothing to
+  say, and nothing at all on a source store's screens.
+%>
+<% if (typeof planBanner !== "undefined" && planBanner && planBanner.length) { %>
+  <div class="plan-banner" role="status">
+    <% planBanner.forEach(function (item) { %>
+      <p class="notice notice--<%= item.level === "error" ? "error" : "warn" %> plan-banner__item"
+         data-limit="<%= item.key %>">
+        <span><%= item.text %></span>
+        <s-link href="/plans">See plans</s-link>
+      </p>
+    <% }); %>
+  </div>
+<% } %>

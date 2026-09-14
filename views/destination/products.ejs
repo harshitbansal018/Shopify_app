@@ -71,6 +71,22 @@
       }) %>
     </div>
 
+    <%# How much of the plan is in use, beside the list that fills it. The limit
+        is enforced when products are accepted; this is here so the merchant
+        sees it coming instead of meeting it as an error. %>
+    <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
+      <% var room = planStatus.limits.products - planStatus.usage.products; %>
+      <p class="plan-meter<%= room <= 0 ? " plan-meter--full" : "" %>">
+        <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
+        products on your <%= planStatus.plan.name %> plan
+        <% if (room > 0) { %>
+          &middot; room for <%= room %> more
+        <% } else { %>
+          &middot; <s-link href="/plans">upgrade</s-link> or unsync products to add more
+        <% } %>
+      </p>
+    <% } %>
+
     <%# Only when there is something to act on: buttons over an empty list
         are just dead controls. %>
     <% if (tab === "unsynced" && products.length) { %>

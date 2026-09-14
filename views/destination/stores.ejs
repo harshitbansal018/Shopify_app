@@ -67,6 +67,17 @@
               <td class="muted"><%= other.shop_domain %></td>
               <td>
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+                <%# A downgrade pauses stores rather than deleting them, so
+                    the way back is here: its products never left. %>
+                <% if (connection.status === "paused") { %>
+                  <button
+                    class="btn btn--small resume-store"
+                    type="button"
+                    data-connection="<%= connection.id %>"
+                    data-store="<%= other.store_name || other.shop_domain %>">
+                    Resume
+                  </button>
+                <% } %>
               </td>
               <td class="muted"><%= connection.sync_mode %></td>
               <td>
@@ -411,6 +422,42 @@
           deleteError.hidden = false;
         }
       });
+
+      /* ---------------- resuming a paused source store ---------------- */
+
+      Array.prototype.slice.call(document.querySelectorAll(".resume-store"))
+        .forEach(function (button) {
+          button.addEventListener("click", async function () {
+            var label = button.textContent;
+            button.disabled = true;
+            button.textContent = "Resuming…";
+
+            try {
+              var response = await window.appFetch(
+                "/stores/" + button.dataset.connection + "/resume",
+                { method: "POST" }
+              );
+
+              var data = await response.json().catch(function () { return {}; });
+
+              if (!response.ok) {
+                // Most often the plan's source-store limit, and the message
+                // says so and points at the fix.
+                window.appToast(data.error || "Could not resume that store.", true);
+                button.disabled = false;
+                button.textContent = label;
+                return;
+              }
+
+              window.appToast("Resumed " + button.dataset.store);
+              window.appNavigate("/stores");
+            } catch (err) {
+              window.appToast("Could not reach the app. Try again.", true);
+              button.disabled = false;
+              button.textContent = label;
+            }
+          });
+        });
     })();
   </script>
 

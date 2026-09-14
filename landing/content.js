@@ -1,15 +1,4 @@
-// landing/content.js
-//
-// EVERY word on the landing page, in one file.
-//
-// The templates in views/ contain layout and no copy, so changing what the
-// page says never means opening HTML. Add a feature, reword the hero, swap a
-// FAQ -- it all happens here.
-//
-// What is NOT here: the prices. Those come from the `plans` table through
-// pricing.js, so the page and the checkout can never quote different numbers.
 
-/** The company behind the app, used in the nav, the footer and the meta tags. */
 const COMPANY = {
   name: "Stellen Infotech",
   site: "https://stelleninfotech.com",
@@ -71,13 +60,7 @@ const HERO = {
   },
 };
 
-/**
- * The two roles, explained side by side.
- *
- * This is the concept everything else rests on, and it is the one thing a
- * visitor has to understand before the rest of the page means anything: a
- * store is permanently one or the other.
- */
+
 const ROLES = {
   title: "Two stores, one catalogue",
   intro:

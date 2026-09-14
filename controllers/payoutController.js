@@ -315,6 +315,11 @@ exports.postPayment = async (req, res) => {
       paidAt: req.body.paid_at,
     });
 
+    // The settlement email to the source, if this destination has it on.
+    // Queued, never thrown: the payment is recorded now, whatever the mail
+    // server does.
+    await require("../services/notifications").paymentRecorded(id);
+
     console.log(
       `${req.shop} recorded a payment of ${amount} to ` +
         `${connection.source.shop_domain}`

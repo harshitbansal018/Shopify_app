@@ -1,15 +1,3 @@
-/* The public marketing page.
- *
- * Two things are worth guarding here, and they are not the wording:
- *
- *   1. The routing. "/" is shared with the embedded app, so a mistake in
- *      telling the two apart shows a merchant a marketing page instead of
- *      their dashboard -- or shows a visitor an OAuth redirect.
- *
- *   2. The pricing. It is read from the `plans` table so the page and the
- *      Shopify charge cannot disagree, and a page that 500s because the
- *      database hiccuped is worse than one with no prices on it.
- */
 require("dotenv").config({ quiet: true });
 
 const path = require("path");
@@ -74,8 +62,25 @@ console.log("\nPricing comes from the plans table");
   check("30 days reads as a month", pro.period === "month", pro.period);
   check("is_popular decides which card is lifted", pro.popular === true);
   check("max_limit comes through for the headline", pro.limit === 1000);
-  check("the features are parsed out of plan_content",
-    pro.features.length === 2 && pro.features[0] === "Everything in Basic");
+  // The limit lines are written from the columns, then plan_content's extras
+  // -- the same function the in-app Plans screen uses.
+  check("the product limit line comes from max_limit",
+    pro.features[0] === "Up to 1,000 synced products", pro.features[0]);
+  check("then the extras from plan_content",
+    pro.features[1] === "Everything in Basic" && pro.features.length === 3,
+    JSON.stringify(pro.features));
+
+  const unlimited = toCard(planRow({
+    max_limit: null, max_orders: null, max_emails: 500, max_sources: 1,
+    plan_content: "[]",
+  }));
+  check("an empty limit column reads Unlimited",
+    unlimited.features.includes("Unlimited synced products") &&
+      unlimited.features.includes("Unlimited orders"),
+    JSON.stringify(unlimited.features));
+  check("and a set one reads as a number",
+    unlimited.features.includes("Up to 500 emails / month") &&
+      unlimited.features.includes("1 source store"));
 
   // Free is a word, and a free plan has no billing period beside it.
   const free = toCard(planRow({ name: "Free", price: 0, is_popular: 0, days: 30 }));

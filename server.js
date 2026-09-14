@@ -72,6 +72,11 @@ app.use(express.static(path.join(__dirname, "public")));
    After express.static, so CSS and JS still cache normally. */
 app.use(noStore);
 
+/* ---------------- PLAN STATUS ----------------
+   Every destination screen carries the plan banner, so its status is attached
+   at render time here rather than fetched by each controller. */
+app.use(require("./middleware/planStatus"));
+
 /* ---------------- ROUTES ----------------
    Add feature routes here, e.g.:
      app.use("/widgets", require("./routes/widgetRoute"));
@@ -132,6 +137,10 @@ const PORT = process.env.PORT || 3000;
   // product loop on purpose: a slow catalogue push must not hold up a sale, and
   // an order that keeps failing must not stall the catalogue.
   require("./services/orderSync").startOrderSync();
+
+  // Sends queued notification emails. Its own loop, so a slow or unreachable
+  // mail server never holds up an order or a product push.
+  require("./services/notifications").startOutbox();
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
