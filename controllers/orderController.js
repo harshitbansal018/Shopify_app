@@ -15,6 +15,7 @@
 const orderMappingModel = require("../models/orderMappingModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const orderSync = require("../services/orderSync");
+const orderShipmentModel = require("../models/orderShipmentModel");
 const { renderStoreType } = require("./storeController");
 const { paginate } = require("./pagination");
 
@@ -41,7 +42,8 @@ exports.getOrders = async (req, res) => {
     // done. Cancelled sits with the finished ones -- it is settled, even if it
     // did not end well.
     const counts = {
-      open: statusCounts.unfulfilled,
+      // A partly shipped sale still has work on it, so it stays with the open ones.
+      open: statusCounts.unfulfilled + statusCounts.partial,
       done: statusCounts.fulfilled + statusCounts.cancelled,
     };
 
@@ -108,6 +110,15 @@ exports.getOrder = async (req, res) => {
       await orderLineItemModel.sourceLinesForOrder(mapping.destination_order_id)
     ).filter((line) => line.connection_id === mapping.connection_id);
 
+    // What has shipped so far, per line and as a list of shipments. Both
+    // ends see it: the source to know what is left to send, the destination
+    // to see which parcels its shopper has been told about.
+    const [progress, shipments] = await Promise.all([
+      orderSync.lineProgress(mapping),
+      orderShipmentModel.listForMapping(mapping.id),
+    ]);
+    const progressByLine = new Map(progress.map((line) => [line.line_id, line]));
+
     res.render(`${req.store.store_type}/orderDetail`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
@@ -117,11 +128,17 @@ exports.getOrder = async (req, res) => {
         destination_total: toNumber(mapping.destination_total),
         source_total: toNumber(mapping.source_total),
       },
-      lines: lines.map((line) => ({
-        ...line,
-        source_price: toNumber(line.source_price),
-        destination_price: toNumber(line.destination_price),
-      })),
+      lines: lines.map((line) => {
+        const done = progressByLine.get(Number(line.line_id));
+        return {
+          ...line,
+          source_price: toNumber(line.source_price),
+          destination_price: toNumber(line.destination_price),
+          shipped: done ? done.shipped : 0,
+          remaining: done ? done.remaining : Number(line.quantity),
+        };
+      }),
+      shipments,
     });
   } catch (err) {
     console.error("Order detail failed:", err.message);
@@ -181,20 +198,48 @@ exports.postFulfil = async (req, res) => {
       });
     }
 
+    if (mapping.source_fulfillment_status === "fulfilled") {
+      return res.status(409).json({
+        error: "Everything on this order has already shipped.",
+      });
+    }
+
     // One order can go out in several parcels, so tracking is a list. An empty
     // list is allowed: plenty of merchants ship without a trackable service,
     // and refusing would leave them unable to mark anything done.
     const parcels = Array.isArray(req.body.tracking) ? req.body.tracking : [];
 
-    await orderMappingModel.markFulfilled(mapping.id, parcels);
+    // Which lines, and how many of each, are going out now. Absent means
+    // "everything still unshipped" -- the plain Mark fulfilled. Present, it
+    // is a partial shipment, checked line by line against what is left.
+    const lines = Array.isArray(req.body.lines) ? req.body.lines : null;
+
+    const shipment = await orderSync.recordShipment(mapping.id, {
+      lines,
+      tracking: parcels,
+    });
+
+    if (!shipment) {
+      return res.status(409).json({ error: "This order cannot be shipped." });
+    }
+
+    const after = await orderMappingModel.findById(mapping.id);
 
     // Emails, as this connection's destination has chosen them. Queued, never
-    // thrown: the order is marked shipped now, and that has to stand whatever
+    // thrown: the shipment is recorded now, and that has to stand whatever
     // the mail server does.
-    await require("../services/notifications").orderFulfilled(mapping.id);
+    await require("../services/notifications").orderFulfilled(mapping.id, shipment.id);
 
-    return res.json({ ok: true, tracking: parcels.length });
+    return res.json({
+      ok: true,
+      status: after.source_fulfillment_status,
+      shipment: shipment.id,
+      tracking: shipment.tracking.length,
+    });
   } catch (err) {
+    // A bad quantity is the merchant's to fix, and the message says which.
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+
     console.error("Marking an order fulfilled failed:", err.message);
     return res.status(500).json({ error: "Could not update that order." });
   }
@@ -219,11 +264,19 @@ exports.postUnfulfil = async (req, res) => {
 
     if (!mapping) return res.status(404).json({ error: "Order not found." });
 
-    const undone = await orderSync.cancelDestinationFulfilment(mapping);
+    if (mapping.source_fulfillment_status === "cancelled") {
+      return res.status(409).json({
+        error: "This order was cancelled; there is nothing to reopen.",
+      });
+    }
+
+    // Every shipment's fulfillment in the buyer's store is cancelled first,
+    // and the sale is only reopened once all of them are. Saying it is
+    // unfulfilled here while the buyer's order still says shipped would be
+    // the worse of the two lies.
+    const undone = await orderSync.reopen(mapping);
 
     if (!undone.ok) {
-      // The row is left alone. Saying it is unfulfilled here while the buyer's
-      // order still says shipped would be the worse of the two lies.
       return res.status(502).json({
         error: `Could not undo it in ${
           mapping.destination_store_name || mapping.destination_shop_domain
@@ -231,9 +284,7 @@ exports.postUnfulfil = async (req, res) => {
       });
     }
 
-    await orderMappingModel.markUnfulfilled(mapping.id);
-
-    return res.json({ ok: true });
+    return res.json({ ok: true, undone: undone.undone });
   } catch (err) {
     console.error("Reopening an order failed:", err.message);
     return res.status(500).json({ error: "Could not update that order." });

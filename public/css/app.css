@@ -39,6 +39,36 @@
   box-sizing: border-box;
 }
 
+/* ---------------- page loading bar ----------------
+   Shown by shopifyClient.js while the next screen loads, only where App
+   Bridge's own bar is not available (outside the admin). A thin bar that
+   sweeps across the top, in the brand colour, the way the admin's does. */
+.is-navigating::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  width: 40%;
+  height: 3px;
+  background: var(--brand);
+  border-radius: 0 2px 2px 0;
+  animation: page-loading 1.1s ease-in-out infinite;
+}
+
+@keyframes page-loading {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250vw); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-navigating::before {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -225,6 +255,36 @@ body {
   min-width: 9rem;
 }
 
+/* A quantity box in a table cell: wide enough for three digits, no wider. */
+.field__input--qty {
+  width: 4.5rem;
+  padding: 0.35rem 0.5rem;
+  text-align: right;
+}
+
+/* ---------------- shipping progress ---------------- */
+
+/* "2 / 5" on an order line: green once the line is done, amber part way. */
+.ship-done {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.ship-part {
+  color: var(--waiting-ink);
+  font-weight: 600;
+}
+
+/* The four order actions. Cancel sits apart from the rest: it refunds a
+   shopper, and must not be one slip away from Fulfilled. */
+.order-actions {
+  align-items: center;
+}
+
+.order-actions .btn--danger {
+  margin-left: auto;
+}
+
 .field__help {
   display: block;
   margin-top: 0.3rem;
@@ -255,10 +315,14 @@ body {
   border: 1px solid transparent;
   border-radius: 8px;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+/* A shade lighter, not a different colour. The buttons are dark, and a hover
+   that jumped to light grey left white text on a near-white button. */
 .btn:hover:not(:disabled) {
-  background: #dcdcdf;
+  background: #454545;
+  border-color: #383838;
 }
 
 .btn:disabled {
@@ -278,8 +342,8 @@ body {
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: #1f1f1f;
-  border-color: #111;
+  background: #454545;
+  border-color: #383838;
 }
 
 .btn--danger {
@@ -298,6 +362,60 @@ body {
   min-height: 1.75rem;
   padding: 0.3rem 0.58rem;
   font-size: 0.78rem;
+}
+
+/* ---------------- spinner ----------------
+   Any button with .is-loading (appFetch's `busy`, or appBusy) shows a ring
+   turning where its label was. The label goes transparent rather than away,
+   so the button keeps its width and nothing beside it shifts. */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.is-loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+  cursor: progress;
+}
+
+/* Not the disabled fade: a spinning button is working, not unavailable.
+   Written against the disabled rules it has to beat. */
+.btn.is-loading:disabled,
+.pill--action.is-loading:disabled {
+  opacity: 1;
+}
+
+.is-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 1em;
+  height: 1em;
+  margin: auto;
+  border: 2px solid var(--spin-track, rgba(48, 48, 48, 0.2));
+  border-top-color: var(--spin, #303030);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Light ring on dark and coloured buttons. */
+.btn.is-loading::after,
+.btn--primary.is-loading::after {
+  --spin-track: rgba(255, 255, 255, 0.3);
+  --spin: #fff;
+}
+
+.btn--danger.is-loading::after {
+  --spin-track: rgba(184, 38, 30, 0.25);
+  --spin: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-loading::after {
+    animation-duration: 1.6s;
+  }
 }
 
 .icon-btn {
@@ -712,29 +830,41 @@ body {
 }
 
 /* ---------------- modal ----------------
-   A native <dialog>: the backdrop, Esc-to-close and the focus trap come with
-   it, so there is no overlay div and no key handling to get wrong. */
+   Every dialog is the admin's own <s-modal> from App Bridge: it draws the
+   heading, the backdrop, the X, Esc-to-close and the action buttons, so the
+   classes here only lay out what goes inside it.
 
-.modal {
+   Outside the admin -- where App Bridge has not defined the element -- the
+   tag is unknown and its contents would sit inline on the page. Hidden until
+   opened, then shown as a plain panel, so the page still works there. */
+
+s-modal:not(:defined) {
+  display: none;
+}
+
+s-modal:not(:defined)[open] {
+  display: block;
+  position: fixed;
+  top: 10vh;
+  left: 50%;
+  z-index: 100;
   width: min(30rem, calc(100vw - 2rem));
-  padding: 0;
+  padding: 1.25rem 1.4rem 1.4rem;
+  transform: translateX(-50%);
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
 
-.modal::backdrop {
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.modal__body {
-  padding: 1.25rem 1.4rem 1.4rem;
-}
-
-.modal__title {
-  margin: 0 0 0.35rem;
-  font-size: 1.05rem;
+s-modal:not(:defined)[open] s-button {
+  display: inline-block;
+  margin: 1rem 0.5rem 0 0;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
 }
 
 .modal__copy {
@@ -756,13 +886,6 @@ body {
 
 .modal__list li + li {
   margin-top: 0.25rem;
-}
-
-.modal__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1.2rem;
 }
 
 /* inline-block, not inline: an inline box lets its text break mid-phrase and
@@ -1518,12 +1641,6 @@ body {
   border-color: var(--brand);
 }
 
-/* The downgrade chooser: wider than the other dialogs, because it holds a
-   list someone has to read through. */
-.modal--wide {
-  width: min(40rem, calc(100vw - 2rem));
-}
-
 .dg-section {
   margin: 0 0 1rem;
 }
@@ -2089,4 +2206,12 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--line-soft);
   border-radius: 4px;
+}
+
+/* One shipment on the destination's order page: a small block per parcel,
+   separated so two shipments do not read as one long tracking list. */
+.shipment-line + .shipment-line {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line-soft);
 }

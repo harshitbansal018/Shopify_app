@@ -131,15 +131,25 @@ function orderCreated(m) {
  * in the shipped email -- and only when shipped updates are OFF does the payout
  * go out on its own.
  */
-function orderFulfilled(m, { shipped = true, owed = null } = {}) {
+function orderFulfilled(m, { shipped = true, owed = null, partial = false } = {}) {
   const blocks = [];
   let text = "";
 
+  // A partial shipment says so: a shopper told "your order has shipped" who
+  // then opens a box with half of it in is a support ticket.
+  const what = partial ? `part of ${orderName(m)}` : orderName(m);
+
   if (shipped) {
     blocks.push(
-      para(`${escapeHtml(sourceName(m))} has shipped ${escapeHtml(orderName(m))}.`)
+      para(
+        `${escapeHtml(sourceName(m))} has shipped ${escapeHtml(what)}.` +
+          (partial ? " The rest will follow in a separate shipment." : "")
+      )
     );
-    text += `${sourceName(m)} has shipped ${orderName(m)}.\n\n`;
+    text +=
+      `${sourceName(m)} has shipped ${what}.` +
+      (partial ? " The rest will follow in a separate shipment." : "") +
+      "\n\n";
 
     const parcels = Array.isArray(m.source_tracking) ? m.source_tracking : [];
 
@@ -193,10 +203,12 @@ function orderFulfilled(m, { shipped = true, owed = null } = {}) {
 
   return {
     subject: shipped
-      ? `${orderName(m)} shipped by ${sourceName(m)}`
+      ? `${orderName(m)} ${partial ? "partly " : ""}shipped by ${sourceName(m)}`
       : `You owe ${money(owed && owed.amount, owed && owed.currency)} to ${sourceName(m)} for ${orderName(m)}`,
     html: layout({
-      heading: shipped ? `${escapeHtml(orderName(m))} has shipped` : "Payout due",
+      heading: shipped
+        ? `${escapeHtml(orderName(m))} has ${partial ? "partly " : ""}shipped`
+        : "Payout due",
       blocks,
     }),
     text,

@@ -151,9 +151,11 @@
                 <span class="pill pill--<%=
                   order.source_fulfillment_status === "fulfilled" ? "synced"
                   : order.source_fulfillment_status === "cancelled" ? "failed"
+                  : order.source_fulfillment_status === "partial" ? "paused"
                   : "pending" %>">
-                  <%= order.source_fulfillment_status === "unfulfilled"
-                      ? "to fulfil" : order.source_fulfillment_status %>
+                  <%= order.source_fulfillment_status === "unfulfilled" ? "unfulfilled"
+                      : order.source_fulfillment_status === "partial" ? "partially fulfilled"
+                      : order.source_fulfillment_status %>
                 </span>
               </td>
               <td><%= order.line_count %></td>

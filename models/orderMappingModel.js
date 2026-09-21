@@ -23,7 +23,7 @@ const { query, pool } = require("../config/db");
 const { parseJson } = require("./helpers");
 
 /** What the source has done with the sale. Drives the tabs on both screens. */
-const FULFILMENT_STATES = ["unfulfilled", "fulfilled", "cancelled"];
+const FULFILMENT_STATES = ["unfulfilled", "partial", "fulfilled", "cancelled"];
 
 /** JSON columns come back from MariaDB as strings. */
 function hydrate(row) {
@@ -124,15 +124,16 @@ async function findById(id) {
  * filtering an already-read page of fifteen leaves however many happened to
  * match, and the rest of that tab is simply never reachable.
  *
- *   open   still on the source to pick and ship
+ *   open   still on the source to pick and ship, wholly or in part
  *   done   fulfilled or cancelled -- settled either way
  */
 function scopeFor(column, storeId, { tab = null, connectionId = null } = {}) {
   const params = [storeId];
   let where = `WHERE ${column} = ?`;
 
-  if (tab === "open") where += " AND om.source_fulfillment_status = 'unfulfilled'";
-  if (tab === "done") where += " AND om.source_fulfillment_status <> 'unfulfilled'";
+  // A partly shipped sale is still open: there is more to send.
+  if (tab === "open") where += " AND om.source_fulfillment_status IN ('unfulfilled', 'partial')";
+  if (tab === "done") where += " AND om.source_fulfillment_status IN ('fulfilled', 'cancelled')";
 
   if (connectionId !== null && connectionId !== undefined) {
     where += " AND om.connection_id = ?";
@@ -222,127 +223,67 @@ async function statusCounts(storeId, { side = "destination" } = {}) {
     [storeId]
   );
 
-  const counts = { unfulfilled: 0, fulfilled: 0, cancelled: 0 };
+  const counts = { unfulfilled: 0, partial: 0, fulfilled: 0, cancelled: 0 };
   rows.forEach((row) => {
     if (row.state in counts) counts[row.state] = Number(row.total);
   });
   return counts;
 }
 
+/* ------------------------------------------------------------------ */
+/* Shipping                                                            */
+/* ------------------------------------------------------------------ */
+
 /**
- * The source has shipped it.
+ * The sale's overall state, set from what its shipments add up to.
  *
- * Tracking is a list because one order can go out in several parcels, and the
- * shopper needs every number rather than the first one.
+ *   unfulfilled  nothing shipped
+ *   partial      some lines or quantities shipped, some still to go
+ *   fulfilled    everything shipped
  *
- * fulfil_status goes to 'pending' in the same statement: saying it shipped and
- * telling the buyer's store are one decision, and splitting them would leave a
- * gap where the source thinks it is done and the shopper has heard nothing.
+ * Only these three: 'cancelled' is set by markCancelledBySource and is a
+ * one-way door -- a cancelled sale has been refunded, and nothing shipped
+ * afterwards can change that.
+ */
+async function setSourceStatus(id, status) {
+  if (!["unfulfilled", "partial", "fulfilled"].includes(status)) {
+    throw new Error(`Not a shipping state: ${status}`);
+  }
+
+  const [result] = await pool.query(
+    `UPDATE order_mappings
+        SET source_fulfillment_status = ?,
+            source_status_at = NOW()
+      WHERE id = ? AND source_fulfillment_status <> 'cancelled'`,
+    [status, id]
+  );
+  return result.affectedRows;
+}
+
+/**
+ * The source has shipped ALL of it, in one go.
+ *
+ * Kept for callers that only ever ship whole sales (and for the old tests);
+ * the request handler ships by line through services/orderSync.recordShipment,
+ * which this delegates to.
  */
 async function markFulfilled(id, tracking = []) {
-  const parcels = (tracking || [])
-    .filter((parcel) => parcel && parcel.number)
-    .map((parcel) => ({
-      number: String(parcel.number).slice(0, 128),
-      company: parcel.company ? String(parcel.company).slice(0, 128) : null,
-      url: parcel.url ? String(parcel.url).slice(0, 512) : null,
-    }));
-
-  const [result] = await pool.query(
-    `UPDATE order_mappings
-        SET source_fulfillment_status = 'fulfilled',
-            source_tracking = ?,
-            source_status_at = NOW(),
-            -- Only re-queue what has not already reached Shopify. Re-marking a
-            -- sale that is already fulfilled over there must not create a
-            -- second fulfillment for the same goods.
-            fulfil_status = IF(fulfil_status = 'fulfilled', 'fulfilled', 'pending'),
-            fulfil_attempts = IF(fulfil_status = 'fulfilled', fulfil_attempts, 0),
-            fulfil_error = NULL
-      WHERE id = ? AND source_fulfillment_status <> 'cancelled'`,
-    [parcels.length ? JSON.stringify(parcels) : null, id]
-  );
-  return result.affectedRows;
+  const shipped = await require("../services/orderSync").recordShipment(id, {
+    tracking,
+  });
+  return shipped ? 1 : 0;
 }
 
 /**
- * Shipped by mistake, or the parcel came back.
+ * Shipped by mistake, or the parcel came back: back to unfulfilled.
  *
- * The queue is reset to 'none' but destination_fulfillment_id is deliberately
- * KEPT: if Shopify was already told, that id is the only handle on the
- * fulfillment to cancel, and losing it would strand the buyer's order as
- * fulfilled forever.
+ * Only the sale's own state. The shipments themselves are cancelled by the
+ * caller, one by one, AFTER each fulfillment in the buyer's store has been
+ * cancelled -- see services/orderSync.reopen. Doing it here would forget the
+ * fulfillment ids that are the only handle on those.
  */
 async function markUnfulfilled(id) {
-  const [result] = await pool.query(
-    `UPDATE order_mappings
-        SET source_fulfillment_status = 'unfulfilled',
-            source_tracking = NULL,
-            source_status_at = NOW(),
-            fulfil_status = 'none',
-            fulfil_attempts = 0,
-            fulfil_error = NULL
-      WHERE id = ? AND source_fulfillment_status <> 'cancelled'`,
-    [id]
-  );
-  return result.affectedRows;
-}
-
-/** Fulfilments still to send to the buyer's store, oldest first. */
-async function listPendingFulfilments({ limit = 50, maxAttempts = 5 } = {}) {
-  const rows = await query(
-    `${SELECT_WITH_ORDER}
-      WHERE om.fulfil_status IN ('pending', 'failed')
-        AND om.fulfil_attempts < ?
-        -- A sale the source has since cancelled or reopened must not be
-        -- fulfilled by a round that was already in flight.
-        AND om.source_fulfillment_status = 'fulfilled'
-      ORDER BY om.id
-      LIMIT ?`,
-    [Number(maxAttempts), Number(limit)]
-  );
-  return rows.map(hydrate);
-}
-
-async function markFulfilSent(id, destinationFulfillmentId) {
-  const [result] = await pool.query(
-    `UPDATE order_mappings
-        SET fulfil_status = 'fulfilled',
-            destination_fulfillment_id = ?,
-            fulfil_error = NULL
-      WHERE id = ?`,
-    [destinationFulfillmentId || null, id]
-  );
-  return result.affectedRows;
-}
-
-/**
- * Record a failure and count the attempt.
- *
- * Counted HERE rather than before the call, so a crash between the two cannot
- * burn a retry that Shopify never received.
- */
-async function markFulfilFailed(id, reason) {
-  const [result] = await pool.query(
-    `UPDATE order_mappings
-        SET fulfil_status = 'failed',
-            fulfil_attempts = fulfil_attempts + 1,
-            fulfil_error = ?
-      WHERE id = ?`,
-    [reason ? String(reason).slice(0, 512) : null, id]
-  );
-  return result.affectedRows;
-}
-
-/** The fulfillment in the buyer's store has been cancelled; forget its id. */
-async function clearDestinationFulfilment(id) {
-  const [result] = await pool.query(
-    `UPDATE order_mappings
-        SET destination_fulfillment_id = NULL
-      WHERE id = ?`,
-    [id]
-  );
-  return result.affectedRows;
+  return setSourceStatus(id, "unfulfilled");
 }
 
 /**
@@ -431,12 +372,9 @@ module.exports = {
   listForSource,
   countForStore,
   statusCounts,
+  setSourceStatus,
   markFulfilled,
   markUnfulfilled,
-  listPendingFulfilments,
-  markFulfilSent,
-  markFulfilFailed,
-  clearDestinationFulfilment,
   markCancelledBySource,
   queueCancellation,
   listPendingCancellations,

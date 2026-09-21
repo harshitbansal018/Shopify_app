@@ -132,54 +132,28 @@
                   </span>
                 <% } else if (order.source_fulfillment_status === "fulfilled") { %>
                   <span class="pill pill--synced">fulfilled</span>
-                  <% order.source_tracking.forEach(function (parcel) { %>
-                    <span class="muted">
-                      <%= parcel.company || "tracking" %>: <%= parcel.number %>
-                    </span>
-                  <% }); %>
-                  <%# Whether the BUYER has been told, which is a different
-                      thing from whether this store says it shipped. %>
-                  <% if (order.fulfil_status === "failed") { %>
-                    <span class="muted"><%= order.fulfil_error %></span>
-                  <% } else if (order.fulfil_status !== "fulfilled") { %>
-                    <span class="muted">telling the buyer&hellip;</span>
-                  <% } %>
+                <% } else if (order.source_fulfillment_status === "partial") { %>
+                  <%# Some of it has gone; the rest is still this store's job,
+                      which is why it stays on the To fulfil tab. %>
+                  <span class="pill pill--paused">partially fulfilled</span>
+                  <span class="muted">more to send</span>
                 <% } else { %>
-                  <span class="pill pill--pending">to fulfil</span>
+                  <span class="pill pill--pending">unfulfilled</span>
                 <% } %>
               </td>
 
               <td class="table__actions">
+                <%# View only. Marking shipped, partly shipped, undone or
+                    cancelled all happen on the order's own page: each needs
+                    the lines in front of the merchant, and a list row has no
+                    room for that. One button here also means one place to
+                    look, whatever state the sale is in. %>
                 <button
                   class="btn btn--small view-order"
                   type="button"
                   data-order="<%= order.id %>">
                   View
                 </button>
-                <%# Only the two moves that matter from a list. Tracking is
-                    typed on the order's own page, where there is room for it. %>
-                <% if (order.source_fulfillment_status === "unfulfilled") { %>
-                  <button
-                    class="btn btn--small btn--primary fulfil-order"
-                    type="button"
-                    data-order="<%= order.id %>">
-                    Mark fulfilled
-                  </button>
-                  <button
-                    class="btn btn--small btn--danger cancel-order"
-                    type="button"
-                    data-order="<%= order.id %>"
-                    data-name="<%= order.destination_order_name %>">
-                    Cannot supply
-                  </button>
-                <% } else if (order.source_fulfillment_status === "fulfilled") { %>
-                  <button
-                    class="btn btn--small unfulfil-order"
-                    type="button"
-                    data-order="<%= order.id %>">
-                    Undo
-                  </button>
-                <% } %>
               </td>
             </tr>
           <% }); %>
@@ -199,33 +173,6 @@
       function fail(message) {
         pageError.textContent = message;
         pageError.hidden = false;
-      }
-
-      async function act(button, url, body, busyLabel) {
-        pageError.hidden = true;
-
-        var label = button.textContent;
-        button.disabled = true;
-        button.textContent = busyLabel;
-
-        try {
-          var response = await window.appFetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body || {})
-          });
-
-          var data = await response.json().catch(function () { return {}; });
-
-          if (!response.ok) throw new Error(data.error || "Request failed");
-
-          return data;
-        } catch (err) {
-          button.disabled = false;
-          button.textContent = label;
-          fail(err.message);
-          return null;
-        }
       }
 
       /* ---------------- tabs ---------------- */
@@ -248,69 +195,6 @@
           });
         });
 
-      /* ---------------- fulfil ---------------- */
-
-      Array.prototype.slice.call(document.querySelectorAll(".fulfil-order"))
-        .forEach(function (button) {
-          button.addEventListener("click", async function () {
-            // No tracking from the list: this is the "shipped, nothing to
-            // track" case. The order's own page is where a number is typed.
-            var data = await act(
-              button,
-              "/orders/" + button.dataset.order + "/fulfil",
-              { tracking: [] },
-              "Saving…"
-            );
-
-            if (!data) return;
-
-            window.appToast("Marked fulfilled");
-            window.appNavigate("/orders?tab=done");
-          });
-        });
-
-      Array.prototype.slice.call(document.querySelectorAll(".unfulfil-order"))
-        .forEach(function (button) {
-          button.addEventListener("click", async function () {
-            var data = await act(
-              button,
-              "/orders/" + button.dataset.order + "/unfulfil",
-              {},
-              "Saving…"
-            );
-
-            if (!data) return;
-
-            window.appToast("Back on the To fulfil list");
-            window.appNavigate("/orders");
-          });
-        });
-
-      /* ---------------- cannot supply ---------------- */
-
-      Array.prototype.slice.call(document.querySelectorAll(".cancel-order"))
-        .forEach(function (button) {
-          button.addEventListener("click", async function () {
-            // This one spends someone else's money, so it says so plainly.
-            if (!window.confirm(
-              "Cannot supply " + button.dataset.name + "?\n\n" +
-              "The buyer's order will be CANCELLED and REFUNDED, and they will " +
-              "be emailed about it. This cannot be undone."
-            )) return;
-
-            var data = await act(
-              button,
-              "/orders/" + button.dataset.order + "/cancel",
-              {},
-              "Cancelling…"
-            );
-
-            if (!data) return;
-
-            window.appToast("The buyer's order is being cancelled");
-            window.appNavigate("/orders?tab=done");
-          });
-        });
     })();
   </script>
 

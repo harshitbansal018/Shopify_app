@@ -977,10 +977,10 @@ const CREATE_MEMBERSHIP_PAYMENTS = `
  */
 const PLANS = [
   { name: "Free",       price: 0,   popular: false, products: 10,   orders: 50,   emails: 100,  sources: 1,    extras: ["Community support"] },
-  { name: "Starter",    price: 10,  popular: false, products: 25,   orders: 200,  emails: 500,  sources: 2,    extras: ["Email support"] },
-  { name: "Basic",      price: 25,  popular: false, products: 100,  orders: 500,  emails: 1000, sources: 3,    extras: ["Email support"] },
-  { name: "Pro",        price: 50,  popular: true,  products: 500,  orders: 2000, emails: 5000, sources: null, extras: ["Priority support"] },
-  { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, extras: ["Dedicated support"] },
+  { name: "Starter",    price: 10,  popular: false, products: 100,   orders: 150,  emails: 200,  sources: 2,    extras: ["Email support"] },
+  { name: "Basic",      price: 25,  popular: false, products: 300,  orders: 500,  emails: 550, sources: 5,    extras: ["Email support"] },
+  { name: "Pro",        price: 50,  popular: true,  products: null,  orders: null, emails: null, sources: null, extras: ["Priority support"] },
+  // { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, extras: ["Dedicated support"] },
 ];
 
 /** The limit columns. NULL means unlimited; max_limit (products) already existed. */
@@ -1084,6 +1084,9 @@ async function runMigrations() {
   await addSourceOrderStatus();
   await dropOrderPushColumns();
   await dropSourceOrderSettings();
+  // After order_mappings and order_line_items: it points at both.
+  await query(CREATE_ORDER_SHIPMENTS);
+  await backfillShipments();
   await query(CREATE_PAYOUTS);
   await query(CREATE_FAQS);
   await seedFaqs();
@@ -1093,6 +1096,119 @@ async function runMigrations() {
   await addStoreEmail();
   await query(CREATE_NOTIFICATION_SETTINGS);
   await query(CREATE_EMAIL_OUTBOX);
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Shipments                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * One row per time the source marks goods as shipped on a sale.
+ *
+ * A sale can go out in pieces -- two of the three lines today, the rest next
+ * week -- and each piece becomes one fulfillment on the buyer's real Shopify
+ * order, with its own tracking. So each piece is its own row, with its own
+ * push state, and the sale's overall status (unfulfilled / partial /
+ * fulfilled on order_mappings) is WORKED OUT from these rows rather than
+ * stored beside them.
+ *
+ * `shipped_lines` is [{ line_id, quantity }] over order_line_items. Quantities are
+ * what THIS shipment carried, never the sale's total.
+ *
+ * push_* mirrors the cancel_* and fulfil_* queues on order_mappings: whether
+ * the buyer's store has been told, separately from whether the source said it
+ * shipped. 'cancelled' is a shipment undone by the source, kept as history
+ * rather than deleted.
+ *
+ * This replaces order_mappings.fulfil_status / fulfil_attempts / fulfil_error
+ * / destination_fulfillment_id / source_tracking, which described the ONE
+ * fulfilment a sale used to have. Those columns are left in place, no longer
+ * written, and can be dropped once nothing reads them.
+ */
+const CREATE_ORDER_SHIPMENTS = `
+  CREATE TABLE IF NOT EXISTS order_shipments (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    order_mapping_id INT NOT NULL,
+
+    -- shipped_lines, not lines: LINES is a reserved word in MariaDB.
+    shipped_lines JSON NOT NULL,
+    tracking      JSON DEFAULT NULL,
+
+    push_status   ENUM('pending','sent','failed','cancelled') NOT NULL DEFAULT 'pending',
+    push_attempts INT NOT NULL DEFAULT 0,
+    push_error    VARCHAR(512) DEFAULT NULL,
+    -- The fulfillment this became in the buyer's store: the only handle for
+    -- cancelling it if the source undoes the shipment.
+    destination_fulfillment_id BIGINT UNSIGNED DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at    DATETIME DEFAULT NULL,
+
+    KEY idx_shipment_mapping (order_mapping_id, push_status),
+    KEY idx_shipment_queue (push_status, push_attempts, id),
+
+    CONSTRAINT fk_shipment_mapping
+      FOREIGN KEY (order_mapping_id) REFERENCES order_mappings(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/**
+ * Sales marked fulfilled before shipments existed get one shipment each,
+ * covering every line, carrying over the tracking and whether the buyer's
+ * store had been told. Without this an old fulfilled sale would have no
+ * shipment rows, and so read as unfulfilled the moment status is derived.
+ */
+async function backfillShipments() {
+  const pool = require("./db").pool;
+
+  const [mappings] = await pool.query(
+    `SELECT om.id, om.destination_order_id, om.connection_id, om.source_tracking,
+            om.fulfil_status, om.destination_fulfillment_id, om.fulfil_error,
+            om.fulfil_attempts
+       FROM order_mappings om
+      WHERE om.source_fulfillment_status = 'fulfilled'
+        AND NOT EXISTS (SELECT 1 FROM order_shipments s WHERE s.order_mapping_id = om.id)`
+  );
+
+  for (const mapping of mappings) {
+    const [lines] = await pool.query(
+      `SELECT li.id AS line_id, li.quantity
+         FROM order_line_items li
+         JOIN mapping_variant_products mvp ON mvp.id = li.mapped_variant_id
+         JOIN product_mappings pm          ON pm.id  = mvp.product_mapping_id
+        WHERE li.order_id = ? AND pm.connection_id = ?`,
+      [mapping.destination_order_id, mapping.connection_id]
+    );
+
+    const pushStatus =
+      mapping.fulfil_status === "fulfilled"
+        ? "sent"
+        : mapping.fulfil_status === "failed"
+          ? "failed"
+          : "pending";
+
+    await pool.query(
+      `INSERT INTO order_shipments
+         (order_mapping_id, shipped_lines, tracking, push_status, push_attempts, push_error,
+          destination_fulfillment_id, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        mapping.id,
+        JSON.stringify(lines.map((l) => ({ line_id: l.line_id, quantity: l.quantity }))),
+        mapping.source_tracking || null,
+        pushStatus,
+        Number(mapping.fulfil_attempts) || 0,
+        mapping.fulfil_error || null,
+        mapping.destination_fulfillment_id || null,
+        pushStatus === "sent" ? new Date() : null,
+      ]
+    );
+  }
+
+  if (mappings.length) {
+    console.log(`Migration applied: ${mappings.length} fulfilled sale(s) given a shipment`);
+  }
 }
 
 /* ------------------------------------------------------------------ */

@@ -5,4 +5,8 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon.png">
 <meta name="shopify-api-key" content="<%= apiKey %>">
 <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+<%# Polaris web components. app-bridge.js only defines the admin nav and
+    links; the dialogs (<s-modal>, <s-button>) every popup in the app is
+    built from come from this script. %>
+<script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script>
 <script src="/javascript/shopifyClient.js"></script>

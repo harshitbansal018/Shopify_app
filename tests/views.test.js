@@ -320,8 +320,9 @@ const STORE_ROW = {
       "an irreversible choice was presented as ordinary"
     );
     check(
-      "asks for confirmation before saving",
-      pickHtml.includes("window.confirm"),
+      "asks for confirmation before saving, in the admin's own dialog",
+      pickHtml.includes("await window.appConfirm(") &&
+        !pickHtml.includes("window.confirm("),
       "one stray click would decide it permanently"
     );
 
@@ -481,18 +482,24 @@ const STORE_ROW = {
       destinationHtml.includes('id="add-store-button"')
     );
     check(
-      "the code form lives in a dialog, not on the page",
-      /<dialog[\s\S]*id="connect-code"[\s\S]*<\/dialog>/.test(destinationHtml),
+      "the code form lives in the admin's own dialog, not on the page",
+      /<s-modal[\s\S]*id="connect-code"[\s\S]*<\/s-modal>/.test(destinationHtml),
       "the form would sit open on every visit"
     );
     check(
       "which starts closed",
-      !/<dialog[^>]*\sopen[\s>]/.test(destinationHtml),
+      !/<s-modal[^>]*\sopen[\s>]/.test(destinationHtml),
       "an open dialog would cover the screen on load"
     );
     check(
       "and the button that submits it says what it does",
-      /id="connect-button"[\s\S]{0,40}Add store/.test(destinationHtml)
+      /<s-button slot="primary-action"[^>]*id="connect-button"[^>]*>Add store/.test(destinationHtml)
+    );
+    check(
+      "the dialog opens and closes through the shared helpers",
+      destinationHtml.includes("window.appOpen(modal)") &&
+        destinationHtml.includes("window.appClose(modal)"),
+      "the helpers are what fall back sensibly outside the admin"
     );
     check(
       "a source is offered no such button",
@@ -509,11 +516,13 @@ const STORE_ROW = {
       destinationHtml.includes("12 in your store"),
       "the number must not be a surprise sprung inside the dialog");
 
-    check("the confirmation is a dialog, not a bare confirm()",
-      /<dialog[^>]*id="delete-store-modal"/.test(destinationHtml),
+    check("the confirmation is the admin's own dialog, not a bare confirm()",
+      /<s-modal[^>]*id="delete-store-modal"/.test(destinationHtml),
       "window.confirm cannot show what is about to be deleted");
     check("which starts closed",
-      !/<dialog[^>]*id="delete-store-modal"[^>]*\sopen[\s>]/.test(destinationHtml));
+      !/<s-modal[^>]*id="delete-store-modal"[^>]*\sopen[\s>]/.test(destinationHtml));
+    check("its heading names the store when it opens",
+      destinationHtml.includes('deleteModal.setAttribute("heading", "Delete " + pending.store + "?")'));
 
     // Everything the dialog fills in comes off the button, so the dialog is
     // written once rather than once per row.
@@ -542,8 +551,7 @@ const STORE_ROW = {
       "an outstanding balance must not be a bullet nobody reads");
 
     check("the destructive button is styled as destructive",
-      /id="delete-store-confirm"[^>]*>/.test(destinationHtml) &&
-        /class="btn btn--danger"[^>]*id="delete-store-confirm"/.test(destinationHtml));
+      /<s-button slot="primary-action"[^>]*tone="critical"[^>]*id="delete-store-confirm"/.test(destinationHtml));
     check("and focus lands on Cancel, not on it",
       destinationHtml.includes("deleteCancel.focus()"),
       "a stray Enter must not delete a catalogue");
@@ -729,6 +737,12 @@ const STORE_ROW = {
       (await sourceList("shared", [SHARED_ROW]))
         .includes('appNavigate("/products?filter=shared")'),
       "landing back in the full catalogue loses their place");
+
+    // A freshly added product is unshared, and the next thing to do with it
+    // -- tick it and Allow -- happens on that filter.
+    check("adding products lands on Unshared",
+      /Added " \+ data\.imported[\s\S]{0,400}appNavigate\("\/products\?filter=unshared"\)/.test(all),
+      "the merchant would otherwise hunt for what they just added");
 
     // An empty FILTER is not an empty catalogue, and the copy has to say which.
     const emptyShared = await sourceList("shared", []);
@@ -925,6 +939,7 @@ const STORE_ROW = {
         counts: { synced: 1, unsynced: 1 },
         pager: pagerFor(products.length, { params: { tab } }),
         search: "",
+        storeFilter: null,
         products,
         connections: [CONN],
       });
@@ -1056,6 +1071,7 @@ const STORE_ROW = {
       counts: { synced: 0, unsynced: 0 },
       pager: pagerFor(0, { params: { tab: "unsynced" } }),
       search: "",
+      storeFilter: null,
       products: [],
       connections: [CONN],
     });
@@ -1477,8 +1493,9 @@ const STORE_ROW = {
       open.includes("24.00"),
       "the source price is the whole point of the arrangement");
 
-    check("an outstanding sale says it is with the supplier",
-      open.includes("awaiting supplier"));
+    check("an outstanding sale reads unfulfilled",
+      /pill--pending">unfulfilled</.test(open),
+      "the same word on both ends, so the two merchants are talking about the same state");
     check("every row opens", /class="[^"]*view-order"[^>]*data-order="11"/.test(open));
     check("and the destination has nothing to do here",
       !/class="[^"]*btn--primary"/.test(open),
@@ -1492,11 +1509,10 @@ const STORE_ROW = {
     check("and the source gets the address it has to ship to",
       asSource.includes("Steve Shopper") && asSource.includes("Mohali"),
       "without it the row is a number and no job");
-    check("the source can act on it",
-      /class="[^"]*fulfil-order"[^>]*data-order="11"/.test(asSource) &&
-        /class="[^"]*cancel-order"[^>]*data-order="11"/.test(asSource),
-      "this screen IS the fulfilment surface; nothing reaches its Shopify admin");
-
+    check("the source list only offers View",
+      /class="btn btn--small view-order"[^>]*data-order="11"/.test(asSource) &&
+        !/fulfil-order|cancel-order|unfulfil-order/.test(asSource),
+      "shipping happens on the order's own page, where the lines are in front of them");
     /* ---- the return leg: what the source did with it ---- */
     const SHIPPED = {
       ...ROW,
@@ -1516,44 +1532,23 @@ const STORE_ROW = {
     check("the destination sees the source's fulfilment",
       shipped.includes("fulfilled"),
       "the source is the store that actually ships");
-    check("and the tracking number",
-      shipped.includes("DHL") && shipped.includes("TRACK-1"));
-    check("with nothing said once its own order is updated",
-      !shipped.includes("updating your Shopify order"),
-      "a permanent 'updating...' would read as stuck");
+    check("its tracking and push state live on the detail page now",
+      !shipped.includes("TRACK-1") && !shipped.includes("updating your Shopify order"),
+      "a sale can ship in several parcels; one row cannot hold them all");
 
-    /* ---- the buyer's real order follows, and says so while it lags ---- */
-    const landing = { ...SHIPPED, fulfil_status: "pending" };
+    /* ---- a partly shipped sale ---- */
+    const PARTIAL = { ...SHIPPED, source_fulfillment_status: "partial" };
 
-    check("a destination waiting on its own order is told",
-      (await orders("destination", "done", [landing]))
-        .includes("updating your Shopify order"),
-      "otherwise the row claims shipped while Shopify still says unfulfilled");
-    check("and the source is told the buyer has not heard yet",
-      (await orders("source", "done", [landing])).includes("telling the buyer"));
+    check("a partly shipped sale says so to the destination",
+      (await orders("destination", "open", [PARTIAL])).includes("partially fulfilled"));
+    check("and to the source, as still to do",
+      (await orders("source", "open", [PARTIAL])).includes("more to send"));
 
-    const stuck = {
-      ...SHIPPED,
-      fulfil_status: "failed",
-      fulfil_error: "Order already fulfilled",
-    };
-
-    check("a failure to update the buyer's order is visible to both",
-      (await orders("destination", "done", [stuck]))
-        .includes("could not be updated") &&
-        (await orders("source", "done", [stuck]))
-          .includes("Order already fulfilled"),
-      "the shopper is not being told, and somebody has to know");
-
-    // The boundary matters: "unfulfil-order" contains "fulfil-order", so a
-    // loose match would find the undo button and call it a fulfil button.
-    const fulfilButton = /class="[^"]*[\s"]fulfil-order"/;
     const shippedAtSource = await orders("source", "done", [SHIPPED]);
 
-    check("a fulfilled sale offers an undo, not another fulfil",
-      /class="[^"]*unfulfil-order"/.test(shippedAtSource) &&
-        !fulfilButton.test(shippedAtSource));
-
+    check("a fulfilled sale still only offers View from the list",
+      /class="btn btn--small view-order"/.test(shippedAtSource) &&
+        !/unfulfil-order|fulfil-order/.test(shippedAtSource));
     const CANCELLED = {
       ...SHIPPED,
       source_fulfillment_status: "cancelled",
@@ -1575,9 +1570,9 @@ const STORE_ROW = {
     check("the source screen warns it reached the buyer",
       cancelledAtSource.includes("the buyer was refunded"),
       "not obvious from the source's side of the connection");
-    check("and a cancelled sale offers no further action",
-      !/class="[^"]*fulfil-order"/.test(cancelledAtSource) &&
-        !/class="[^"]*cancel-order"/.test(cancelledAtSource),
+    check("and a cancelled sale offers only View",
+      /class="btn btn--small view-order"/.test(cancelledAtSource) &&
+        !/fulfil-order|cancel-order/.test(cancelledAtSource),
       "the buyer has already been refunded; there is nothing left to decide");
 
     // Detail: the tracking link and the refund line.
@@ -1590,13 +1585,32 @@ const STORE_ROW = {
           line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
           title: "Blue Shirt", source_product_title: "Blue Shirt",
           source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
+          shipped: 2, remaining: 0,
         },
+      ],
+      // Each shipment is its own fulfillment on the buyer's order, with its
+      // own tracking and its own push state.
+      shipments: [
+        { id: 1, push_status: "sent", push_error: null, destination_fulfillment_id: "970055",
+          lines: [{ line_id: 1, quantity: 1 }],
+          tracking: [{ number: "TRACK-1", company: "DHL", url: "https://dhl.test/1" }] },
+        { id: 2, push_status: "failed", push_error: "Order already fulfilled", destination_fulfillment_id: null,
+          lines: [{ line_id: 1, quantity: 1 }], tracking: [] },
+        { id: 3, push_status: "cancelled", push_error: null, destination_fulfillment_id: null,
+          lines: [{ line_id: 1, quantity: 2 }], tracking: [{ number: "OLD-1", company: "UPS" }] },
       ],
     });
 
-    check("the detail links the tracking",
-      shippedDetail.includes("https://dhl.test/1") &&
-        shippedDetail.includes("TRACK-1"));
+    check("the detail lists each shipment with its tracking",
+      shippedDetail.includes("Shipment 1") && shippedDetail.includes("TRACK-1") &&
+        shippedDetail.includes("Shipment 2"));
+    check("a shipment the buyer's order could not be updated for says so",
+      shippedDetail.includes("Order already fulfilled") &&
+        shippedDetail.includes("could not be updated"),
+      "the shopper is not being told, and somebody has to know");
+    check("a withdrawn shipment is not shown to the destination",
+      !shippedDetail.includes("OLD-1"),
+      "it never happened, as far as the buyer is concerned");
     check("and dates the mirrored status",
       shippedDetail.includes("2026-09-04 09:00") && shippedDetail.includes("UTC"),
       "a stale mirror must look stale, not like the source has done nothing");
@@ -1624,8 +1638,10 @@ const STORE_ROW = {
           source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
           source_shopify_product_id: "900",
           destination_shopify_product_id: "700",
+          shipped: 0, remaining: 2,
         },
       ],
+      shipments: [],
     });
 
     check("the detail lists the line", detail.includes("Blue Shirt"));
@@ -1639,13 +1655,86 @@ const STORE_ROW = {
     check("it says where the margin is set",
       detail.includes("/settings"));
 
+    const LINE = {
+      line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
+      title: "Blue Shirt", source_product_title: "Blue Shirt",
+      source_variant_title: "S", source_sku: "SH-S", destination_sku: "SH-S",
+      source_shopify_product_id: "900", shipped: 0, remaining: 2,
+    };
+
+    const sourceDetail = (order, lines, shipments = []) =>
+      render("source/orderDetail", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "source" },
+        order,
+        lines,
+        shipments,
+      });
+
+    const toShip = await sourceDetail(ROW, [LINE]);
+
+    check("an open sale offers Fulfilled and Partially fulfilled",
+      /id="fulfil"/.test(toShip) && /id="fulfil-partial"/.test(toShip));
+    check("and Cancel, but not Unfulfilled -- nothing has shipped",
+      /id="cannot-supply"/.test(toShip) && !/id="unfulfil"/.test(toShip));
+    check("each line has a Ship now quantity, defaulting to what is left",
+      /class="[^"]*ship-qty"[^>]*max="2"[^>]*value="2"/.test(toShip),
+      "the plain case -- send everything -- must need no typing");
+    check("and shows what has shipped so far", toShip.includes("0 / 2"));
+
+    const halfway = await sourceDetail(
+      { ...ROW, source_fulfillment_status: "partial" },
+      [{ ...LINE, shipped: 1, remaining: 1 }],
+      [{ id: 1, push_status: "sent", push_error: null, destination_fulfillment_id: "970055",
+         lines: [{ line_id: 1, quantity: 1 }], tracking: [{ number: "PART-1", company: "DHL" }] }]
+    );
+
+    check("a partly shipped sale offers all four moves",
+      /id="fulfil"/.test(halfway) && /id="fulfil-partial"/.test(halfway) &&
+        /id="unfulfil"/.test(halfway) && /id="cannot-supply"/.test(halfway));
+    check("it says how much is still to send", halfway.includes("1 unit is still to"));
+    check("the line shows its progress", halfway.includes("1 / 2") &&
+      /class="[^"]*ship-qty"[^>]*max="1"/.test(halfway));
+    check("and lists the shipment so far",
+      halfway.includes("PART-1") && halfway.includes("Shipments"));
+
+    const doneDetail = await sourceDetail(
+      { ...ROW, source_fulfillment_status: "fulfilled" },
+      [{ ...LINE, shipped: 2, remaining: 0 }],
+      [{ id: 1, push_status: "pending", push_error: null, destination_fulfillment_id: null,
+         lines: [{ line_id: 1, quantity: 2 }], tracking: [] }]
+    );
+
+    check("a fulfilled sale offers Unfulfilled and Cancel only",
+      /id="unfulfil"/.test(doneDetail) && /id="cannot-supply"/.test(doneDetail) &&
+        !/id="fulfil"/.test(doneDetail) && !/id="fulfil-partial"/.test(doneDetail),
+      "there is nothing left to ship");
+    // The INPUT, not the word: the page script names the class too.
+    check("and no Ship now column", !/<input[^>]*ship-qty/.test(doneDetail));
+    check("the source is told the buyer has not heard yet",
+      doneDetail.includes("telling them"));
+
+    const cancelledDetail = await sourceDetail(
+      { ...ROW, source_fulfillment_status: "cancelled", source_cancelled_at: "2026-09-04T09:00:00Z", cancel_status: "cancelled" },
+      [LINE]
+    );
+    check("a cancelled sale offers nothing",
+      !/id="(fulfil|fulfil-partial|unfulfil|cannot-supply)"/.test(cancelledDetail),
+      "the buyer has already been refunded");
+
+    check("Partially fulfilled refuses a column that covers everything",
+      toShip.includes("Use Fulfilled") && toShip.includes("sending >= left"),
+      "that is not a partial shipment, and the other button already does it");
+    check("Fulfilled sends no lines, so the server ships the remainder as it counts it",
+      /post\(fulfil, "fulfil", \{ tracking: tracking\(\) \}/.test(toShip));
+
     const emptyDetail = await render("source/orderDetail", {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
       order: ROW,
       lines: [],
+      shipments: [],
     });
-
     check("a detail with no lines left explains why",
       emptyDetail.includes("nothing left to charge for"));
     check("and keeps its columns",
@@ -2096,6 +2185,8 @@ const STORE_ROW = {
     await expectRenders("head renders", "partials/head", BASE, [
       "shopify-api-key",
       "app-bridge.js",
+      // The dialogs come from here, not from app-bridge.js.
+      "https://cdn.shopify.com/shopifycloud/polaris.js",
       "/images/favicon-32.png",
       "/images/apple-touch-icon.png",
     ]);
@@ -2179,12 +2270,64 @@ const STORE_ROW = {
       counts: { synced: 4, unsynced: 0 },
       pager: pagerFor(0, { params: { tab: "synced", q: "widget" } }),
       search: "widget",
+      storeFilter: null,
       products: [],
       connections: [],
     });
 
     check("the destination screen searches inside its tab",
       destinationScreen.includes('name="tab" value="synced"'));
+
+    /* ---- the store filter ---- */
+    const TWO = [
+      { id: 7, status: "active",
+        source: { id: 1, shop_domain: "src.myshopify.com", store_name: "Warehouse" } },
+      { id: 8, status: "paused",
+        source: { id: 3, shop_domain: "second.myshopify.com", store_name: null } },
+    ];
+
+    const byStore = (storeFilter, extra = {}) =>
+      render("destination/products", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: "destination" },
+        tab: "synced",
+        counts: { synced: 3, unsynced: 0 },
+        pager: pagerFor(0, { params: { tab: "synced", store: storeFilter || "" } }),
+        search: "",
+        storeFilter,
+        products: [],
+        connections: TWO,
+        ...extra,
+      });
+
+    const filtered = await byStore(8);
+
+    check("with two suppliers there is a store filter",
+      filtered.includes('id="store-filter"'));
+    check("offering all of them, and All",
+      filtered.includes('value="7"') && filtered.includes('value="8"') &&
+        filtered.includes("All stores"));
+    check("the chosen store is selected",
+      /value="8"\s+selected/.test(filtered) && !/value="7"\s+selected/.test(filtered));
+    check("a store with no name shows its domain, and its status",
+      filtered.includes("second.myshopify.com (paused)"));
+    check("the search carries the store filter",
+      filtered.includes('name="store" value="8"'),
+      "searching would otherwise silently widen the list to every supplier");
+    check("and so does every navigation on the screen",
+      filtered.includes('params.set("store", currentStore)'));
+    // Clear only appears while a search is running.
+    check("Clear keeps the store filter and drops only the search",
+      (await byStore(8, { search: "hat" }))
+        .includes('data-navigate="/products?tab=synced&amp;store=8"'),
+      "the & is HTML-escaped in an attribute; the browser hands back a plain &");
+    check("an empty filter says so, not 'nothing synced'",
+      filtered.includes("Nothing on this tab from that store"),
+      "an empty tab and an empty filter are different problems");
+
+    check("with one supplier there is no filter to offer",
+      !destinationScreen.includes('id="store-filter"'),
+      "a dropdown with one store in it is a label pretending to be a control");
     check("and can search by the store that sent it",
       destinationScreen.includes("source store"),
       "over there a merchant thinks in suppliers, not product names");
@@ -2312,9 +2455,13 @@ const STORE_ROW = {
     check("card lines are the ones the controller wrote",
       plans.includes("Up to 500 synced products"));
 
-    check("the downgrade chooser is there, and starts closed",
-      /<dialog[^>]*id="downgrade-modal"/.test(plans) &&
-        !/<dialog[^>]*id="downgrade-modal"[^>]*\sopen/.test(plans));
+    check("the downgrade chooser is the admin's own dialog, and starts closed",
+      /<s-modal[^>]*id="downgrade-modal"/.test(plans) &&
+        !/<s-modal[^>]*id="downgrade-modal"[^>]*\sopen/.test(plans));
+    check("wide enough for a list to read through",
+      /<s-modal[^>]*id="downgrade-modal"[^>]*size="large"/.test(plans));
+    check("a downgrade asks first, in the admin's dialog",
+      plans.includes("await window.appConfirm(") && !plans.includes("window.confirm("));
     check("it promises nothing is deleted", plans.includes("Nothing is deleted"));
     check("and that counts restart on the new plan", plans.includes("start again from zero"));
     check("its lists are built as text, not HTML",
@@ -2322,7 +2469,7 @@ const STORE_ROW = {
       "product titles are text a supplier typed");
     check("Continue waits until enough is chosen",
       plans.includes("continueButton.disabled =") &&
-        /id="dg-continue" disabled/.test(plans));
+        /<s-button slot="primary-action"[^>]*id="dg-continue" disabled/.test(plans));
     check("focus starts on Cancel", plans.includes("cancelButton.focus()"),
       "a stray Enter must not unsync a catalogue");
 
@@ -2360,6 +2507,89 @@ const STORE_ROW = {
       "a downgrade pauses it; this is the way back");
     check("through its own route",
       pausedStores.includes('"/stores/" + button.dataset.connection + "/resume"'));
+  }
+
+  /* ---------------- popups are the admin's own ----------------
+   *
+   * Every warning and confirmation goes through App Bridge's <s-modal>, so
+   * it looks like the rest of the Shopify admin. A browser's bare confirm()
+   * or alert() inside the admin iframe looks foreign at best and, in some
+   * browsers, never shows at all. */
+  {
+    const fs = require("fs");
+
+    function walk(dir) {
+      return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) return walk(full);
+        return full.endsWith(".ejs") ? [full] : [];
+      });
+    }
+
+    const offenders = walk(VIEWS).filter((file) => {
+      const source = fs.readFileSync(file, "utf8");
+      return /window\.(confirm|alert|prompt)\(/.test(source) || /<dialog[\s>]/.test(source);
+    });
+
+    check("no view uses a bare browser popup or a native <dialog>",
+      offenders.length === 0,
+      offenders.map((file) => path.relative(VIEWS, file)).join(", "));
+
+    const client = fs.readFileSync(
+      path.join(SERVER, "public/javascript/shopifyClient.js"), "utf8");
+
+    check("the client script offers appConfirm, appOpen and appClose",
+      client.includes("window.appConfirm = appConfirm") &&
+        client.includes("window.appOpen = appOpen") &&
+        client.includes("window.appClose = appClose"));
+    check("appConfirm builds the admin's modal",
+      client.includes('document.createElement("s-modal")') &&
+        client.includes('setAttribute("slot", "primary-action")') &&
+        client.includes('setAttribute("slot", "secondary-actions")'));
+    check("a destructive confirmation is red",
+      client.includes('ok.setAttribute("tone", "critical")'));
+    check("closing it any other way is a no",
+      client.includes('modal.addEventListener("afterhide"') &&
+        client.includes("finish(false)"));
+    check("and it puts the modal in the page, then waits for App Bridge to upgrade it",
+      client.includes("whenDefined(tag)") &&
+        /document\.body\.appendChild\(modal\);[\s\S]{0,200}upgraded\(modal\)/.test(client),
+      "App Bridge only loads a component once its tag is in the page");
+    check("outside the admin it still asks",
+      /if \(!admin \|\| [\s\S]{0,300}window\.confirm\(/.test(client));
+
+    /* ---- and every request spins its button ---- */
+
+    check("appFetch takes the button to spin and puts it back afterwards",
+      client.includes("window.appBusy = appBusy") &&
+        /controls\.forEach\(\(control\) => appBusy\(control, true\)\)/.test(client) &&
+        /finally \{[\s\S]{0,120}appBusy\(control, false\)/.test(client));
+    check("a button disabled for its own reasons stays disabled",
+      client.includes("busyWasDisabled"));
+    check("the admin's own button uses its built-in spinner",
+      client.includes("control.loading = true"));
+    check("the top bar runs for every request, and a request finishing does not stop a page load",
+      client.includes("requestsInFlight++") &&
+        client.includes("navigating || requestsInFlight > 0"));
+
+    // Every screen that makes a request names the button that started it,
+    // apart from the store delete, which spins for the whole run of rounds.
+    const quiet = walk(VIEWS).filter((file) => {
+      const source = fs.readFileSync(file, "utf8");
+      if (!source.includes("appFetch(")) return false;
+      if (file.endsWith("stores.ejs") && source.includes("appBusy(deleteConfirm, true)")) {
+        return false;
+      }
+      return source.split("appFetch(").slice(1).some((call) => !/busy:/.test(call.slice(0, 400)));
+    });
+    check("every request in every screen spins the button that started it",
+      quiet.length === 0,
+      quiet.map((file) => path.relative(VIEWS, file)).join(", "));
+
+    const css = fs.readFileSync(path.join(SERVER, "public/css/app.css"), "utf8");
+    check("the spinner is drawn in CSS, keeping the button's width",
+      /\.is-loading \{[\s\S]{0,200}color: transparent/.test(css) &&
+        /\.is-loading::after \{[\s\S]{0,400}animation: spin/.test(css));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

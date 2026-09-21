@@ -116,7 +116,10 @@
         codeButton.disabled = true;
 
         try {
-          var response = await window.appFetch("/stores/code", { method: "POST" });
+          var response = await window.appFetch("/stores/code", {
+            method: "POST",
+            busy: codeButton
+          });
           var data = await response.json().catch(function () { return {}; });
 
           if (!response.ok) {

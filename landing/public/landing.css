@@ -807,15 +807,90 @@ img { max-width: 100%; height: auto; }
 
 .foot__col ul { margin: 0; padding: 0; list-style: none; display: grid; gap: .5rem; }
 
+/* Only this line is centred; the columns above stay left, as columns read. */
 .foot__legal {
   padding-top: 1.5rem;
   border-top: 1px solid rgba(255, 255, 255, .1);
   color: #7f8d97;
   font-size: .84rem;
+  text-align: center;
 }
 
 .foot__small { margin-top: .35rem; font-size: .78rem; color: #6b7982; }
 
 @media (max-width: 720px) {
   .foot__inner { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
+}
+
+/* ---------------- privacy policy ---------------- */
+
+/* Prose, read top to bottom or scanned for one answer. Wider line spacing
+   and a clear gap between sections, so the eye can find a heading. */
+.policy__head { margin-bottom: 2rem; }
+
+.policy__title {
+  margin-top: 0.75rem;
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 750;
+}
+
+.policy__updated {
+  margin-top: 0.5rem;
+  color: var(--ink-faint);
+  font-size: 0.9rem;
+}
+
+.policy__toc {
+  margin-bottom: 2.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-tint);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.policy__toc ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  columns: 3;
+  column-gap: 2rem;
+  font-size: 0.92rem;
+  line-height: 1.9;
+}
+
+.policy__toc a { text-decoration: none; }
+
+.policy__toc a:hover { text-decoration: underline; }
+
+.policy__section + .policy__section {
+  margin-top: 2.25rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--line);
+}
+
+.policy__section h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.3rem;
+}
+
+.policy__section p,
+.policy__section li {
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.policy__section p + p { margin-top: 0.85rem; }
+
+.policy__section ul {
+  margin: 0.85rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.policy__section li + li { margin-top: 0.6rem; }
+
+@media (max-width: 900px) {
+  .policy__toc ol { columns: 2; }
+}
+
+@media (max-width: 600px) {
+  .policy__toc ol { columns: 1; }
 }

@@ -107,10 +107,11 @@
           return showError("Pick Source or Destination to continue.");
         }
 
-        if (!window.confirm(
+        if (!(await window.appConfirm(
           "Set this store up as \"" + picked.value + "\"?\n\n" +
-          "This cannot be changed later."
-        )) return;
+          "This cannot be changed later.",
+          { confirmLabel: "Set up as " + picked.value }
+        ))) return;
 
         button.disabled = true;
 
@@ -119,7 +120,8 @@
           var response = await window.appFetch("/store-type", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ store_type: picked.value })
+            body: JSON.stringify({ store_type: picked.value }),
+            busy: button
           });
 
           var data = await response.json().catch(function () { return {}; });

@@ -11,6 +11,18 @@
 
   <%- include("../partials/nav") %>
 
+  <%
+    var status = order.source_fulfillment_status;
+    var buyer = order.destination_store_name || order.destination_shop_domain;
+    var open = status === "unfulfilled" || status === "partial";
+    var remaining = lines.reduce(function (sum, line) { return sum + line.remaining; }, 0);
+    var pillClass = status === "fulfilled" ? "synced"
+      : status === "cancelled" ? "failed"
+      : status === "partial" ? "paused" : "pending";
+    var pillText = status === "unfulfilled" ? "unfulfilled"
+      : status === "partial" ? "partially fulfilled" : status;
+  %>
+
   <main class="shell">
 
     <header class="shell__header">
@@ -22,18 +34,12 @@
              target="_blank" rel="noopener noreferrer"><%= order.destination_order_name || ("#" + order.destination_shopify_order_id) %></a>
         </h1>
         <p class="shell__sub">
-          Sold by
-          <strong><%= order.destination_store_name || order.destination_shop_domain %></strong>,
+          Sold by <strong><%= buyer %></strong>,
           supplied by
           <strong><%= order.source_store_name || order.source_shop_domain %></strong>
         </p>
       </div>
-      <span class="pill pill--<%=
-        order.source_fulfillment_status === "fulfilled" ? "synced"
-        : order.source_fulfillment_status === "cancelled" ? "failed" : "pending" %>">
-        <%= order.source_fulfillment_status === "unfulfilled"
-            ? "to fulfil" : order.source_fulfillment_status %>
-      </span>
+      <span class="pill pill--<%= pillClass %>"><%= pillText %></span>
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
@@ -47,6 +53,10 @@
             business. Only this store's own money is shown. %>
         You are owed your own price for each line, whatever the destination
         store sold it for.
+        <% if (open) { %>
+          Enter how many of each you are sending now, or leave the numbers as
+          they are to send everything that is left.
+        <% } %>
       </p>
 
       <%# The table keeps its columns when it is empty and says so in a row of
@@ -57,6 +67,8 @@
             <th>Product</th>
             <th>SKU</th>
             <th>Qty</th>
+            <th>Shipped</th>
+            <% if (open) { %><th>Ship now</th><% } %>
             <th>Your price</th>
             <th>Your total</th>
           </tr>
@@ -65,7 +77,7 @@
           <% var sourceTotal = 0; %>
           <% if (!lines.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="5">
+              <td class="table__empty" colspan="<%= open ? 7 : 6 %>">
                 <strong>No records found</strong>
                 <span>
                   None of the products on this order are synced from this store any
@@ -79,7 +91,7 @@
               var lineSource = (line.source_price || 0) * line.quantity;
               sourceTotal += lineSource;
             %>
-            <tr>
+            <tr class="<%= line.remaining === 0 && open ? "row--placeholder" : "" %>">
               <td>
                 <span class="media__body">
                   <% if (line.source_shopify_product_id) { %>
@@ -97,6 +109,31 @@
               <td class="muted"><%= line.source_sku || line.destination_sku || "—" %></td>
               <td><%= line.quantity %></td>
               <td>
+                <%# Shipped so far, against the sale's quantity. Green once the
+                    line is done, so a half-shipped sale reads at a glance. %>
+                <span class="<%= line.shipped >= line.quantity ? "ship-done" : line.shipped ? "ship-part" : "muted" %>">
+                  <%= line.shipped %> / <%= line.quantity %>
+                </span>
+              </td>
+              <% if (open) { %>
+                <td>
+                  <% if (line.remaining > 0) { %>
+                    <input
+                      class="field__input field__input--qty ship-qty"
+                      type="number"
+                      min="0"
+                      max="<%= line.remaining %>"
+                      step="1"
+                      value="<%= line.remaining %>"
+                      data-line="<%= line.line_id %>"
+                      data-remaining="<%= line.remaining %>"
+                      aria-label="Quantity of <%= line.source_product_title || line.title %> to ship now">
+                  <% } else { %>
+                    <span class="muted">done</span>
+                  <% } %>
+                </td>
+              <% } %>
+              <td>
                 <%= order.currency %>
                 <%= line.source_price === null ? "—" : line.source_price.toFixed(2) %>
               </td>
@@ -109,7 +146,7 @@
         <% if (lines.length) { %>
         <tfoot>
           <tr>
-            <td colspan="3"></td>
+            <td colspan="<%= open ? 5 : 4 %>"></td>
             <td class="muted">Total</td>
             <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
           </tr>
@@ -146,9 +183,7 @@
               <% if (a.phone) { %><div class="muted"><%= a.phone %></div><% } %>
             <% } else { %>
               <span class="muted">
-                No address on this sale. Ask
-                <%= order.destination_store_name || order.destination_shop_domain %>
-                before shipping.
+                No address on this sale. Ask <%= buyer %> before shipping.
               </span>
             <% } %>
           </dd>
@@ -159,27 +194,10 @@
             <% if (order.source_cancelled_at) { %>
               cannot supply<%= order.source_cancel_reason ? ` (${order.source_cancel_reason})` : "" %>
             <% } else { %>
-              <%= order.source_fulfillment_status %>
+              <%= pillText %>
             <% } %>
           </dd>
         </div>
-
-        <% if (order.source_tracking.length) { %>
-          <div class="facts__row">
-            <dt>Tracking</dt>
-            <dd>
-              <% order.source_tracking.forEach(function (parcel) { %>
-                <div>
-                  <%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong>
-                </div>
-              <% }); %>
-              <%# Says out loud that this reaches another merchant's screen. %>
-              <span class="muted">
-                shown to <%= order.destination_store_name || order.destination_shop_domain %>
-              </span>
-            </dd>
-          </div>
-        <% } %>
 
         <% if (order.source_cancelled_at) { %>
           <div class="facts__row">
@@ -200,50 +218,89 @@
       </dl>
     </section>
 
-    <%# Only while there is something to do. Buttons over a settled order are
-        just dead controls. %>
-    <% if (order.source_fulfillment_status !== "cancelled") { %>
+    <%# Every shipment so far, oldest first -- including ones since undone,
+        which stay as history. Each one is a separate fulfillment on the
+        buyer's real order, so each says on its own whether the buyer has
+        been told. %>
+    <% var standing = shipments.filter(function (s) { return s.push_status !== "cancelled"; }); %>
+    <% if (shipments.length) { %>
+      <section class="panel">
+        <h2 class="panel__title">Shipments</h2>
+
+        <table class="table shipments">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Items</th>
+              <th>Tracking</th>
+              <th>Buyer's order</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% shipments.forEach(function (shipment, index) { %>
+              <% var units = shipment.lines.reduce(function (sum, l) { return sum + Number(l.quantity); }, 0); %>
+              <tr class="<%= shipment.push_status === "cancelled" ? "row--placeholder" : "" %>">
+                <td><%= index + 1 %></td>
+                <td>
+                  <%= units %> unit<%= units === 1 ? "" : "s" %>
+                  <% if (shipment.push_status === "cancelled") { %>
+                    <span class="muted">&mdash; undone</span>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (shipment.tracking.length) { %>
+                    <% shipment.tracking.forEach(function (parcel) { %>
+                      <div><%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong></div>
+                    <% }); %>
+                  <% } else { %>
+                    <span class="muted">none</span>
+                  <% } %>
+                </td>
+                <td>
+                  <%# Whether the BUYER has been told, which is a different
+                      thing from whether this store says it shipped. %>
+                  <% if (shipment.push_status === "sent") { %>
+                    <span class="pill pill--synced">told</span>
+                  <% } else if (shipment.push_status === "failed") { %>
+                    <span class="pill pill--failed">not yet</span>
+                    <span class="muted"><%= shipment.push_error %> &mdash; retrying</span>
+                  <% } else if (shipment.push_status === "cancelled") { %>
+                    <span class="muted">withdrawn</span>
+                  <% } else { %>
+                    <span class="pill pill--pending">telling them&hellip;</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </section>
+    <% } %>
+
+    <%# The actions. Only while there is something to do: buttons over a
+        cancelled sale are dead controls. %>
+    <% if (status !== "cancelled") { %>
       <section class="panel">
         <h2 class="panel__title">
-          <%= order.source_fulfillment_status === "fulfilled"
-              ? "Shipped" : "When you have shipped it" %>
+          <%= status === "fulfilled" ? "Shipped" : "Shipping" %>
         </h2>
 
-        <% if (order.source_fulfillment_status === "fulfilled") { %>
-
+        <% if (status === "fulfilled") { %>
           <p class="panel__copy">
-            <% if (order.fulfil_status === "fulfilled") { %>
-              Done. <%= order.destination_store_name || order.destination_shop_domain %>'s
-              order is marked fulfilled with this tracking, and the buyer has
-              been emailed.
-            <% } else if (order.fulfil_status === "failed") { %>
-              Marked fulfilled here, but
-              <%= order.destination_store_name || order.destination_shop_domain %>'s
-              order could not be updated &mdash; <%= order.fulfil_error %>.
-              It will be retried.
-            <% } else { %>
-              Marked fulfilled. Updating
-              <%= order.destination_store_name || order.destination_shop_domain %>'s
-              order and emailing the buyer&hellip;
-            <% } %>
+            Everything on this order has shipped. If that was a mistake, or a
+            parcel came back, mark it unfulfilled: every shipment is withdrawn
+            from <%= buyer %>'s order too, so the shopper is not left with a
+            shipping notice for a parcel that is not coming.
           </p>
-
-          <div class="shell__actions">
-            <%# Undoing cancels the fulfillment in the buyer's store too, or
-                they are left with a shipping notice for a parcel that is not
-                coming. %>
-            <button class="btn" type="button" id="unfulfil">
-              Undo &mdash; put it back on the list
-            </button>
-          </div>
-
         <% } else { %>
-
           <p class="panel__copy">
-            Add a tracking number if you have one, then mark it fulfilled. Your
-            own Shopify admin is not touched. The buyer's order is marked
-            fulfilled with this tracking and Shopify emails them about it, so
-            put the real number in.
+            <% if (status === "partial") { %>
+              <%= remaining %> unit<%= remaining === 1 ? " is" : "s are" %> still to
+              send.
+            <% } %>
+            Add a tracking number if you have one. Your own Shopify admin is not
+            touched. <%= buyer %>'s order is fulfilled with this tracking and
+            Shopify emails the shopper about it, so put the real number in.
           </p>
 
           <div class="toggles">
@@ -263,19 +320,30 @@
                      placeholder="Optional" autocomplete="off">
             </label>
           </div>
-
-          <div class="shell__actions">
-            <button class="btn btn--primary" type="button" id="fulfil">
-              Mark fulfilled
-            </button>
-            <%# Refunds the buyer, so it is kept away from the primary action
-                and coloured as the exit it is. %>
-            <button class="btn btn--danger" type="button" id="cannot-supply">
-              Cannot supply this
-            </button>
-          </div>
-
         <% } %>
+
+        <%# The four moves, in the order they are needed. Fulfilled and
+            Partially fulfilled read the Ship now column; the difference is
+            whether it is everything that is left. Cancel is coloured as the
+            exit it is: it refunds the shopper. %>
+        <div class="shell__actions order-actions">
+          <% if (open) { %>
+            <button class="btn btn--primary" type="button" id="fulfil">
+              Fulfilled
+            </button>
+            <button class="btn" type="button" id="fulfil-partial">
+              Partially fulfilled
+            </button>
+          <% } %>
+          <% if (status === "partial" || status === "fulfilled") { %>
+            <button class="btn" type="button" id="unfulfil">
+              Unfulfilled
+            </button>
+          <% } %>
+          <button class="btn btn--danger" type="button" id="cannot-supply">
+            Cancel
+          </button>
+        </div>
       </section>
     <% } %>
 
@@ -307,7 +375,8 @@
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body || {})
+              body: JSON.stringify(body || {}),
+              busy: button
             }
           );
 
@@ -324,24 +393,44 @@
         }
       }
 
+      /* ---------------- what is going out ---------------- */
+
+      function tracking() {
+        var number = document.getElementById("tracking-number").value.trim();
+
+        // No number means nothing to track, which is allowed: plenty of
+        // shipping has no tracking, and refusing would leave the merchant
+        // unable to mark anything done.
+        return number
+          ? [{
+              number: number,
+              company: document.getElementById("carrier").value.trim() || null,
+              url: document.getElementById("tracking-url").value.trim() || null
+            }]
+          : [];
+      }
+
+      // The Ship now column, as [{ line_id, quantity }], with what is left on
+      // each line beside it so the buttons can tell "all of it" from "some".
+      function shipNow() {
+        return Array.prototype.slice.call(document.querySelectorAll(".ship-qty"))
+          .map(function (input) {
+            return {
+              line_id: Number(input.dataset.line),
+              quantity: Number(input.value) || 0,
+              remaining: Number(input.dataset.remaining)
+            };
+          });
+      }
+
       var fulfil = document.getElementById("fulfil");
 
       if (fulfil) {
         fulfil.addEventListener("click", async function () {
-          var number = document.getElementById("tracking-number").value.trim();
-
-          // No number means nothing to track, which is allowed: plenty of
-          // shipping has no tracking, and refusing would leave the merchant
-          // unable to mark anything done.
-          var tracking = number
-            ? [{
-                number: number,
-                company: document.getElementById("carrier").value.trim() || null,
-                url: document.getElementById("tracking-url").value.trim() || null
-              }]
-            : [];
-
-          var data = await post(fulfil, "fulfil", { tracking: tracking }, "Saving…");
+          // Everything that is left, whatever the column says: this button
+          // means the order is done. Sent without `lines` so the server ships
+          // the remainder as it counts it, not as the page last showed it.
+          var data = await post(fulfil, "fulfil", { tracking: tracking() }, "Saving…");
 
           if (!data) return;
 
@@ -350,10 +439,51 @@
         });
       }
 
+      var partial = document.getElementById("fulfil-partial");
+
+      if (partial) {
+        partial.addEventListener("click", async function () {
+          var lines = shipNow();
+          var sending = lines.reduce(function (sum, l) { return sum + l.quantity; }, 0);
+          var left = lines.reduce(function (sum, l) { return sum + l.remaining; }, 0);
+
+          if (!sending) {
+            return fail("Enter how many of each line you are sending now.");
+          }
+
+          // The column says everything: that is not a partial shipment, and
+          // saying so beats silently doing what the other button does.
+          if (sending >= left) {
+            return fail(
+              "Those quantities cover everything that is left. Use Fulfilled " +
+              "for that, or lower a quantity to ship part of the order."
+            );
+          }
+
+          var data = await post(partial, "fulfil", {
+            tracking: tracking(),
+            lines: lines.map(function (l) { return { line_id: l.line_id, quantity: l.quantity }; })
+          }, "Saving…");
+
+          if (!data) return;
+
+          window.appToast("Marked partially fulfilled");
+          // Still open: there is more to send, so come back here.
+          window.appNavigate("/orders/<%= order.id %>");
+        });
+      }
+
       var undo = document.getElementById("unfulfil");
 
       if (undo) {
         undo.addEventListener("click", async function () {
+          if (!(await window.appConfirm(
+            "Mark this order unfulfilled?\n\n" +
+            "Every shipment on it is withdrawn from the buyer's order, and " +
+            "the shopper's shipping confirmation no longer stands.",
+            { confirmLabel: "Mark unfulfilled", destructive: true }
+          ))) return;
+
           var data = await post(undo, "unfulfil", {}, "Saving…");
 
           if (!data) return;
@@ -368,11 +498,12 @@
       if (cannot) {
         cannot.addEventListener("click", async function () {
           // This one spends someone else's money, so it says so plainly.
-          if (!window.confirm(
-            "Cannot supply this order?\n\n" +
+          if (!(await window.appConfirm(
+            "Cancel this order?\n\n" +
             "The buyer's order will be CANCELLED and REFUNDED, and they will " +
-            "be emailed about it. This cannot be undone."
-          )) return;
+            "be emailed about it. This cannot be undone.",
+            { confirmLabel: "Cancel order", cancelLabel: "Keep order", destructive: true }
+          ))) return;
 
           var data = await post(cannot, "cancel", {}, "Cancelling…");
 

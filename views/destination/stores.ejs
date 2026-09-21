@@ -109,12 +109,13 @@
 
   </main>
 
-  <dialog class="modal" id="add-store-modal" aria-labelledby="add-store-title">
-    <%# Not method="dialog": submitting has to reach the server first, so the
-        handler below cancels the default and closes the dialog itself. %>
-    <form class="modal__body" id="connect-form">
+  <%# The admin's own dialog. App Bridge's <s-modal> opens over the whole
+      admin rather than inside the app's frame, and looks like every other
+      dialog a merchant meets there. The buttons go in its action slots; the
+      form stays a real form so that Enter in the code box submits it. %>
+  <s-modal id="add-store-modal" heading="Add a source store">
+    <form id="connect-form">
 
-      <h2 class="modal__title" id="add-store-title">Add a source store</h2>
       <p class="modal__copy">
         Open this app on the source store, generate its pairing code, and enter
         it here. The connection goes live straight away.
@@ -135,23 +136,17 @@
 
       <p class="notice notice--error" id="connect-error" hidden></p>
 
-      <div class="modal__actions">
-        <button class="btn" type="button" id="connect-cancel">Cancel</button>
-        <button class="btn btn--primary" type="submit" id="connect-button">Add store</button>
-      </div>
-
     </form>
-  </dialog>
 
-  <%# The confirmation. Deliberately a dialog and not window.confirm: this
+    <s-button slot="primary-action" variant="primary" id="connect-button">Add store</s-button>
+    <s-button slot="secondary-actions" id="connect-cancel">Cancel</s-button>
+  </s-modal>
+
+  <%# The confirmation. Its own dialog rather than a one-line appConfirm: this
       deletes real products out of a real Shopify store, and the merchant has
-      to be able to READ what goes before agreeing to it. %>
-  <dialog class="modal" id="delete-store-modal" aria-labelledby="delete-store-title">
-    <div class="modal__body">
-
-      <h2 class="modal__title" id="delete-store-title">
-        Delete <span id="delete-store-name"></span>?
-      </h2>
+      to be able to READ what goes before agreeing to it. The heading names
+      the store; it is filled in when the dialog opens. %>
+  <s-modal id="delete-store-modal" heading="Delete this store?">
 
       <p class="notice notice--error">
         <strong>This cannot be undone.</strong>
@@ -177,17 +172,16 @@
         supplier put here are removed from your Shopify catalogue.
       </p>
 
+      <%# How far a long delete has got. The button itself only spins. %>
+      <p class="modal__copy" id="delete-store-progress" hidden></p>
+
       <p class="notice notice--error" id="delete-store-error" hidden></p>
 
-      <div class="modal__actions">
-        <button class="btn" type="button" id="delete-store-cancel">Cancel</button>
-        <button class="btn btn--danger" type="button" id="delete-store-confirm">
-          Delete store and products
-        </button>
-      </div>
-
-    </div>
-  </dialog>
+    <s-button slot="primary-action" variant="primary" tone="critical" id="delete-store-confirm">
+      Delete store and products
+    </s-button>
+    <s-button slot="secondary-actions" id="delete-store-cancel">Cancel</s-button>
+  </s-modal>
 
   <script>
     (function () {
@@ -213,20 +207,25 @@
         input.value = "";
         addButton.disabled = false;
 
-        // showModal() brings the backdrop, Esc and the focus trap with it.
-        if (typeof modal.showModal === "function") modal.showModal();
-        else modal.setAttribute("open", "");
-
+        // The admin's overlay brings the backdrop, Esc and the X with it.
+        window.appOpen(modal);
         input.focus();
       }
 
       function close() {
-        if (typeof modal.close === "function") modal.close();
-        else modal.removeAttribute("open");
+        window.appClose(modal);
       }
 
       openButton.addEventListener("click", open);
       cancelButton.addEventListener("click", close);
+
+      // The Add store button sits in the dialog's action slot, outside the
+      // form, so it asks the form to submit rather than being its button.
+      // Enter in the code box still submits: a form with one text field
+      // submits implicitly.
+      addButton.addEventListener("click", function () {
+        form.requestSubmit();
+      });
 
       /* ---------------- redeem the code ---------------- */
 
@@ -246,7 +245,8 @@
           var response = await window.appFetch("/stores/connect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: code })
+            body: JSON.stringify({ code: code }),
+            busy: addButton
           });
 
           var data = await response.json().catch(function () { return {}; });
@@ -273,6 +273,7 @@
       var deleteConfirm = document.getElementById("delete-store-confirm");
       var deleteCancel = document.getElementById("delete-store-cancel");
       var deleteError = document.getElementById("delete-store-error");
+      var deleteProgress = document.getElementById("delete-store-progress");
       var owedNotice = document.getElementById("delete-store-owed");
 
       // Which store the open dialog is about. Read from the row's button, so
@@ -291,7 +292,7 @@
         var payments = Number(pending.payments) || 0;
         var outstanding = Number(pending.outstanding) || 0;
 
-        document.getElementById("delete-store-name").textContent = pending.store;
+        deleteModal.setAttribute("heading", "Delete " + pending.store + "?");
 
         // The headline consequence, stated in the merchant's own terms: these
         // are products sitting in their live Shopify catalogue.
@@ -330,11 +331,10 @@
         }
 
         deleteError.hidden = true;
+        deleteProgress.hidden = true;
         deleteConfirm.disabled = false;
-        deleteConfirm.textContent = "Delete store and products";
 
-        if (typeof deleteModal.showModal === "function") deleteModal.showModal();
-        else deleteModal.setAttribute("open", "");
+        window.appOpen(deleteModal);
 
         // Focus lands on Cancel, not on the destructive button: a stray Enter
         // must not delete a catalogue.
@@ -342,10 +342,14 @@
       }
 
       function closeDeleteModal() {
-        if (typeof deleteModal.close === "function") deleteModal.close();
-        else deleteModal.removeAttribute("open");
+        window.appClose(deleteModal);
         pending = null;
       }
+
+      // Closed by Esc or the X, the same as Cancel.
+      deleteModal.addEventListener("afterhide", function () {
+        pending = null;
+      });
 
       Array.prototype.slice.call(document.querySelectorAll(".delete-store"))
         .forEach(function (button) {
@@ -363,7 +367,11 @@
         var name = pending.store;
 
         deleteError.hidden = true;
-        deleteConfirm.disabled = true;
+        deleteProgress.hidden = true;
+
+        // Spinning for the whole run, not per request: between rounds the
+        // button must not flick back to clickable.
+        window.appBusy(deleteConfirm, true);
 
         /* Deleting comes back in rounds: a store can hold a thousand products
          * and a thousand Shopify calls do not fit in one request. Keep asking
@@ -381,8 +389,7 @@
             var data = await response.json().catch(function () { return {}; });
 
             if (!response.ok) {
-              deleteConfirm.disabled = false;
-              deleteConfirm.textContent = "Delete store and products";
+              window.appBusy(deleteConfirm, false);
               deleteError.textContent = data.error || "Could not delete that store.";
               deleteError.hidden = false;
               return;
@@ -395,8 +402,7 @@
             // Nothing moved and something refused: going round again would
             // fail the same way. Stop and say why, with the store still there.
             if (!data.deleted) {
-              deleteConfirm.disabled = false;
-              deleteConfirm.textContent = "Delete store and products";
+              window.appBusy(deleteConfirm, false);
               deleteError.textContent =
                 (data.error ||
                   "Some products could not be deleted from your store.") +
@@ -406,18 +412,19 @@
               return;
             }
 
-            deleteConfirm.textContent =
-              "Deleting… " + data.remaining + " left";
+            deleteProgress.textContent =
+              "Deleting… " + data.remaining + " left.";
+            deleteProgress.hidden = false;
           }
 
+          window.appBusy(deleteConfirm, false);
           closeDeleteModal();
           window.appToast(
             "Deleted " + name + " and " + plural(removed, "product", "products")
           );
           window.appNavigate("/stores");
         } catch (err) {
-          deleteConfirm.disabled = false;
-          deleteConfirm.textContent = "Delete store and products";
+          window.appBusy(deleteConfirm, false);
           deleteError.textContent = "Could not reach the app. Try again.";
           deleteError.hidden = false;
         }
@@ -435,7 +442,7 @@
             try {
               var response = await window.appFetch(
                 "/stores/" + button.dataset.connection + "/resume",
-                { method: "POST" }
+                { method: "POST", busy: button }
               );
 
               var data = await response.json().catch(function () { return {}; });

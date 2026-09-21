@@ -30,9 +30,11 @@
       </div>
       <span class="pill pill--<%=
         order.source_fulfillment_status === "fulfilled" ? "synced"
-        : order.source_fulfillment_status === "cancelled" ? "failed" : "pending" %>">
-        <%= order.source_fulfillment_status === "unfulfilled"
-            ? "awaiting supplier" : order.source_fulfillment_status %>
+        : order.source_fulfillment_status === "cancelled" ? "failed"
+        : order.source_fulfillment_status === "partial" ? "paused" : "pending" %>">
+        <%= order.source_fulfillment_status === "unfulfilled" ? "unfulfilled"
+            : order.source_fulfillment_status === "partial" ? "partially fulfilled"
+            : order.source_fulfillment_status %>
       </span>
     </header>
 
@@ -170,17 +172,34 @@
           </dd>
         </div>
 
-        <% if (order.source_tracking.length) { %>
+        <%# Every shipment the supplier has sent, with its tracking, and
+            whether your own Shopify order has been updated for it. Per
+            shipment: a sale sent in two parcels is two fulfillments on
+            your order, and the shopper has been emailed about each. %>
+        <% var standing = (typeof shipments !== "undefined" ? shipments : []).filter(function (s) { return s.push_status !== "cancelled"; }); %>
+        <% if (standing.length) { %>
           <div class="facts__row">
-            <dt>Tracking</dt>
+            <dt>Shipments</dt>
             <dd>
-              <%# One row per parcel: an order can ship in several boxes, and
-                  the shopper needs every number, not the first one. %>
-              <% order.source_tracking.forEach(function (parcel) { %>
-                <div>
-                  <%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong>
-                  <% if (parcel.url) { %>
-                    <a class="link" href="<%= parcel.url %>" target="_blank" rel="noopener">track</a>
+              <% standing.forEach(function (shipment, index) { %>
+                <% var units = shipment.lines.reduce(function (sum, l) { return sum + Number(l.quantity); }, 0); %>
+                <div class="shipment-line">
+                  <strong>Shipment <%= index + 1 %></strong> &mdash; <%= units %> unit<%= units === 1 ? "" : "s" %>
+                  <% if (shipment.tracking.length) { %>
+                    <% shipment.tracking.forEach(function (parcel) { %>
+                      <div><%= parcel.company || "Tracking" %>: <strong><%= parcel.number %></strong></div>
+                    <% }); %>
+                  <% } else { %>
+                    <div class="muted">no tracking number</div>
+                  <% } %>
+                  <%# Your own Shopify order is fulfilled to match. Until that
+                      lands, saying nothing would look like it never will. %>
+                  <% if (shipment.push_status === "sent") { %>
+                    <div class="muted">your Shopify order is updated for this</div>
+                  <% } else if (shipment.push_status === "failed") { %>
+                    <div class="muted">your Shopify order could not be updated &mdash; <%= shipment.push_error %>. It will be retried.</div>
+                  <% } else { %>
+                    <div class="muted">updating your Shopify order&hellip;</div>
                   <% } %>
                 </div>
               <% }); %>
