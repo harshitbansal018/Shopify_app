@@ -286,11 +286,12 @@
       if (switcher) {
         var shown = switcher.value;
 
-        switcher.addEventListener("change", function () {
-          if (hasUnsaved() && !window.confirm(
+        switcher.addEventListener("change", async function () {
+          if (hasUnsaved() && !(await window.appConfirm(
             "You have unsaved changes for this store.\n\n" +
-            "Switch anyway? They will be lost."
-          )) {
+            "Switch anyway? They will be lost.",
+            { confirmLabel: "Switch anyway", cancelLabel: "Stay here", destructive: true }
+          ))) {
             // Put the dropdown back, or it would name a store whose settings
             // are not the ones on screen.
             switcher.value = shown;
@@ -337,7 +338,8 @@
                   body: JSON.stringify({
                     connection_id: panel.dataset.connection,
                     settings: settings
-                  })
+                  }),
+                  busy: button
                 });
 
                 var data = await response.json().catch(function () { return {}; });
@@ -390,7 +392,8 @@
                 body: JSON.stringify({
                   connection_id: notifyPanel.dataset.connection,
                   notifications: notifications
-                })
+                }),
+                busy: button
               });
 
               var data = await response.json().catch(function () { return {}; });

@@ -59,15 +59,40 @@
         </button>
       </nav>
 
-      <%# Searches inside the current tab. Across both would be worse: the two
-          tabs mean different things to act on, and a result you cannot see
-          without also switching tab is a dead end. %>
+      <%# One supplier, or all of them. Only offered once there is a choice to
+          make: a dropdown with one store in it is a label pretending to be a
+          control. Navigates through the page script, so the tab and the
+          search come along -- narrowing to a store mid-search means "this
+          supplier's matches", not "start again". %>
+      <% if (connections.length > 1) { %>
+        <div class="listbar__filter">
+          <label class="field__label" for="store-filter">Source store</label>
+          <select class="field__input field__input--compact" id="store-filter">
+            <option value="" <%= storeFilter ? "" : "selected" %>>All stores</option>
+            <% connections.forEach(function (connection) { %>
+              <option
+                value="<%= connection.id %>"
+                <%= storeFilter === connection.id ? "selected" : "" %>>
+                <%= connection.source.store_name || connection.source.shop_domain %><%=
+                  connection.status !== "active" ? " (" + connection.status + ")" : "" %>
+              </option>
+            <% }); %>
+          </select>
+        </div>
+      <% } %>
+
+      <%# Searches inside the current tab and store filter. Across both tabs
+          would be worse: they mean different things to act on, and a result
+          you cannot see without also switching tab is a dead end. %>
       <%- include("../partials/search", {
         action: "/products",
         search: search,
         placeholder: "Search by title, vendor, SKU or source store",
-        hidden: [{ name: "tab", value: tab }],
-        clearHref: "/products?tab=" + tab,
+        hidden: [
+          { name: "tab", value: tab },
+          { name: "store", value: storeFilter || "" },
+        ],
+        clearHref: "/products?tab=" + tab + (storeFilter ? "&store=" + storeFilter : ""),
       }) %>
     </div>
 
@@ -143,6 +168,11 @@
                       Titles, vendors, SKUs and source store names are all
                       searched &mdash; try a shorter term, the other tab, or
                       <strong>Clear</strong>.
+                    <% } else if (storeFilter) { %>
+                      <%# An empty FILTER is not an empty tab: say which store
+                          is hiding everything, and how to see the rest. %>
+                      Nothing on this tab from that store. Switch to
+                      <strong>All stores</strong> to see the others.
                     <% } else { %>
                       <%= tab === "unsynced"
                           ? "Nothing is waiting for you. When a source store offers a product it appears here."
@@ -282,14 +312,32 @@
        * for what they were looking for -- not back at the full list. */
       var currentSearch = <%- json(search || "") %>;
 
+      var currentStore = <%- json(storeFilter ? String(storeFilter) : "") %>;
+
       function productsUrl(tab) {
         var params = new URLSearchParams();
 
         if (tab) params.set("tab", tab);
         if (currentSearch) params.set("q", currentSearch);
+        if (currentStore) params.set("store", currentStore);
 
         var query = params.toString();
         return query ? "/products?" + query : "/products";
+      }
+
+      /* ---------------- store filter ---------------- */
+
+      var storeFilter = document.getElementById("store-filter");
+
+      if (storeFilter) {
+        storeFilter.addEventListener("change", function () {
+          // A real navigation: the server decides which rows there are, so
+          // the tab counts and the list cannot disagree. The tab and the
+          // search stay; the page number does not -- a new filter is a new
+          // list, and page 3 of it is probably empty.
+          currentStore = storeFilter.value;
+          window.appNavigate(productsUrl(<%- json(tab) %>));
+        });
       }
 
       /* ---------------- tabs ---------------- */
@@ -302,12 +350,9 @@
             //
             // The search comes along: switching tabs mid-search means "the
             // other tab, still looking for this".
-            var params = new URLSearchParams({ tab: button.dataset.tab });
-            var q = <%- json(search || "") %>;
-
-            if (q) params.set("q", q);
-
-            window.appNavigate("/products?" + params.toString());
+            // The search and the store filter come along: switching tabs
+            // mid-search means "the other tab, still looking for this".
+            window.appNavigate(productsUrl(button.dataset.tab));
           });
         });
 
@@ -329,7 +374,10 @@
           syncButton.textContent = "Syncing…";
 
           try {
-            var response = await window.appFetch("/products/sync", { method: "POST" });
+            var response = await window.appFetch("/products/sync", {
+              method: "POST",
+              busy: syncButton
+            });
             var data = await response.json().catch(function () { return {}; });
 
             if (!response.ok) throw new Error(data.error || "Request failed");
@@ -353,11 +401,12 @@
 
             // Syncing writes to the store, so it needs no warning; stopping
             // one does, because the merchant is giving up future updates.
-            if (unsync && !window.confirm(
+            if (unsync && !(await window.appConfirm(
               "Stop syncing this product?\n\n" +
               "It moves back to Unsynced. What is already in your store stays, " +
-              "it just will not be updated any more."
-            )) return;
+              "it just will not be updated any more.",
+              { confirmLabel: "Stop syncing" }
+            ))) return;
 
             pageError.hidden = true;
             pill.disabled = true;
@@ -369,7 +418,8 @@
                 {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ mapping_ids: [pill.dataset.mapping] })
+                  body: JSON.stringify({ mapping_ids: [pill.dataset.mapping] }),
+                  busy: pill
                 }
               );
 
@@ -464,7 +514,8 @@
           var response = await window.appFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mapping_ids: chosen() })
+            body: JSON.stringify({ mapping_ids: chosen() }),
+            busy: busy
           });
 
           var data = await response.json().catch(function () { return {}; });
@@ -498,12 +549,13 @@
         // Said plainly, because "unsync" could easily be read as "delete".
         // Nothing leaves the store here -- the products stay exactly as they
         // are and simply stop being updated.
-        if (!window.confirm(
+        if (!(await window.appConfirm(
           "Stop syncing " + count + " product(s)?\n\n" +
           "They stay in your store exactly as they are; they just will not " +
           "receive any more updates from the source store.\n\n" +
-          "You can sync them again from the Unsynced tab."
-        )) return;
+          "You can sync them again from the Unsynced tab.",
+          { confirmLabel: "Stop syncing" }
+        ))) return;
 
         var data = await send("/products/decline", "Unsyncing…");
 
@@ -515,10 +567,11 @@
       });
 
       if (declineButton) declineButton.addEventListener("click", async function () {
-        if (!window.confirm(
+        if (!(await window.appConfirm(
           "Stop receiving " + chosen().length + " product(s)?\n\n" +
-          "Anything already in your store stays; it just will not be updated."
-        )) return;
+          "Anything already in your store stays; it just will not be updated.",
+          { confirmLabel: "Decline" }
+        ))) return;
 
         var data = await send("/products/decline", "Declining…");
 

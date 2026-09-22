@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Privacy Policy &mdash; <%= PRODUCT.name %></title>
+  <meta name="description" content="What <%= PRODUCT.name %> collects from the stores that install it, why, how long it is kept, and how to have it removed.">
+
+  <link rel="icon" href="/images/favicon-32.png" sizes="32x32">
+  <link rel="stylesheet" href="/landing-assets/landing.css">
+</head>
+
+<body>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <%- include("./partials/nav") %>
+
+  <main id="main" class="section">
+    <div class="wrap">
+
+      <%# Full width, like the rest of the site. Every section has an id, so
+          a link can point at "how long we keep it". %>
+      <article class="policy">
+
+        <header class="policy__head">
+          <!-- <p class="hero__eyebrow"><%= PRODUCT.name %> by <%= COMPANY.name %></p> -->
+          <h1 class="policy__title">Privacy Policy</h1>
+          <p class="policy__updated">Last updated <%= UPDATED %></p>
+        </header>
+
+        <%# A contents list: this is the page a reviewer or a merchant scans
+            for one answer, not one they read top to bottom. %>
+        <!-- <nav class="policy__toc" aria-label="Sections">
+          <ol>
+            <% SECTIONS.forEach(function (section) { %>
+              <li><a href="#<%= section.id %>"><%= section.title %></a></li>
+            <% }); %>
+          </ol>
+        </nav> -->
+
+        <% SECTIONS.forEach(function (section) { %>
+          <section class="policy__section" id="<%= section.id %>">
+            <h2><%= section.title %></h2>
+
+            <% (section.paragraphs || []).forEach(function (paragraph) { %>
+              <p><%= paragraph %></p>
+            <% }); %>
+
+            <% if (section.list && section.list.length) { %>
+              <ul>
+                <% section.list.forEach(function (item) { %>
+                  <li><%= item %></li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </section>
+        <% }); %>
+
+      </article>
+
+    </div>
+  </main>
+
+  <%- include("./partials/footer") %>
+
+</body>
+
+</html>

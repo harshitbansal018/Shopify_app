@@ -112,4 +112,28 @@ router.get("/home", async (req, res, next) => {
   }
 });
 
+/**
+ * The privacy policy. Its URL goes on the App Store listing, so it has to be
+ * public, stable and reachable without a session -- which is why it lives
+ * here with the marketing site and not behind the app's auth.
+ *
+ * Reads no database: a policy page that could 500 is not one to put on a
+ * listing.
+ */
+router.get("/privacy", (req, res, next) => {
+  try {
+    const policy = require("./policy");
+
+    res.render(path.join(VIEWS, "policy"), {
+      ...content,
+      UPDATED: policy.UPDATED,
+      SECTIONS: policy.SECTIONS,
+      navBase: "/home",
+      year: new Date().getFullYear(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

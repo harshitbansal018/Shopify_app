@@ -115,23 +115,15 @@
                   <% } %>
                 <% } else if (order.source_fulfillment_status === "fulfilled") { %>
                   <span class="pill pill--synced">fulfilled</span>
-                  <% order.source_tracking.forEach(function (parcel) { %>
-                    <span class="muted">
-                      <%= parcel.company || "tracking" %>: <%= parcel.number %>
-                    </span>
-                  <% }); %>
-                  <%# Your own Shopify order is fulfilled to match. Until that
-                      lands, saying nothing would look like it never will. %>
-                  <% if (order.fulfil_status === "failed") { %>
-                    <span class="muted">
-                      your Shopify order could not be updated &mdash;
-                      <%= order.fulfil_error %>
-                    </span>
-                  <% } else if (order.fulfil_status !== "fulfilled") { %>
-                    <span class="muted">updating your Shopify order&hellip;</span>
-                  <% } %>
+                  <%# Tracking and whether your own Shopify order has been
+                      updated are per shipment now, on the order's own page. %>
+                <% } else if (order.source_fulfillment_status === "partial") { %>
+                  <%# The supplier has sent some of it. Your Shopify order is
+                      fulfilled for those lines only; the rest is still coming. %>
+                  <span class="pill pill--paused">partially fulfilled</span>
+                  <span class="muted">more to come</span>
                 <% } else { %>
-                  <span class="pill pill--pending">awaiting supplier</span>
+                  <span class="pill pill--pending">unfulfilled</span>
                 <% } %>
               </td>
 

@@ -2,7 +2,10 @@
 const COMPANY = {
   name: "Stellen Infotech",
   site: "https://stelleninfotech.com",
-  email: "support@stelleninfotech.com",
+  // From the environment, so the address on the privacy policy, the footer
+  // and the landing page is set per deployment rather than typed in here.
+  // SUPPORT_EMAIL in .env; the fallback is only so the page still renders.
+  email: String(process.env.SUPPORT_EMAIL || "").trim() || "support@stelleninfotech.com",
   tagline: "Shopify apps built for merchants who sell across more than one store.",
 };
 
@@ -286,6 +289,13 @@ const FOOTER = {
       links: [
         { label: "Install on Shopify", href: "/api/auth/install" },
         { label: "Already installed? Open the app", href: "/api/auth/install" },
+      ],
+    },
+    {
+      title: "Legal",
+      links: [
+        // The same URL goes on the App Store listing; keep it stable.
+        { label: "Privacy policy", href: "/privacy" },
       ],
     },
   ],

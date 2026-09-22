@@ -46,24 +46,36 @@ exports.getProducts = async (req, res) => {
       // available explicitly when the merchant wants to review new offers.
       const tab = req.query.tab === "unsynced" ? "unsynced" : "synced";
 
+      // The store filter: one supplier, or all of them. The id comes from a
+      // browser, so it is only ever matched against THIS store's own
+      // connections -- a guessed number simply is not in the list, and falls
+      // back to "all" rather than to an error or to someone else's products.
+      const connections = await connectionModel.listForDestination(req.storeId);
+      const requested = typeof req.query.store === "string" ? Number(req.query.store) : NaN;
+      const storeFilter = connections.find((c) => c.id === requested) || null;
+      const connectionId = storeFilter ? storeFilter.id : null;
+
       // Counted before anything is read: the tab labels have to name a total
       // the merchant is not looking at, and the pager needs one for the tab
-      // they are. Both counts respect the search, or the tabs would advertise
-      // rows the search has hidden.
+      // they are. Both counts respect the search and the store filter, or the
+      // tabs would advertise rows those have hidden.
       const counts = await sourceProductModel.countsSyncedIntoStore(req.storeId, {
         search,
+        connectionId,
       });
 
       const pager = paginate(req, counts[tab], {
         path: "/products",
-        // The search travels with the page number too. Without it, Next would
-        // silently drop the merchant back into the unsearched list.
-        params: { tab, q: search },
+        // The search and the store filter travel with the page number too.
+        // Without them, Next would silently drop the merchant back into the
+        // full, unfiltered list.
+        params: { tab, q: search, store: connectionId || "" },
       });
 
       const offered = await sourceProductModel.listSyncedIntoStore(req.storeId, {
         tab,
         search,
+        connectionId,
         limit: pager.limit,
         offset: pager.offset,
       });
@@ -87,8 +99,9 @@ exports.getProducts = async (req, res) => {
         counts,
         pager,
         search,
+        storeFilter: connectionId,
         products: offered.map(withVariants),
-        connections: await connectionModel.listForDestination(req.storeId),
+        connections,
       });
     }
 

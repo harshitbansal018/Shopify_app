@@ -29,6 +29,7 @@ const planLimits = require("./planLimits");
 const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
 const orderMappingModel = require("../models/orderMappingModel");
+const orderShipmentModel = require("../models/orderShipmentModel");
 const payoutModel = require("../models/payoutModel");
 const notificationSettingsModel = require("../models/notificationSettingsModel");
 const emailOutboxModel = require("../models/emailOutboxModel");
@@ -135,15 +136,6 @@ function queue(mapping, recipientStoreId, kind, dedupeKey, email) {
   });
 }
 
-/**
- * When the source marked the order: what makes two fulfilments of the same
- * order two different emails, while a double click on one stays one email.
- */
-function stampOf(mapping) {
-  const time = new Date(mapping.source_status_at).getTime();
-  return Number.isFinite(time) ? time : Date.now();
-}
-
 /* ------------------------------------------------------------------ */
 /* Events                                                              */
 /* ------------------------------------------------------------------ */
@@ -175,32 +167,53 @@ function orderCreated(mapping) {
 }
 
 /**
- * The source shipped an order. One email, to the destination: shipped, and/or
- * what it now owes -- combined into ONE email when both are on.
+ * The source shipped some or all of an order.
+ *
+ * One email per SHIPMENT, to the destination: what went out, with its
+ * tracking -- and, on the shipment that completes the order, what the
+ * destination now owes, combined into the same email when both are on. A
+ * partial shipment says so, and carries no money: nothing is owed until the
+ * whole sale has shipped (see payoutModel).
  *
  * Nothing goes to the source here. Its money email is the settlement, sent
  * when the destination actually records paying it (paymentRecorded below).
  *
  * Read back from the database rather than taken from the caller, so the
- * tracking in the email is the tracking that was actually saved.
+ * tracking in the email is the tracking that was actually saved. Keyed on
+ * the shipment, so a sale shipped twice is emailed twice, and a double click
+ * on one shipment is not.
  */
-function orderFulfilled(mappingId) {
+function orderFulfilled(mappingId, shipmentId = null) {
   return quietly("order fulfilled", async () => {
     const mapping = await orderMappingModel.findById(mappingId);
 
-    if (!mapping || mapping.source_fulfillment_status !== "fulfilled") {
+    if (!mapping || !["partial", "fulfilled"].includes(mapping.source_fulfillment_status)) {
       return { queued: 0 };
     }
 
-    const settings = await notificationSettingsModel.forConnection(mapping.connection_id);
+    // The shipment being announced: the one named, else the latest standing.
+    const shipments = (await orderShipmentModel.listForMapping(mapping.id)).filter(
+      (row) => row.push_status !== "cancelled"
+    );
+    const shipment = shipmentId
+      ? shipments.find((row) => row.id === Number(shipmentId))
+      : shipments[shipments.length - 1];
 
-    if (!settings.order_updates && !settings.payout_destination) {
+    if (!shipment) return { queued: 0 };
+
+    const settings = await notificationSettingsModel.forConnection(mapping.connection_id);
+    const complete = mapping.source_fulfillment_status === "fulfilled";
+
+    // Money only when the order is complete -- that is when it becomes owed.
+    const wantsOwed = complete && settings.payout_destination;
+
+    if (!settings.order_updates && !wantsOwed) {
       return { queued: 0, off: true };
     }
 
     let owed = null;
 
-    if (settings.payout_destination) {
+    if (wantsOwed) {
       const suppliers = await payoutModel.summaryForDestination(
         mapping.destination_store_id
       );
@@ -219,17 +232,20 @@ function orderFulfilled(mappingId) {
       mapping,
       mapping.destination_store_id,
       settings.order_updates ? "order_shipped" : "payout_destination",
-      `order_fulfilled:${mapping.id}:${stampOf(mapping)}`,
-      templates.orderFulfilled(mapping, {
-        shipped: settings.order_updates,
-        owed,
-      })
+      `order_fulfilled:${mapping.id}:${shipment.id}`,
+      templates.orderFulfilled(
+        { ...mapping, source_tracking: shipment.tracking },
+        {
+          shipped: settings.order_updates,
+          partial: !complete,
+          owed,
+        }
+      )
     );
 
     return { queued: queued ? 1 : 0 };
   });
 }
-
 /** The source cannot supply an order; the destination is told. */
 function orderCancelled(mappingId) {
   return quietly("order cancelled", async () => {

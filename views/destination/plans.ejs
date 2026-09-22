@@ -131,12 +131,11 @@
       fit the plan it picked; filled from what the server sends back. Built
       with textContent, never innerHTML: product titles are text a supplier
       typed. %>
-  <dialog class="modal modal--wide" id="downgrade-modal" aria-labelledby="dg-title">
-    <div class="modal__body">
+  <%# The admin's own dialog (App Bridge's <s-modal>), the large size because
+      it holds a list someone has to read through. The heading names the
+      plan; it is filled in when the chooser opens. %>
+  <s-modal id="downgrade-modal" size="large" heading="Make room for the new plan">
 
-      <h2 class="modal__title" id="dg-title">
-        Make room for the <span id="dg-plan"></span> plan
-      </h2>
       <p class="modal__copy" id="dg-intro"></p>
 
       <section class="dg-section" id="dg-products" hidden>
@@ -170,15 +169,11 @@
 
       <p class="notice notice--error" id="dg-error" hidden></p>
 
-      <div class="modal__actions">
-        <button class="btn" type="button" id="dg-cancel">Cancel</button>
-        <button class="btn btn--primary" type="button" id="dg-continue" disabled>
-          Continue
-        </button>
-      </div>
-
-    </div>
-  </dialog>
+    <s-button slot="primary-action" variant="primary" id="dg-continue" disabled>
+      Continue
+    </s-button>
+    <s-button slot="secondary-actions" id="dg-cancel">Cancel</s-button>
+  </s-modal>
 
   <script>
     (function () {
@@ -197,11 +192,12 @@
         pageError.hidden = false;
       }
 
-      async function select(planId, extra) {
+      async function select(planId, extra, button) {
         var response = await window.appFetch("/plans/select", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ plan_id: planId }, extra || {}))
+          body: JSON.stringify(Object.assign({ plan_id: planId }, extra || {})),
+          busy: button
         });
 
         var data = await response.json().catch(function () { return {}; });
@@ -274,7 +270,7 @@
           needSources: options.sources.excess || 0
         };
 
-        document.getElementById("dg-plan").textContent = options.plan.name;
+        modal.setAttribute("heading", "Make room for the " + options.plan.name + " plan");
         document.getElementById("dg-intro").textContent = message;
         dgError.hidden = true;
 
@@ -314,22 +310,23 @@
         continueButton.textContent = "Continue";
         refreshCounts();
 
-        if (!modal.open) {
-          if (typeof modal.showModal === "function") modal.showModal();
-          else modal.setAttribute("open", "");
-        }
+        window.appOpen(modal);
 
         // Focus on Cancel: a stray Enter must not unsync a catalogue.
         cancelButton.focus();
       }
 
       function closeChooser() {
-        if (typeof modal.close === "function") modal.close();
-        else modal.removeAttribute("open");
+        window.appClose(modal);
         choice = null;
       }
 
       cancelButton.addEventListener("click", closeChooser);
+
+      // Closed by Esc or the X, the same as Cancel.
+      modal.addEventListener("afterhide", function () {
+        choice = null;
+      });
 
       // Filters the product list in place. Ticked products stay ticked while
       // hidden, so a search never undoes a choice.
@@ -354,7 +351,7 @@
           var result = await select(choice.planId, {
             unsync_mapping_ids: ticked("dg-product-list"),
             pause_connection_ids: ticked("dg-source-list")
-          });
+          }, continueButton);
 
           if (result.ok) {
             closeChooser();
@@ -384,11 +381,12 @@
           button.addEventListener("click", async function () {
             pageError.hidden = true;
 
-            if (button.dataset.direction === "downgrade" && !window.confirm(
+            if (button.dataset.direction === "downgrade" && !(await window.appConfirm(
               "Downgrade to " + button.dataset.name + "?\n\n" +
               "If your store has more than this plan allows, you will choose " +
-              "what to unsync or pause next. Nothing is deleted."
-            )) return;
+              "what to unsync or pause next. Nothing is deleted.",
+              { confirmLabel: "Downgrade" }
+            ))) return;
 
             var label = button.textContent;
             button.disabled = true;
@@ -396,7 +394,7 @@
 
             try {
               var planId = Number(button.dataset.plan);
-              var result = await select(planId);
+              var result = await select(planId, null, button);
 
               if (result.ok) {
                 finish(result.data);

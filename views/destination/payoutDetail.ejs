@@ -203,9 +203,11 @@
                 <span class="pill pill--<%=
                   order.source_fulfillment_status === "fulfilled" ? "synced"
                   : order.source_fulfillment_status === "cancelled" ? "failed"
+                  : order.source_fulfillment_status === "partial" ? "paused"
                   : "pending" %>">
-                  <%= order.source_fulfillment_status === "unfulfilled"
-                      ? "awaiting supplier" : order.source_fulfillment_status %>
+                  <%= order.source_fulfillment_status === "unfulfilled" ? "unfulfilled"
+                      : order.source_fulfillment_status === "partial" ? "partially fulfilled"
+                      : order.source_fulfillment_status %>
                 </span>
               </td>
               <td><%= money(order.destination_total) %></td>
@@ -255,7 +257,8 @@
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body || {})
+              body: JSON.stringify(body || {}),
+              busy: button
             }
           );
 
@@ -298,10 +301,11 @@
       Array.prototype.slice.call(document.querySelectorAll(".delete-payment"))
         .forEach(function (button) {
           button.addEventListener("click", async function () {
-            if (!window.confirm(
+            if (!(await window.appConfirm(
               "Delete the " + button.dataset.amount + " payment?\n\n" +
-              "It goes back onto what you owe this supplier."
-            )) return;
+              "It goes back onto what you owe this supplier.",
+              { confirmLabel: "Delete payment", destructive: true }
+            ))) return;
 
             var data = await post(
               button,

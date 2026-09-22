@@ -246,7 +246,14 @@ async function countsWithMappingStatus(storeId, { search = null } = {}) {
  */
 async function listSyncedIntoStore(
   destinationStoreId,
-  { limit = 100, offset = 0, tab = null, mappingId = null, search = null } = {}
+  {
+    limit = 100,
+    offset = 0,
+    tab = null,
+    mappingId = null,
+    search = null,
+    connectionId = null,
+  } = {}
 ) {
   const params = [destinationStoreId];
   let where = "";
@@ -259,6 +266,14 @@ async function listSyncedIntoStore(
   if (mappingId !== null) {
     where += " AND pm.id = ?";
     params.push(Number(mappingId));
+  }
+
+  // One supplier's products. Narrowed here, in the query, for the same reason
+  // the tab is: the screen pages, and a page filtered after it is read is a
+  // page of however many happened to match.
+  if (connectionId !== null && connectionId !== undefined) {
+    where += " AND pm.connection_id = ?";
+    params.push(Number(connectionId));
   }
 
   const matching = searchClause(search, {
@@ -323,7 +338,10 @@ async function listSyncedIntoStore(
 }
 
 /** How many products sit under each tab, for the tab labels. */
-async function countsSyncedIntoStore(destinationStoreId, { search = null } = {}) {
+async function countsSyncedIntoStore(
+  destinationStoreId,
+  { search = null, connectionId = null } = {}
+) {
   const matching = searchClause(search, {
     extraColumns: ["src.shop_domain", "src.store_name"],
   });
@@ -336,14 +354,25 @@ async function countsSyncedIntoStore(destinationStoreId, { search = null } = {})
        JOIN source_products sp ON sp.id = pm.source_product_id`
     : "";
 
+  const params = [destinationStoreId, ...matching.params];
+  let where = matching.where;
+
+  // The tab labels count what the store filter would show, the same way they
+  // respect the search: "Synced (48)" while looking at one supplier's three
+  // would read as a broken filter.
+  if (connectionId !== null && connectionId !== undefined) {
+    where += " AND pm.connection_id = ?";
+    params.push(Number(connectionId));
+  }
+
   const rows = await query(
     `SELECT SUM(pm.accepted_at IS NOT NULL) AS synced,
             SUM(pm.accepted_at IS NULL)     AS unsynced
        FROM product_mappings pm
        JOIN store_connections c ON c.id = pm.connection_id
        ${joins}
-      WHERE c.destination_store_id = ?${matching.where}`,
-    [destinationStoreId, ...matching.params]
+      WHERE c.destination_store_id = ?${where}`,
+    params
   );
 
   const row = rows[0] || {};

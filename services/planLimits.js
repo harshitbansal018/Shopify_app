@@ -22,7 +22,7 @@
 // Nothing is ever removed automatically. A downgrade makes the merchant choose
 // what to unsync and pause BEFORE the plan changes, and a store that is already
 // over its limit -- on the day limits start being enforced, say -- keeps
-// everything it has and simply cannot add more until it is back under.
+
 const planModel = require("../models/planModel");
 const storeModel = require("../models/storeModel");
 const usageModel = require("../models/planUsageModel");

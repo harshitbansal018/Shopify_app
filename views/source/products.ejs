@@ -238,11 +238,12 @@
         node.hidden = false;
       }
 
-      async function post(url, body) {
+      async function post(url, body, button) {
         var response = await window.appFetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body || {})
+          body: JSON.stringify(body || {}),
+          busy: button
         });
         var data = await response.json().catch(function () { return {}; });
         if (!response.ok) throw new Error(data.error || "Request failed");
@@ -304,7 +305,7 @@
           allowButton.disabled = true;
 
           try {
-            var data = await post("/products/allow", { selections: selections() });
+            var data = await post("/products/allow", { selections: selections() }, allowButton);
             window.appToast("Allowed on " + data.destinations + " destination store(s)");
             // Reload where they were -- same filter, same search. Page 1,
             // though: the rows they just shared have moved.
@@ -357,21 +358,22 @@
 
             // This removes the product from OTHER merchants' stores, so say so
             // in as many words before doing it.
-            if (!window.confirm(
+            if (!(await window.appConfirm(
               'Delete "' + button.dataset.title + '"?\n\n' +
               (synced
                 ? "It will be PERMANENTLY DELETED from " + synced +
                   " destination store(s), along with its variants and images.\n\n"
                 : "") +
-              "It will also be removed from this list. This cannot be undone."
-            )) return;
+              "It will also be removed from this list. This cannot be undone.",
+              { confirmLabel: "Delete", destructive: true }
+            ))) return;
 
             pageError.hidden = true;
             button.disabled = true;
             button.textContent = "Deleting…";
 
             try {
-              var data = await post("/products/" + button.dataset.product + "/delete");
+              var data = await post("/products/" + button.dataset.product + "/delete", {}, button);
               window.appToast("Deleted from " + data.deleted + " store(s)");
               window.appNavigate("/products");
             } catch (err) {
@@ -442,10 +444,15 @@
                 })
               };
             })
-          });
+          }, addButton);
 
           window.appToast("Added " + data.imported + " product(s)");
-          window.appNavigate("/products");
+          // Land on Unshared: that is where a freshly added product sits, and
+          // the next thing to do with it -- tick it and Allow -- happens there.
+          // The picker reopens with everything pre-ticked, so a confirm that
+          // added nothing new still goes there; the list simply shows what is
+          // still waiting to be shared.
+          window.appNavigate("/products?filter=unshared");
         } catch (err) {
           addButton.disabled = false;
           addButton.textContent = "+ Add products";

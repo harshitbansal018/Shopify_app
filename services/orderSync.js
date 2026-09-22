@@ -28,6 +28,7 @@ const shopifyRequest = require("./shopify");
 const orderModel = require("../models/orderModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const orderMappingModel = require("../models/orderMappingModel");
+const orderShipmentModel = require("../models/orderShipmentModel");
 const customerModel = require("../models/customerModel");
 
 const ORDER_SYNC_INTERVAL_MS = Number(
@@ -224,41 +225,48 @@ function trackingInput(parcels) {
 }
 
 /**
- * Tell the buyer's store that the goods have shipped.
+ * Tell the buyer's store that one shipment has gone out.
  *
  * This is what makes the source's "Mark fulfilled" real: the destination's own
  * Shopify order is fulfilled with the same tracking, so the shopper sees it in
  * their account and Shopify emails them the shipping confirmation.
  *
- * Only this source's lines are fulfilled. Never throws: a fulfilment that
- * cannot be sent must not stop the rest of the queue.
+ * One SHIPMENT, not one sale: a sale shipped in two parcels is two
+ * fulfillments over there, each with its own tracking, which is what happened.
+ * Only the lines and quantities this shipment carried are fulfilled. Never
+ * throws: a fulfilment that cannot be sent must not stop the rest of the queue.
  */
-async function fulfilOne(mapping) {
+async function fulfilOne(shipment) {
   try {
-    // The destination's own line ids for this source's share, and how many of
-    // each. sourceLinesForOrder gives us our rows; the ids Shopify knows are
+    // The destination's own line ids for what this shipment carried, and how
+    // many of each. The shipment holds OUR line ids; the ids Shopify knows are
     // on order_line_items.
     const lines = await orderLineItemModel.destinationLinesForConnection(
-      mapping.destination_order_id,
-      mapping.connection_id
+      shipment.destination_order_id,
+      shipment.connection_id
     );
 
-    if (!lines.length) {
-      await orderMappingModel.markFulfilFailed(
-        mapping.id,
-        "None of this order's lines belong to this source any more"
-      );
-      return { ok: false, reason: "nothing to fulfil" };
+    const carried = new Map(
+      shipment.lines.map((line) => [Number(line.line_id), Number(line.quantity)])
+    );
+
+    const wanted = new Map();
+    lines.forEach((line) => {
+      const quantity = carried.get(Number(line.line_id));
+      if (quantity > 0) wanted.set(String(line.shopify_line_item_id), quantity);
+    });
+
+    if (!wanted.size) {
+      // Nothing of this shipment is on the buyer's order any more. Not a
+      // failure to retry: nothing will change on its own.
+      await orderShipmentModel.markSent(shipment.id, null);
+      return { ok: true, nothingToFulfil: true };
     }
 
-    const wanted = new Map(
-      lines.map((line) => [String(line.shopify_line_item_id), line.quantity])
-    );
-
-    const read = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+    const read = await shopifyRequest.forShop(shipment.destination_shop_domain, {
       query: FULFILLMENT_ORDERS_QUERY,
       variables: {
-        id: `gid://shopify/Order/${mapping.destination_shopify_order_id}`,
+        id: `gid://shopify/Order/${shipment.destination_shopify_order_id}`,
       },
     });
 
@@ -270,16 +278,16 @@ async function fulfilOne(mapping) {
     if (!groups.length) {
       // Already shipped by the destination itself, or the order was cancelled.
       // Not a failure to retry: nothing will change on its own.
-      await orderMappingModel.markFulfilSent(mapping.id, null);
+      await orderShipmentModel.markSent(shipment.id, null);
       return { ok: true, alreadyFulfilled: true };
     }
 
     const fulfillment = { lineItemsByFulfillmentOrder: groups, notifyCustomer: true };
-    const tracking = trackingInput(mapping.source_tracking);
+    const tracking = trackingInput(shipment.tracking);
 
     if (tracking) fulfillment.trackingInfo = tracking;
 
-    const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+    const data = await shopifyRequest.forShop(shipment.destination_shop_domain, {
       query: FULFILLMENT_CREATE_MUTATION,
       variables: { fulfillment },
     });
@@ -289,29 +297,28 @@ async function fulfilOne(mapping) {
 
     if (userErrors.length) {
       const reason = userErrors.map((e) => e.message).join("; ");
-      await orderMappingModel.markFulfilFailed(mapping.id, reason);
+      await orderShipmentModel.markFailed(shipment.id, reason);
       return { ok: false, reason };
     }
 
-    await orderMappingModel.markFulfilSent(
-      mapping.id,
+    await orderShipmentModel.markSent(
+      shipment.id,
       numericId(result.fulfillment?.id)
     );
 
     return { ok: true, fulfillmentId: numericId(result.fulfillment?.id) };
   } catch (err) {
-    await orderMappingModel.markFulfilFailed(mapping.id, err.message);
+    await orderShipmentModel.markFailed(shipment.id, err.message);
     return { ok: false, reason: err.message };
   }
 }
-
 /** Send every queued fulfilment. */
 async function pushFulfilments({ limit = 50 } = {}) {
-  const pending = await orderMappingModel.listPendingFulfilments({ limit });
+  const pending = await orderShipmentModel.listPending({ limit });
   const totals = { fulfilled: 0, failed: 0 };
 
-  for (const mapping of pending) {
-    const result = await fulfilOne(mapping);
+  for (const shipment of pending) {
+    const result = await fulfilOne(shipment);
 
     if (result.ok) totals.fulfilled += 1;
     else totals.failed += 1;
@@ -321,24 +328,20 @@ async function pushFulfilments({ limit = 50 } = {}) {
 }
 
 /**
- * Undo a fulfilment that has already reached the buyer's store.
+ * Cancel one fulfillment in the buyer's store.
  *
- * Cancelling the Shopify fulfillment is what puts the order back to
- * unfulfilled there, so the shopper is not left with a shipping notice for a
- * parcel that is not coming.
- *
- * Called from the request rather than the queue: the merchant pressed Undo and
- * is waiting to be told whether it worked.
+ * What puts that part of the order back to unfulfilled over there, so the
+ * shopper is not left with a shipping notice for a parcel that is not coming.
+ * Returns rather than throws: the caller decides what an unwilling Shopify
+ * means for the sale.
  */
-async function cancelDestinationFulfilment(mapping) {
-  if (!mapping.destination_fulfillment_id) return { ok: true, nothingToDo: true };
+async function cancelDestinationFulfilment(mapping, fulfillmentId) {
+  if (!fulfillmentId) return { ok: true, nothingToDo: true };
 
   try {
     const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
       query: FULFILLMENT_CANCEL_MUTATION,
-      variables: {
-        id: `gid://shopify/Fulfillment/${mapping.destination_fulfillment_id}`,
-      },
+      variables: { id: `gid://shopify/Fulfillment/${fulfillmentId}` },
     });
 
     const userErrors = data.fulfillmentCancel?.userErrors || [];
@@ -347,11 +350,155 @@ async function cancelDestinationFulfilment(mapping) {
       return { ok: false, reason: userErrors.map((e) => e.message).join("; ") };
     }
 
-    await orderMappingModel.clearDestinationFulfilment(mapping.id);
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: err.message };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* What the source ships                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The sale's lines with how many of each have shipped and how many are left.
+ *
+ * What both the detail screen and the shipping request work from, so the
+ * numbers the merchant sees are the numbers the request is checked against.
+ */
+async function lineProgress(mapping) {
+  const [lines, shipped] = await Promise.all([
+    orderLineItemModel.destinationLinesForConnection(
+      mapping.destination_order_id,
+      mapping.connection_id
+    ),
+    orderShipmentModel.shippedByLine(mapping.id),
+  ]);
+
+  return lines.map((line) => {
+    const done = shipped.get(Number(line.line_id)) || 0;
+    return {
+      line_id: Number(line.line_id),
+      quantity: Number(line.quantity),
+      shipped: Math.min(done, Number(line.quantity)),
+      remaining: Math.max(0, Number(line.quantity) - done),
+    };
+  });
+}
+
+/**
+ * Record that some or all of a sale has shipped.
+ *
+ * `lines` is [{ line_id, quantity }] -- what is going out NOW. Left out, it
+ * means everything still unshipped. Anything over what is left on a line is
+ * refused outright rather than trimmed: a merchant who typed 5 when 3 were
+ * left has made a mistake worth telling them about, not quietly fixing.
+ *
+ * The sale's status is then set from the totals -- partial while anything is
+ * still to go, fulfilled once nothing is -- and the shipment is queued for
+ * the buyer's store. Returns the shipment, or null if nothing was shippable.
+ */
+async function recordShipment(mappingId, { lines = null, tracking = [] } = {}) {
+  const mapping = await orderMappingModel.findById(mappingId);
+
+  if (!mapping || mapping.source_fulfillment_status === "cancelled") return null;
+
+  const progress = await lineProgress(mapping);
+  const remainingById = new Map(progress.map((line) => [line.line_id, line.remaining]));
+
+  let shipping;
+
+  if (lines === null) {
+    shipping = progress
+      .filter((line) => line.remaining > 0)
+      .map((line) => ({ line_id: line.line_id, quantity: line.remaining }));
+  } else {
+    shipping = [];
+
+    for (const line of lines || []) {
+      const id = Number(line.line_id);
+      const quantity = Number(line.quantity);
+
+      if (!remainingById.has(id)) {
+        throw invalid(`Line ${id} is not on this sale.`);
+      }
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        throw invalid("Quantities must be whole numbers.");
+      }
+      if (quantity > remainingById.get(id)) {
+        throw invalid(
+          `Only ${remainingById.get(id)} left to ship on one of the lines; ` +
+            `you entered ${quantity}.`
+        );
+      }
+      if (quantity > 0) shipping.push({ line_id: id, quantity });
+    }
+  }
+
+  // A sale with no lines left at all -- every product on it since unsynced,
+  // or a webhook that took them away -- can still be closed out. There is
+  // nothing to ship, and nothing to fulfil in the buyer's store, but the
+  // merchant needs a way to get it off the To fulfil list.
+  const closingOut = lines === null && progress.length === 0;
+
+  if (!shipping.length && !closingOut) {
+    throw invalid("Nothing to ship: enter a quantity on at least one line.");
+  }
+
+  const shipment = await orderShipmentModel.create(mapping.id, {
+    lines: shipping,
+    tracking,
+  });
+
+  const totalRemaining = progress.reduce((sum, line) => sum + line.remaining, 0);
+  const nowShipping = shipping.reduce((sum, line) => sum + line.quantity, 0);
+
+  await orderMappingModel.setSourceStatus(
+    mapping.id,
+    nowShipping >= totalRemaining ? "fulfilled" : "partial"
+  );
+
+  return shipment;
+}
+
+/** A bad request, with the status a handler should answer with. */
+function invalid(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+/**
+ * Undo every shipment on a sale: back to unfulfilled.
+ *
+ * Each fulfillment already created in the buyer's store is cancelled FIRST,
+ * and the whole thing stops at the first one that will not cancel -- saying
+ * the sale is unfulfilled here while the buyer's order still says shipped
+ * would be the worse of the two lies.
+ *
+ * Called from the request rather than the queue: the merchant pressed Undo and
+ * is waiting to be told whether it worked.
+ */
+async function reopen(mapping) {
+  const shipments = await orderShipmentModel.listForMapping(mapping.id);
+
+  for (const shipment of shipments) {
+    if (shipment.push_status === "cancelled") continue;
+
+    if (shipment.destination_fulfillment_id) {
+      const undone = await cancelDestinationFulfilment(
+        mapping,
+        shipment.destination_fulfillment_id
+      );
+
+      if (!undone.ok) return undone;
+    }
+
+    await orderShipmentModel.markCancelled(shipment.id);
+  }
+
+  await orderMappingModel.markUnfulfilled(mapping.id);
+  return { ok: true, undone: shipments.length };
 }
 
 const ORDER_CANCEL_MUTATION = `
@@ -553,6 +700,9 @@ module.exports = {
   fulfilOne,
   pushFulfilments,
   cancelDestinationFulfilment,
+  lineProgress,
+  recordShipment,
+  reopen,
   fulfilmentLinesFor,
   trackingInput,
   cancelOne,

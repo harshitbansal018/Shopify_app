@@ -5,6 +5,10 @@
   The section links are plain anchors to ids on this page -- no JavaScript, so
   they work before any script runs and the browser handles the back button.
 %>
+<%# Section links are anchors on the landing page. From any OTHER page --
+    the privacy policy -- they have to go back to it first, so a page that
+    is not the landing page passes navBase: "/home". %>
+<% var base = typeof navBase !== "undefined" ? navBase : ""; %>
 <header class="nav" id="top">
   <div class="wrap nav__inner">
 
@@ -12,20 +16,20 @@
       <img class="nav__logo" src="/images/product-sync-logo-256.png"
            alt="" width="34" height="34">
       <span class="nav__name"><%= PRODUCT.name %></span>
-      <span class="nav__by">by <%= COMPANY.name %></span>
+      <!-- <span class="nav__by">by <%= COMPANY.name %></span> -->
     </a>
 
     <%# Hidden on narrow screens rather than folded into a burger menu: four
         anchors to sections of the SAME page are not worth a menu, and the
         page can simply be scrolled. %>
     <nav class="nav__links" aria-label="Sections">
-      <a href="#how-it-works">How it works</a>
-      <a href="#features">Features</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#faq">FAQ</a>
+      <a href="<%= base %>#how-it-works">How it works</a>
+      <a href="<%= base %>#features">Features</a>
+      <a href="<%= base %>#pricing">Pricing</a>
+      <a href="<%= base %>#faq">FAQ</a>
     </nav>
 
-    <a class="btn btn--primary btn--small" href="#install">Install</a>
+    <a class="btn btn--primary btn--small" href="<%= base %>#install">Install</a>
 
   </div>
 </header>

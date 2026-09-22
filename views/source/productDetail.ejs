@@ -141,11 +141,12 @@
         pageError.hidden = false;
       }
 
-      async function post(url, body) {
+      async function post(url, body, button) {
         var response = await window.appFetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body || {})
+          body: JSON.stringify(body || {}),
+          busy: button
         });
         var data = await response.json().catch(function () { return {}; });
         if (!response.ok) throw new Error(data.error || "Request failed");
@@ -165,7 +166,7 @@
             try {
               await post("/products/" + productId + "/variants/remove", {
                 variant_id: button.dataset.variant
-              });
+              }, button);
               window.appToast("Variant removed from the offer");
               window.appNavigate("/products/" + productId);
             } catch (err) {
@@ -185,7 +186,7 @@
           try {
             await post("/products/reset-variants", {
               source_product_ids: [productId]
-            });
+            }, resetButton);
             window.appToast("All variants are shared again");
             window.appNavigate("/products/" + productId);
           } catch (err) {

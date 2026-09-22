@@ -31,6 +31,8 @@ const customerModel = require(path.join(SERVER, "models/customerModel"));
 const orderLineItemModel = require(path.join(SERVER, "models/orderLineItemModel"));
 const orderMappingModel = require(path.join(SERVER, "models/orderMappingModel"));
 const orderSync = require(path.join(SERVER, "services/orderSync"));
+const orderShipmentModel = require(path.join(SERVER, "models/orderShipmentModel"));
+const shopify = require(path.join(SERVER, "services/shopify"));
 
 const RUN = `os${Date.now().toString(36)}`;
 
@@ -293,21 +295,26 @@ function shopifyOrder(overrides = {}) {
       ]);
 
       const shipped = await orderMappingModel.findById(queued.id);
+      const [firstShipment] = await orderShipmentModel.listForMapping(queued.id);
 
       check("the row says fulfilled",
         shipped.source_fulfillment_status === "fulfilled");
+      check("it made one shipment, covering every line",
+        firstShipment &&
+          firstShipment.lines.length === 2 &&
+          firstShipment.lines.reduce((sum, l) => sum + l.quantity, 0) === 3,
+        "3 units across 2 lines were sold");
       check("every parcel is kept",
-        shipped.source_tracking.length === 2,
-        `${shipped.source_tracking.length} -- one order can ship in several boxes`);
+        firstShipment.tracking.length === 2,
+        `${firstShipment.tracking.length} -- one order can ship in several boxes`);
       check("a parcel with no number is dropped",
-        shipped.source_tracking.every((p) => p.number),
+        firstShipment.tracking.every((p) => p.number),
         "a blank tracking row is worse than none");
       check("the carrier and link come with it",
-        shipped.source_tracking[0].company === "DHL" &&
-          shipped.source_tracking[0].url === "https://dhl.test/1");
+        firstShipment.tracking[0].company === "DHL" &&
+          firstShipment.tracking[0].url === "https://dhl.test/1");
       check("and when it was marked",
         Boolean(shipped.source_status_at));
-
       check("the destination sees the same row",
         (await orderMappingModel.listForDestination(destination.id))
           .find((row) => row.id === queued.id)
@@ -390,13 +397,15 @@ function shopifyOrder(overrides = {}) {
           !second.length || second[0].id !== first[0].id);
       }
 
-      await orderMappingModel.markUnfulfilled(queued.id);
+      await orderSync.reopen(await orderMappingModel.findById(queued.id));
 
       const reopened = await orderMappingModel.findById(queued.id);
 
       check("undoing puts it back", reopened.source_fulfillment_status === "unfulfilled");
-      check("and clears the tracking",
-        reopened.source_tracking.length === 0,
+      check("and withdraws the shipment",
+        (await orderShipmentModel.shippedByLine(queued.id)).size === 0 &&
+          (await orderShipmentModel.listForMapping(queued.id))
+            .every((row) => row.push_status === "cancelled"),
         "stale tracking on an unshipped order would mislead the shopper");
     }
 
@@ -410,15 +419,15 @@ function shopifyOrder(overrides = {}) {
         { number: "TRACK-1", company: "DHL", url: "https://dhl.test/1" },
       ]);
 
-      const armed = await orderMappingModel.findById(queued.id);
+      const armed = (await orderShipmentModel.listForMapping(queued.id))
+        .find((row) => row.push_status !== "cancelled");
 
       check("marking it shipped queues the buyer's store",
-        armed.fulfil_status === "pending",
+        armed && armed.push_status === "pending",
         "saying it shipped and telling the shopper are one decision");
       check("and the round picks it up",
-        (await orderMappingModel.listPendingFulfilments())
-          .some((row) => row.id === queued.id));
-
+        (await orderShipmentModel.listPending())
+          .some((row) => row.id === armed.id));
       /* ---- only this source's lines ---- */
       // Shopify fulfils FULFILMENT orders, not orders, so our line ids have to
       // be translated first. wanted maps the buyer's line id -> quantity.
@@ -508,68 +517,224 @@ function shopifyOrder(overrides = {}) {
         "an empty trackingInfo is worse than omitting it");
 
       /* ---- the queue's own rules ---- */
-      await orderMappingModel.markFulfilSent(queued.id, "970055");
+      await orderShipmentModel.markSent(armed.id, "970055");
 
-      const sent = await orderMappingModel.findById(queued.id);
+      const sent = await orderShipmentModel.findById(armed.id);
 
       check("sending it records the fulfillment",
-        sent.fulfil_status === "fulfilled" &&
+        sent.push_status === "sent" &&
           String(sent.destination_fulfillment_id) === "970055",
         "undo needs that id to cancel the right one");
       check("and it leaves the queue",
-        (await orderMappingModel.listPendingFulfilments())
-          .every((row) => row.id !== queued.id));
+        (await orderShipmentModel.listPending())
+          .every((row) => row.id !== armed.id));
 
-      // Re-marking a sale that Shopify already knows about must not make a
-      // second fulfillment for the same goods.
-      await orderMappingModel.markFulfilled(queued.id, []);
+      // Everything has shipped, so there is nothing left to mark. A second
+      // Mark fulfilled must not make a second fulfillment for the same goods.
+      let refused = false;
+      try {
+        await orderSync.recordShipment(queued.id, {});
+      } catch (err) {
+        refused = err.statusCode === 400;
+      }
+      check("re-marking a fully shipped sale is refused",
+        refused &&
+          (await orderShipmentModel.listForMapping(queued.id))
+            .filter((row) => row.push_status !== "cancelled").length === 1,
+        "a second fulfillment for goods that have gone once");
 
-      check("re-marking it does not queue a second fulfillment",
-        (await orderMappingModel.findById(queued.id)).fulfil_status === "fulfilled");
+      await orderShipmentModel.markFailed(armed.id, "Already fulfilled");
 
-      await orderMappingModel.markFulfilFailed(queued.id, "Already fulfilled");
-
-      const failed = await orderMappingModel.findById(queued.id);
+      const failed = await orderShipmentModel.findById(armed.id);
 
       check("a failure is recorded with its reason",
-        failed.fulfil_status === "failed" &&
-          failed.fulfil_error === "Already fulfilled");
-      check("and the attempt is counted", failed.fulfil_attempts === 1);
+        failed.push_status === "failed" &&
+          failed.push_error === "Already fulfilled");
+      check("and the attempt is counted", failed.push_attempts === 1);
       check("it is retried",
-        (await orderMappingModel.listPendingFulfilments())
-          .some((row) => row.id === queued.id));
+        (await orderShipmentModel.listPending())
+          .some((row) => row.id === armed.id));
       check("but not forever",
-        (await orderMappingModel.listPendingFulfilments({ maxAttempts: 1 }))
-          .every((row) => row.id !== queued.id));
+        (await orderShipmentModel.listPending({ maxAttempts: 1 }))
+          .every((row) => row.id !== armed.id));
 
-      /* ---- undoing ---- */
-      await orderMappingModel.markUnfulfilled(queued.id);
+      /* ---- undoing: the buyer's fulfillment is cancelled first ---- */
+      const realForShop = shopify.forShop;
+      const cancelledIds = [];
 
-      const undone = await orderMappingModel.findById(queued.id);
+      shopify.forShop = async (shop, body) => {
+        cancelledIds.push(body.variables.id);
+        return { fulfillmentCancel: { fulfillment: { id: body.variables.id }, userErrors: [] } };
+      };
 
-      check("undoing takes it out of the queue",
-        undone.fulfil_status === "none" && undone.fulfil_attempts === 0);
-      check("but keeps the fulfillment id",
-        String(undone.destination_fulfillment_id) === "970055",
-        "it is the only handle on the fulfillment that has to be cancelled");
+      await orderShipmentModel.markSent(armed.id, "970055");
+      const undone = await orderSync.reopen(await orderMappingModel.findById(queued.id));
 
-      await orderMappingModel.clearDestinationFulfilment(queued.id);
+      check("undoing cancels the fulfillment in the buyer's store",
+        undone.ok &&
+          cancelledIds.length === 1 &&
+          cancelledIds[0] === "gid://shopify/Fulfillment/970055",
+        "the shopper must not keep a shipping notice for a parcel that is not coming");
+      check("and forgets the fulfillment id once it is cancelled",
+        (await orderShipmentModel.findById(armed.id)).destination_fulfillment_id === null);
+      check("and takes it out of the queue",
+        (await orderShipmentModel.listPending()).every((row) => row.id !== armed.id));
 
-      check("which is forgotten once it is cancelled",
-        (await orderMappingModel.findById(queued.id))
-          .destination_fulfillment_id === null);
+      // A refusal from Shopify stops the undo: the sale stays fulfilled here
+      // rather than saying unfulfilled while the buyer's order says shipped.
+      await orderMappingModel.markFulfilled(queued.id, []);
+      const again = (await orderShipmentModel.listForMapping(queued.id))
+        .find((row) => row.push_status !== "cancelled");
+      await orderShipmentModel.markSent(again.id, "970056");
+
+      shopify.forShop = async () => ({
+        fulfillmentCancel: { userErrors: [{ field: ["id"], message: "Already delivered" }] },
+      });
+
+      const blocked = await orderSync.reopen(await orderMappingModel.findById(queued.id));
+      check("a fulfillment Shopify will not cancel blocks the undo",
+        !blocked.ok && /Already delivered/.test(blocked.reason));
+      check("and the sale stays fulfilled",
+        (await orderMappingModel.findById(queued.id)).source_fulfillment_status === "fulfilled",
+        "saying unfulfilled here while the buyer's order says shipped is the worse lie");
+
+      shopify.forShop = async (shop, body) => ({
+        fulfillmentCancel: { fulfillment: { id: body.variables.id }, userErrors: [] },
+      });
+      await orderSync.reopen(await orderMappingModel.findById(queued.id));
+      shopify.forShop = realForShop;
 
       // A sale the source has since reopened must not be fulfilled by a round
       // that was already in flight.
       await orderMappingModel.markFulfilled(queued.id, []);
-      await orderMappingModel.markUnfulfilled(queued.id);
+      await orderSync.reopen(await orderMappingModel.findById(queued.id));
 
       check("a reopened sale is never sent",
-        (await orderMappingModel.listPendingFulfilments())
-          .every((row) => row.id !== queued.id));
+        (await orderShipmentModel.listPending())
+          .every((row) => row.order_mapping_id !== queued.id));
     }
 
-    console.log("\nThe source cannot supply it");
+    /* ---------------- shipping part of it ---------------- */
+
+    console.log("\nShipping part of it");
+    {
+      const before = await orderSync.lineProgress(await orderMappingModel.findById(queued.id));
+      const shirt = before.find((line) => line.quantity === 2);
+      const cap = before.find((line) => line.quantity === 1);
+
+      check("nothing has shipped yet",
+        before.every((line) => line.shipped === 0 && line.remaining === line.quantity));
+
+      // One of the two shirts.
+      const partial = await orderSync.recordShipment(queued.id, {
+        lines: [{ line_id: shirt.line_id, quantity: 1 }],
+        tracking: [{ number: "PART-1", company: "DHL" }],
+      });
+
+      check("the sale is now partially fulfilled",
+        (await orderMappingModel.findById(queued.id)).source_fulfillment_status === "partial");
+      check("it stays on the To fulfil tab",
+        (await orderMappingModel.listForSource(source.id, { tab: "open" }))
+          .some((row) => row.id === queued.id),
+        "there is more to send");
+      check("and is counted there",
+        (await orderMappingModel.statusCounts(source.id, { side: "source" })).partial === 1);
+
+      const during = await orderSync.lineProgress(await orderMappingModel.findById(queued.id));
+      check("the shirt line shows one of two shipped",
+        during.find((l) => l.line_id === shirt.line_id).shipped === 1 &&
+          during.find((l) => l.line_id === shirt.line_id).remaining === 1);
+      check("the cap line is untouched",
+        during.find((l) => l.line_id === cap.line_id).remaining === 1);
+
+      check("the shipment carries only what went",
+        partial.lines.length === 1 && partial.lines[0].quantity === 1);
+
+      // The push only fulfils what THIS shipment carried.
+      const realForShop2 = shopify.forShop;
+      let asked = null;
+      shopify.forShop = async (shop, body) => {
+        if (body.query.includes("fulfillmentOrders(first")) {
+          return {
+            order: {
+              fulfillmentOrders: {
+                nodes: [{
+                  id: "gid://shopify/FulfillmentOrder/9",
+                  status: "OPEN",
+                  lineItems: { nodes: [
+                    { id: "gid://shopify/FulfillmentOrderLineItem/1", remainingQuantity: 2, lineItem: { id: "gid://shopify/LineItem/950001" } },
+                    { id: "gid://shopify/FulfillmentOrderLineItem/2", remainingQuantity: 1, lineItem: { id: "gid://shopify/LineItem/950002" } },
+                  ] },
+                }],
+              },
+            },
+          };
+        }
+        asked = body.variables.fulfillment;
+        return { fulfillmentCreate: { fulfillment: { id: "gid://shopify/Fulfillment/970099", status: "SUCCESS" }, userErrors: [] } };
+      };
+
+      const pushed = await orderSync.fulfilOne(
+        (await orderShipmentModel.listPending()).find((row) => row.id === partial.id)
+      );
+      shopify.forShop = realForShop2;
+
+      check("the buyer's store is fulfilled for one shirt only",
+        pushed.ok &&
+          asked &&
+          asked.lineItemsByFulfillmentOrder[0].fulfillmentOrderLineItems.length === 1 &&
+          asked.lineItemsByFulfillmentOrder[0].fulfillmentOrderLineItems[0].quantity === 1,
+        JSON.stringify(asked && asked.lineItemsByFulfillmentOrder));
+      check("with this shipment's own tracking",
+        asked.trackingInfo && asked.trackingInfo.numbers[0] === "PART-1");
+
+      // Too many.
+      let tooMany = null;
+      try {
+        await orderSync.recordShipment(queued.id, { lines: [{ line_id: shirt.line_id, quantity: 2 }] });
+      } catch (err) { tooMany = err; }
+      check("shipping more than is left is refused, not trimmed",
+        tooMany && tooMany.statusCode === 400 && /Only 1 left/.test(tooMany.message),
+        tooMany && tooMany.message);
+
+      // Nothing.
+      let nothing = null;
+      try {
+        await orderSync.recordShipment(queued.id, { lines: [{ line_id: cap.line_id, quantity: 0 }] });
+      } catch (err) { nothing = err; }
+      check("shipping nothing is refused", nothing && nothing.statusCode === 400);
+
+      // The rest: no lines given means everything that is left.
+      const rest = await orderSync.recordShipment(queued.id, {
+        tracking: [{ number: "PART-2", company: "DHL" }],
+      });
+
+      check("the second shipment carries exactly what was left",
+        rest.lines.reduce((sum, l) => sum + l.quantity, 0) === 2,
+        "one shirt and one cap");
+      check("and completes the sale",
+        (await orderMappingModel.findById(queued.id)).source_fulfillment_status === "fulfilled");
+      check("which moves to Done",
+        (await orderMappingModel.listForSource(source.id, { tab: "done" }))
+          .some((row) => row.id === queued.id));
+      check("two shipments stand, each with its own tracking",
+        (await orderShipmentModel.listForMapping(queued.id))
+          .filter((row) => row.push_status !== "cancelled")
+          .map((row) => row.tracking[0].number).join() === "PART-1,PART-2");
+
+      // Undo withdraws both, and puts everything back.
+      shopify.forShop = async (shop, body) => ({
+        fulfillmentCancel: { fulfillment: { id: body.variables.id }, userErrors: [] },
+      });
+      await orderSync.reopen(await orderMappingModel.findById(queued.id));
+      shopify.forShop = realForShop2;
+
+      const after = await orderSync.lineProgress(await orderMappingModel.findById(queued.id));
+      check("undoing a partly shipped sale puts every unit back",
+        after.every((line) => line.shipped === 0));
+    }
+
+    console.log("\nThe source cannot supply it");    console.log("\nThe source cannot supply it");
     {
       await orderMappingModel.markCancelledBySource(queued.id, "out of stock");
 

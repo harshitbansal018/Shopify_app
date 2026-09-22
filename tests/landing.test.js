@@ -181,6 +181,67 @@ console.log("\nTelling a visitor from the Shopify admin");
   );
 
   check("/home exists as its own address", Boolean(home));
+
+  // The privacy policy's URL goes on the App Store listing, so it has to be
+  // public and stable.
+  check("/privacy exists as its own address",
+    router.stack.some((entry) => entry.route && entry.route.path === "/privacy"));
+}
+
+console.log("\nThe privacy policy");
+{
+  const policy = require(path.join(LANDING, "policy"));
+
+  const html = await ejs.renderFile(
+    path.join(LANDING, "views/policy.ejs"),
+    { ...content, UPDATED: policy.UPDATED, SECTIONS: policy.SECTIONS, year: 2026 }
+  );
+
+  check("it renders", html.length > 5000, String(html.length));
+  check("it is a privacy policy for the named app",
+    /<title>Privacy Policy[^<]*SyncHub/.test(html) && html.includes("Stellen Infotech"));
+  check("it is dated", html.includes(esc(policy.UPDATED)));
+  check("every section is on the page, with an anchor",
+    policy.SECTIONS.every((section) =>
+      html.includes(`id="${section.id}"`) && html.includes(esc(section.title))));
+  check("and listed in the contents",
+    policy.SECTIONS.every((section) => html.includes(`href="#${section.id}"`)));
+
+  /* The statements a reviewer looks for. Each one is also true of the code --
+   * see the comment at the top of landing/policy.js for where to check. */
+  const text = policy.SECTIONS.flatMap((s) => [...(s.paragraphs || []), ...(s.list || [])]).join(" ");
+
+  check("it says what is collected about shoppers",
+    /name, email address, phone number and addresses/.test(text));
+  check("it says the access token is encrypted and deleted on uninstall",
+    /encrypted/.test(text) && /deleted the moment you uninstall/.test(text));
+  check("it names the 48-hour window and shop\\/redact",
+    /48 hours/.test(text) && /shop\/redact/.test(text));
+  check("it covers customers\\/redact and data_request",
+    /customers\/redact/.test(text) && /data_request/.test(text));
+  check("it says data is not sold",
+    /do not sell/.test(text));
+  check("it says emails never carry a shopper's details",
+    /never contain a shopper's name, address or contact details/.test(text));
+  check("it gives a contact address",
+    text.includes(content.COMPANY.email));
+
+  // The nav is shared with the landing page, whose section links are bare
+  // anchors. From here they have to go back to that page first.
+  const withNav = await ejs.renderFile(
+    path.join(LANDING, "views/policy.ejs"),
+    { ...content, UPDATED: policy.UPDATED, SECTIONS: policy.SECTIONS, navBase: "/home", year: 2026 }
+  );
+  check("its nav links lead back to the landing page's sections",
+    withNav.includes('href="/home#pricing"') && withNav.includes('href="/home#install"'),
+    "a bare #pricing goes nowhere on this page");
+
+  check("the footer links to it",
+    (await ejs.renderFile(
+      path.join(LANDING, "views/landing.ejs"),
+      { ...content, plans: [], host: "", year: 2026 }
+    )).includes('href="/privacy"'),
+    "a policy nobody can find is not published");
 }
 
 console.log("\nThe page itself");
