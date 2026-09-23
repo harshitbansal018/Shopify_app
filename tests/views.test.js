@@ -960,6 +960,19 @@ const STORE_ROW = {
       unsynced.includes('id="accept-button"') &&
         unsynced.includes('id="decline-button"'));
 
+    // Sync and Decline sit side by side here, so a shared helper that picked
+    // one of them would spin and relabel Sync while Decline was running.
+    check("each bulk action reports back on the button that was pressed",
+      unsynced.includes('send("/products/accept", "Syncing…", acceptButton)') &&
+        unsynced.includes('send("/products/decline", "Declining…", declineButton)') &&
+        unsynced.includes('send("/products/decline", "Unsyncing…", unsyncButton)'),
+      "the spinner and the busy label belong on the button the merchant hit");
+    check("and every one of them gets its word back after a failure",
+      /declineButton\.textContent = "Decline"/.test(unsynced) &&
+        /acceptButton\.textContent = count/.test(unsynced) &&
+        /unsyncButton\.textContent = count/.test(unsynced),
+      "a failed attempt would leave the button reading 'Declining…' for good");
+
     check("the source store is named", unsynced.includes("Warehouse"));
     check("the product's own state moved next to its name",
       /table__title[\s\S]{0,220}ACTIVE/.test(unsynced),

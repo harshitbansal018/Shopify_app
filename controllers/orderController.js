@@ -276,6 +276,12 @@ exports.postUnfulfil = async (req, res) => {
     // the worse of the two lies.
     const undone = await orderSync.reopen(mapping);
 
+    // Someone shipped part of this while it was being undone: nothing is
+    // wrong with either store, the two just crossed.
+    if (undone.conflict) {
+      return res.status(409).json({ error: undone.reason });
+    }
+
     if (!undone.ok) {
       return res.status(502).json({
         error: `Could not undo it in ${

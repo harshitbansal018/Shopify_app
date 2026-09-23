@@ -24,6 +24,7 @@
 // a webhook or a screen must not wait on Shopify.
 //
 // Everything in between is order_mappings, which is the shared record.
+const { withTransaction } = require("../config/db");
 const shopifyRequest = require("./shopify");
 const orderModel = require("../models/orderModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
@@ -366,13 +367,15 @@ async function cancelDestinationFulfilment(mapping, fulfillmentId) {
  * What both the detail screen and the shipping request work from, so the
  * numbers the merchant sees are the numbers the request is checked against.
  */
-async function lineProgress(mapping) {
+async function lineProgress(mapping, { connection = null } = {}) {
   const [lines, shipped] = await Promise.all([
+    // What was ordered cannot change while it is being shipped, so this one
+    // is left on the pool even inside a transaction.
     orderLineItemModel.destinationLinesForConnection(
       mapping.destination_order_id,
       mapping.connection_id
     ),
-    orderShipmentModel.shippedByLine(mapping.id),
+    orderShipmentModel.shippedByLine(mapping.id, { connection }),
   ]);
 
   return lines.map((line) => {
@@ -399,11 +402,36 @@ async function lineProgress(mapping) {
  * the buyer's store. Returns the shipment, or null if nothing was shippable.
  */
 async function recordShipment(mappingId, { lines = null, tracking = [] } = {}) {
-  const mapping = await orderMappingModel.findById(mappingId);
+  /*
+   * One sale at a time.
+   *
+   * Shipping is read-then-write: how many are left, then the row saying what
+   * went. Two requests for the same sale -- two tabs, or a retry landing on
+   * top of a request that had not finished -- both read "2 left" and both
+   * ship 2, and a sale for two is recorded as four shipped.
+   *
+   * The lock makes the second wait for the first, so by the time it reads,
+   * the answer is 0 and it refuses on its own. Everything inside is database
+   * work: the buyer's store is told later, by the background round, so no
+   * Shopify call is ever made while this is held.
+   *
+   * A throw in here -- including the ordinary "only 2 left" refusals below --
+   * rolls the whole thing back, so a half-written shipment cannot survive.
+   */
+  return withTransaction(async (conn) => {
+    await orderMappingModel.lockForShipping(conn, mappingId);
+
+    return recordShipmentLocked(conn, mappingId, { lines, tracking });
+  });
+}
+
+/** The body of recordShipment, with this sale's row already held. */
+async function recordShipmentLocked(conn, mappingId, { lines, tracking }) {
+  const mapping = await orderMappingModel.findById(mappingId, { connection: conn });
 
   if (!mapping || mapping.source_fulfillment_status === "cancelled") return null;
 
-  const progress = await lineProgress(mapping);
+  const progress = await lineProgress(mapping, { connection: conn });
   const remainingById = new Map(progress.map((line) => [line.line_id, line.remaining]));
 
   let shipping;
@@ -445,17 +473,19 @@ async function recordShipment(mappingId, { lines = null, tracking = [] } = {}) {
     throw invalid("Nothing to ship: enter a quantity on at least one line.");
   }
 
-  const shipment = await orderShipmentModel.create(mapping.id, {
-    lines: shipping,
-    tracking,
-  });
+  const shipment = await orderShipmentModel.create(
+    mapping.id,
+    { lines: shipping, tracking },
+    { connection: conn }
+  );
 
   const totalRemaining = progress.reduce((sum, line) => sum + line.remaining, 0);
   const nowShipping = shipping.reduce((sum, line) => sum + line.quantity, 0);
 
   await orderMappingModel.setSourceStatus(
     mapping.id,
-    nowShipping >= totalRemaining ? "fulfilled" : "partial"
+    nowShipping >= totalRemaining ? "fulfilled" : "partial",
+    { connection: conn }
   );
 
   return shipment;
@@ -480,7 +510,18 @@ function invalid(message) {
  * is waiting to be told whether it worked.
  */
 async function reopen(mapping) {
-  const shipments = await orderShipmentModel.listForMapping(mapping.id);
+  /*
+   * Undoing is read-then-write too, but unlike recordShipment the middle of
+   * it is a call to the buyer's Shopify store, which can take seconds. A
+   * database lock is not held across that -- one slow reply would hold a
+   * pooled connection and make every competing request wait out the lock
+   * timeout. So the lock is taken twice, briefly, and the second time checks
+   * that the ground has not moved.
+   */
+  const shipments = await withTransaction(async (conn) => {
+    await orderMappingModel.lockForShipping(conn, mapping.id);
+    return orderShipmentModel.listForMapping(mapping.id, { connection: conn });
+  });
 
   for (const shipment of shipments) {
     if (shipment.push_status === "cancelled") continue;
@@ -497,8 +538,30 @@ async function reopen(mapping) {
     await orderShipmentModel.markCancelled(shipment.id);
   }
 
-  await orderMappingModel.markUnfulfilled(mapping.id);
-  return { ok: true, undone: shipments.length };
+  return withTransaction(async (conn) => {
+    await orderMappingModel.lockForShipping(conn, mapping.id);
+
+    // A shipment recorded while the cancellations were in flight is one this
+    // round never cancelled. Calling the sale unfulfilled now would hide a
+    // parcel that really is on its way, so say so instead.
+    const stillShipped = await orderShipmentModel.shippedByLine(mapping.id, {
+      connection: conn,
+    });
+    const outstanding = [...stillShipped.values()].reduce((sum, n) => sum + n, 0);
+
+    if (outstanding > 0) {
+      return {
+        ok: false,
+        conflict: true,
+        reason:
+          "Something else on this order shipped while it was being undone. " +
+          "Reload the order and try again.",
+      };
+    }
+
+    await orderMappingModel.markUnfulfilled(mapping.id, { connection: conn });
+    return { ok: true, undone: shipments.length };
+  });
 }
 
 const ORDER_CANCEL_MUTATION = `

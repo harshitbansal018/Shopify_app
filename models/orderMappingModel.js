@@ -112,9 +112,28 @@ async function findByPair(connectionId, destinationOrderId) {
   return hydrate(rows[0]);
 }
 
-async function findById(id) {
-  const rows = await query(`${SELECT_WITH_ORDER} WHERE om.id = ? LIMIT 1`, [id]);
+async function findById(id, { connection = null } = {}) {
+  const sql = `${SELECT_WITH_ORDER} WHERE om.id = ? LIMIT 1`;
+
+  // The caller's transaction when it has one -- see setSourceStatus below.
+  const rows = connection
+    ? (await connection.query(sql, [id]))[0]
+    : await query(sql, [id]);
+
   return hydrate(rows[0]);
+}
+
+/**
+ * Take this sale's row for the duration of the caller's transaction.
+ *
+ * Shipping is read-then-write -- how many are left, then record what went --
+ * and without this two requests for the same sale read the same "2 left" and
+ * each ship 2. Everyone who changes what has shipped takes this first, so
+ * they queue behind each other instead of overlapping. One sale only: another
+ * order is untouched, and plain reads never wait on it.
+ */
+async function lockForShipping(connection, id) {
+  await connection.query("SELECT id FROM order_mappings WHERE id = ? FOR UPDATE", [id]);
 }
 
 /**
@@ -245,12 +264,12 @@ async function statusCounts(storeId, { side = "destination" } = {}) {
  * one-way door -- a cancelled sale has been refunded, and nothing shipped
  * afterwards can change that.
  */
-async function setSourceStatus(id, status) {
+async function setSourceStatus(id, status, { connection = null } = {}) {
   if (!["unfulfilled", "partial", "fulfilled"].includes(status)) {
     throw new Error(`Not a shipping state: ${status}`);
   }
 
-  const [result] = await pool.query(
+  const [result] = await (connection || pool).query(
     `UPDATE order_mappings
         SET source_fulfillment_status = ?,
             source_status_at = NOW()
@@ -282,8 +301,8 @@ async function markFulfilled(id, tracking = []) {
  * cancelled -- see services/orderSync.reopen. Doing it here would forget the
  * fulfillment ids that are the only handle on those.
  */
-async function markUnfulfilled(id) {
-  return setSourceStatus(id, "unfulfilled");
+async function markUnfulfilled(id, { connection = null } = {}) {
+  return setSourceStatus(id, "unfulfilled", { connection });
 }
 
 /**
@@ -368,6 +387,7 @@ module.exports = {
   claim,
   findByPair,
   findById,
+  lockForShipping,
   listForDestination,
   listForSource,
   countForStore,
