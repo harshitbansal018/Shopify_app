@@ -144,6 +144,11 @@ async function save(connectionId, input = {}) {
     values[`sync_${field}`] = input[field] === false ? 0 : 1;
   });
 
+  // Stamped on every save, so the setup screen can tell a merchant who
+  // reviewed these and kept the defaults from one who never opened the
+  // screen. No value here can say that: every default is also a choice.
+  values.reviewed_at = new Date();
+
   const columns = ["connection_id", ...Object.keys(values)];
   const params = [connectionId, ...Object.values(values)];
 

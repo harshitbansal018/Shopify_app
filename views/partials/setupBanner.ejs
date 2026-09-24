@@ -1,0 +1,24 @@
+<%#
+  What is left of setup, on the dashboard of a store that skipped it.
+
+  Renders nothing unless `setup` is passed and has steps outstanding. The
+  controller works that out from the store's own data on every load, so this
+  disappears by itself the day the last step is done -- there is nothing here
+  to dismiss, and nothing that can go on claiming work is outstanding after it
+  has been finished.
+%>
+<% if (typeof setup !== "undefined" && setup && !setup.complete) { %>
+  <section class="notice notice--warn setup-banner">
+    <div class="setup-banner__text">
+      <strong>Setup is not finished</strong> &mdash;
+      <%= setup.done %> of <%= setup.total %> steps done.
+      <% if (setup.next) { %>
+        Next: <%= setup.next.title %>.
+      <% } %>
+    </div>
+
+    <button class="btn btn--small" type="button" data-navigate="/setup">
+      Finish setup
+    </button>
+  </section>
+<% } %>

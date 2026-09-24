@@ -341,8 +341,26 @@ async function setEmail(id, email) {
   ]);
 }
 
+/**
+ * Stop opening the app on the setup screen.
+ *
+ * Set when the merchant finishes setup, and equally when they skip it -- the
+ * column answers "should the app still open here", not "is setup complete".
+ * Whether the steps are done is read from the store's own data every time.
+ *
+ * Written once: a second call leaves the first date alone, so the record of
+ * when a store got going is not overwritten by a later visit.
+ */
+async function markOnboarded(id) {
+  await query(
+    "UPDATE stores SET onboarded_at = NOW() WHERE id = ? AND onboarded_at IS NULL",
+    [id]
+  );
+}
+
 module.exports = {
   setEmail,
+  markOnboarded,
   ROLES,
   findByDomain,
   findById,
