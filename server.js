@@ -16,6 +16,7 @@ const orderRoutes = require("./routes/orderRoute");
 const payoutRoutes = require("./routes/payoutRoute");
 const helpRoutes = require("./routes/helpRoute");
 const dashboardRoutes = require("./routes/dashboardRoute");
+const setupRoutes = require("./routes/setupRoute");
 const planRoutes = require("./routes/planRoute");
 const webhookRoutes = require("./routes/webhookRoute");
 // The public marketing site. Everything it needs -- its copy, its templates,
@@ -90,6 +91,8 @@ app.use("/plans", planRoutes);
 // Above storeRoutes and dashboardRoutes, because it claims "/" -- but only
 // when the request has no Shopify parameters on it. Anything the admin opens
 // falls straight through to the embedded app exactly as before.
+// Above the dashboard, which owns "/" and redirects to /setup.
+app.use("/", setupRoutes);
 app.use("/", landingRoutes);
 app.use("/", storeRoutes);
 app.use("/", dashboardRoutes);

@@ -45,6 +45,17 @@ async function indexIs(table, index, columns) {
   );
 }
 
+/** Is `column` already on `table`? */
+async function columnExists(table, column) {
+  const rows = await query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+
+  return rows.length > 0;
+}
+
 /** Drop something that may already be gone. */
 async function safeDrop(label, sql) {
   try {
@@ -1106,6 +1117,7 @@ async function runMigrations() {
   await seedPlans();
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
+  await addSyncSettingsReviewed();
   await backfillSyncSettings();
   // After BOTH store_connections and orders -- it has a foreign key onto each.
   await query(CREATE_ORDER_MAPPINGS);
@@ -1122,6 +1134,7 @@ async function runMigrations() {
   // connection sends, and the queue they go out from. Last, because both new
   // tables have foreign keys onto stores and store_connections.
   await addStoreEmail();
+  await addStoreOnboarding();
   await query(CREATE_NOTIFICATION_SETTINGS);
   await query(CREATE_EMAIL_OUTBOX);
 }
@@ -1253,6 +1266,58 @@ async function addStoreEmail() {
   await safeAlter(
     "stores.email",
     "ALTER TABLE stores ADD COLUMN email VARCHAR(255) DEFAULT NULL"
+  );
+}
+
+/**
+ * When the store stopped being shown the setup screen.
+ *
+ * The ONLY thing setup stores. Whether each step is done is worked out from
+ * the store's own data every time the screen is drawn -- see
+ * controllers/setupController.js -- because a saved tick and the real thing
+ * drift apart the moment a merchant undoes something.
+ *
+ * NULL means the app still opens on setup. A date means it opens on the
+ * dashboard, whether the steps were finished or skipped.
+ */
+async function addStoreOnboarding() {
+  // Backfilled the first time the column appears, and only then -- which is
+  // why this asks rather than leaning on safeAlter swallowing a duplicate.
+  if (await columnExists("stores", "onboarded_at")) return;
+
+  await safeAlter(
+    "stores.onboarded_at",
+    "ALTER TABLE stores ADD COLUMN onboarded_at TIMESTAMP NULL DEFAULT NULL"
+  );
+
+  /* Every store that was already here got set up before this screen existed.
+   * Whatever state it is in, walking a working store through a wizard on its
+   * next open would be an interruption, not help. */
+  await query("UPDATE stores SET onboarded_at = created_at WHERE onboarded_at IS NULL");
+}
+
+/**
+ * When the destination last saved this connection's settings.
+ *
+ * Asked by the setup screen, which has to tell "reviewed the defaults and
+ * kept them" apart from "never opened the screen". No stored VALUE can answer
+ * that -- every default is also a choice somebody might mean to make -- and
+ * comparing updated_at with created_at cannot either: both are TIMESTAMPs,
+ * good to the second, so a save in the same second as the connection reads as
+ * no save at all.
+ */
+async function addSyncSettingsReviewed() {
+  if (await columnExists("sync_settings", "reviewed_at")) return;
+
+  await safeAlter(
+    "sync_settings.reviewed_at",
+    "ALTER TABLE sync_settings ADD COLUMN reviewed_at TIMESTAMP NULL DEFAULT NULL"
+  );
+
+  // The best guess available for rows that predate the column: a row written
+  // again after it was created was written by somebody pressing Save.
+  await query(
+    "UPDATE sync_settings SET reviewed_at = updated_at WHERE updated_at > created_at"
   );
 }
 

@@ -7,6 +7,7 @@ const connectionModel = require("../models/connectionModel");
 const productMappingModel = require("../models/productMappingModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
 const { renderStoreType } = require("./storeController");
+const setupController = require("./setupController");
 
 /** Products sent out, destinations receiving them, and orders coming back. */
 async function sourceStats(storeId) {
@@ -133,11 +134,25 @@ exports.getDashboard = async (req, res) => {
       return renderStoreType(req, res);
     }
 
+    // Straight from picking a side to the setup screen, and back here only
+    // once it is finished or skipped. Rendered in place for the same reason
+    // as the picker above: a redirect drops the token off the URL.
+    if (!req.store.onboarded_at) {
+      return setupController.getSetup(req, res);
+    }
+
+    // Read every time rather than remembered, so a store that skipped setup
+    // and later finished it stops being nagged without pressing anything --
+    // and one that undoes a step is told again. A handful of counted rows,
+    // next to nothing beside the figures below.
+    const setup = await setupController.statusFor(req.store);
+
     // Each role has its own screen under views/<role>/.
     res.render(`${req.store.store_type}/dashboard`, {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
+      setup: setup.complete ? null : setup,
       stats:
         req.store.store_type === "destination"
           ? await destinationStats(req.storeId)

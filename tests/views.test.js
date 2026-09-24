@@ -2190,6 +2190,90 @@ const STORE_ROW = {
 
   console.log("\nPartials");
   {
+    /* ---- the setup screen ---- */
+
+    const setupLocals = (role, steps, code) => ({
+      ...BASE,
+      store: { ...STORE_ROW, store_type: role },
+      steps: steps.map((step, index) => ({
+        key: `k${index}`,
+        icon: "box",
+        title: `Step ${index + 1}`,
+        body: "What to do.",
+        action: { label: "Go", href: "/products" },
+        state: step,
+        note: step === "locked" ? "Do the one above first." : null,
+        detail: step === "done" ? "12 products." : null,
+        code: index === 1 ? code || null : null,
+      })),
+      done: steps.filter((s) => s === "done").length,
+      total: steps.length,
+      complete: steps.every((s) => s === "done"),
+      next: null,
+    });
+
+    const waiting = await render(
+      "setup",
+      setupLocals("source", ["done", "waiting", "locked"], {
+        code: "ABCD-1234",
+        expiresAt: new Date(Date.now() + 600000),
+        expired: false,
+        ttlMinutes: 15,
+      })
+    );
+
+    check("setup shows how far along the store is",
+      waiting.includes("1 of 3 done") && /role="progressbar"/.test(waiting));
+    check("a step waiting on the other store says so, and is not a tick",
+      /setup-step--waiting/.test(waiting) && !/setup-step--done[\s\S]{0,200}ABCD/.test(waiting),
+      "a code in somebody's hand is not a connection");
+    check("the code is on the screen with its countdown",
+      waiting.includes("ABCD-1234") && /id="setup-code-timer"[^>]*data-expires=/.test(waiting),
+      "so it can be read out without going back to Stores");
+    check("a locked step explains itself rather than just greying out",
+      /setup-step--locked/.test(waiting) && waiting.includes("Do the one above first"));
+    check("and there is a way past it",
+      waiting.includes('id="skip-setup"'),
+      "a buyer whose supplier is away cannot finish, and must not be trapped");
+
+    const expired = await render(
+      "setup",
+      setupLocals("source", ["done", "ready", "locked"], {
+        code: "ABCD-1234",
+        expiresAt: new Date(Date.now() - 60000),
+        expired: true,
+        ttlMinutes: 15,
+      })
+    );
+
+    check("an expired code says so instead of showing a dead number",
+      expired.includes("That code has expired") && !expired.includes("ABCD-1234"),
+      "the merchant would go on reading it out");
+    check("and offers a fresh one",
+      expired.includes("Generate a new code"));
+
+    const ready = await render("setup", setupLocals("destination", ["done", "done", "done"]));
+
+    check("a finished store gets the way out, not the list",
+      ready.includes("is ready") && !ready.includes("setup-steps") &&
+        /data-navigate="\/dashboard"/.test(ready));
+
+    /* ---- and what is left of it, on the dashboard ---- */
+
+    const banner = await render("partials/setupBanner", {
+      setup: { done: 1, total: 3, complete: false, next: { title: "Connect your supplier" } },
+    });
+
+    check("the dashboard banner counts what is left",
+      banner.includes("1 of 3") && banner.includes("Connect your supplier"));
+    check("and links back to finish it",
+      /data-navigate="\/setup"/.test(banner));
+    check("a finished store gets no banner at all",
+      (await render("partials/setupBanner", { setup: { complete: true } })).trim() === "",
+      "nothing to dismiss, because there is nothing to say");
+    check("and neither does a screen that passes no setup",
+      (await render("partials/setupBanner", {})).trim() === "");
+
     await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
 
     // The admin draws the app's name and icon above every screen, so drawing

@@ -40,8 +40,11 @@
           and install it again.
         </p>
         <div class="shell__actions">
-          <button class="btn btn--primary" type="button" onclick="window.appNavigate('/stores')">
-            Go to Stores
+          <%# The dashboard, not /setup directly: it sends a store that has
+              not finished setting up there itself, and one that has straight
+              to the dashboard. %>
+          <button class="btn btn--primary" type="button" onclick="window.appNavigate('/dashboard')">
+            Continue
           </button>
         </div>
       </section>
@@ -130,7 +133,7 @@
           }
 
           window.appToast("Store set up as " + data.store_type);
-          window.appNavigate("/stores");
+          window.appNavigate("/setup");
         } catch (err) {
           button.disabled = false;
           showError("Could not reach the app. Check your connection and retry.");

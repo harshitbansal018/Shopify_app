@@ -2205,3 +2205,249 @@ s-modal:not(:defined)[open] s-button {
   padding-top: 0.6rem;
   border-top: 1px solid var(--line-soft);
 }
+
+/* ---------------- setup ----------------
+   The screen a store lands on after picking its side, and the app's home
+   until it is finished. A numbered list where each step carries its own
+   state: done, ready to do, waiting on the other store, or locked behind an
+   earlier one. */
+
+.setup-progress {
+  margin: 0 0 1.5rem;
+}
+
+.setup-progress__track {
+  height: 6px;
+  background: var(--line-soft);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.setup-progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.setup-progress__label {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.setup-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-step {
+  display: flex;
+  gap: 0.9rem;
+  padding: 1.15rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.setup-step + .setup-step {
+  margin-top: 0.75rem;
+}
+
+/* The step to do next is the one thing on the screen with a border that is
+   not grey, so a merchant's eye lands on it without reading the list. */
+.setup-step--ready {
+  border-color: var(--brand);
+}
+
+/* Not faded to near-invisible: a locked step still has to be readable, or the
+   merchant cannot see what is coming or why it is waiting. */
+.setup-step--locked .setup-step__title,
+.setup-step--locked .setup-step__copy {
+  color: var(--muted);
+}
+
+/* The number, or a tick once it is done. */
+.setup-step__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 650;
+  background: var(--line-soft);
+  border-radius: 50%;
+}
+
+.setup-step--ready .setup-step__mark {
+  color: #fff;
+  background: var(--brand);
+}
+
+.setup-step--done .setup-step__mark {
+  color: #fff;
+  background: var(--ok);
+}
+
+.setup-step__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.setup-step__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.15rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.setup-step__tag {
+  padding: 0.1rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: var(--line-soft);
+  border-radius: 999px;
+}
+
+.setup-step__tag--done {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+/* Amber, not red: waiting is not a failure, and colouring it as one would
+   have merchants hunting for a mistake they have not made. */
+.setup-step__tag--waiting {
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+}
+
+.setup-step__copy {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.setup-step__copy.muted {
+  color: var(--muted);
+}
+
+.setup-step__actions {
+  margin-top: 0.75rem;
+}
+
+/* The pairing code, on the step that is about it. Big and spaced, because it
+   is read out loud or typed into another screen. */
+.setup-code {
+  margin: 0.75rem 0 0;
+  padding: 0.9rem 1rem;
+  background: var(--brand-soft);
+  border-radius: var(--radius);
+}
+
+.setup-code--expired {
+  background: var(--waiting-bg);
+}
+
+.setup-code__value {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.setup-code__timer {
+  margin: 0.2rem 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.setup-code__note {
+  margin: 0 0 0.7rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.setup-skip {
+  margin: 1.5rem 0 0;
+  text-align: center;
+}
+
+/* A link, not a button: skipping is the quiet way out, and a third solid
+   button would compete with the step the merchant is meant to press. */
+.btn--plain {
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.btn--plain:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--line-soft);
+  border-color: transparent;
+}
+
+/* ---- the finished screen ---- */
+
+.setup-done {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.setup-done__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  margin-bottom: 1rem;
+  color: #fff;
+  background: var(--ok);
+  border-radius: 50%;
+}
+
+.setup-done h1 {
+  margin: 0 0 0.6rem;
+  font-size: 1.4rem;
+}
+
+.setup-done__body {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ---- what is left, on the dashboard of a store that skipped ---- */
+
+.setup-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.setup-banner__text {
+  flex: 1 1 18rem;
+}

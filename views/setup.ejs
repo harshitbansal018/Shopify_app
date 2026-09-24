@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <%- include("partials/head") %>
+  <title>Set up <%= store.store_name || store.shop_domain %></title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+
+<body>
+
+  <%- include("partials/nav") %>
+
+  <main class="shell">
+
+    <% if (complete) { %>
+
+      <%# The last time this screen is seen. getSetup has already written
+          onboarded_at, so the next visit opens on the dashboard. %>
+      <section class="setup-done">
+        <span class="setup-done__mark"><%- include("partials/icon", { name: "check", size: 28 }) %></span>
+
+        <h1><%= store.store_name || store.shop_domain %> is ready</h1>
+
+        <p class="setup-done__body">
+          <% if (store.store_type === "source") { %>
+            Your buyer is connected and your products are shared. Orders will
+            appear on the Orders screen as they sell.
+          <% } else { %>
+            Your supplier is connected and their products are in your store.
+            Anything else they share will appear on the Products screen.
+          <% } %>
+        </p>
+
+        <button class="btn btn--primary" type="button" data-navigate="/dashboard">
+          Go to Dashboard
+        </button>
+      </section>
+
+    <% } else { %>
+
+      <header class="shell__header">
+        <div>
+          <h1>Set up <%= store.store_name || store.shop_domain %></h1>
+          <p class="shell__sub">
+            <% if (store.store_type === "source") { %>
+              Three things and you are ready to supply.
+            <% } else { %>
+              Three things and you are ready to sell.
+            <% } %>
+          </p>
+        </div>
+      </header>
+
+      <%# Progress as a bar and as words: the bar is read at a glance, the
+          words are what a screen reader gets. %>
+      <div class="setup-progress">
+        <div
+          class="setup-progress__track"
+          role="progressbar"
+          aria-valuenow="<%= done %>"
+          aria-valuemin="0"
+          aria-valuemax="<%= total %>"
+          aria-label="Setup progress">
+          <span class="setup-progress__fill" style="width: <%= Math.round((done / total) * 100) %>%"></span>
+        </div>
+        <p class="setup-progress__label"><%= done %> of <%= total %> done</p>
+      </div>
+
+      <ol class="setup-steps">
+        <% steps.forEach(function (step, index) { %>
+          <li class="setup-step setup-step--<%= step.state %>">
+
+            <span class="setup-step__mark" aria-hidden="true">
+              <% if (step.state === "done") { %>
+                <%- include("partials/icon", { name: "check", size: 16 }) %>
+              <% } else { %>
+                <%= index + 1 %>
+              <% } %>
+            </span>
+
+            <div class="setup-step__body">
+
+              <h2 class="setup-step__title">
+                <%= step.title %>
+
+                <% if (step.state === "done") { %>
+                  <span class="setup-step__tag setup-step__tag--done">Done</span>
+                <% } else if (step.state === "waiting") { %>
+                  <span class="setup-step__tag setup-step__tag--waiting">Waiting</span>
+                <% } else if (step.state === "locked") { %>
+                  <span class="setup-step__tag">Locked</span>
+                <% } %>
+              </h2>
+
+              <%# Done says what IS, the rest say what to do. Repeating the
+                  instructions under a finished step is just noise. %>
+              <p class="setup-step__copy">
+                <% if (step.state === "done" && step.detail) { %>
+                  <%= step.detail %>
+                <% } else if (step.state === "locked") { %>
+                  <%= step.note %>
+                <% } else { %>
+                  <%= step.body %>
+                <% } %>
+              </p>
+
+              <% if (step.state === "waiting" && step.note) { %>
+                <p class="setup-step__copy muted"><%= step.note %></p>
+              <% } %>
+
+              <%# The pairing code, on the one step that is about it. Shown
+                  here so the supplier does not have to go back to Stores to
+                  read it out, and with its countdown because it dies. %>
+              <% if (step.code) { %>
+                <div class="setup-code <%= step.code.expired ? "setup-code--expired" : "" %>">
+
+                  <% if (step.code.expired) { %>
+                    <p class="setup-code__note">
+                      <strong>That code has expired.</strong>
+                      Codes last <%= step.code.ttlMinutes %> minutes, so one
+                      left lying around cannot be used by anyone else.
+                      Generate a fresh one when your buyer is at their screen,
+                      ready to enter it.
+                    </p>
+                  <% } else { %>
+                    <p class="setup-code__value" id="setup-code"><%= step.code.code %></p>
+                    <p
+                      class="setup-code__timer"
+                      id="setup-code-timer"
+                      data-expires="<%= step.code.expiresAt.toISOString() %>">
+                      Expires in <%= step.code.ttlMinutes %>:00
+                    </p>
+                    <button class="btn btn--small" type="button" id="copy-code">Copy code</button>
+                  <% } %>
+
+                </div>
+              <% } %>
+
+              <% if (step.state !== "done" && step.state !== "locked") { %>
+                <div class="setup-step__actions">
+                  <button
+                    class="btn <%= step.state === "ready" ? "btn--primary" : "" %>"
+                    type="button"
+                    data-navigate="<%= step.action.href %>">
+                    <%= step.code && step.code.expired ? "Generate a new code" : step.action.label %>
+                  </button>
+                </div>
+              <% } %>
+
+            </div>
+          </li>
+        <% }); %>
+      </ol>
+
+      <%# The way out. Nothing a merchant has done is lost by skipping -- the
+          steps are read from their data, so the banner keeps telling the
+          truth and ticks itself when they finish. %>
+      <p class="setup-skip">
+        <button class="btn btn--plain" type="button" id="skip-setup">
+          Skip setup for now
+        </button>
+      </p>
+
+      <p class="notice notice--error" id="page-error" hidden></p>
+
+    <% } %>
+
+  </main>
+
+  <script>
+    (function () {
+      /* ---------------- the code's countdown ---------------- */
+
+      var timer = document.getElementById("setup-code-timer");
+
+      if (timer) {
+        var expires = new Date(timer.dataset.expires).getTime();
+
+        var tick = function () {
+          var left = Math.max(0, Math.floor((expires - Date.now()) / 1000));
+
+          if (left <= 0) {
+            // Expired while they watched. Reload rather than patch the box:
+            // the server writes the whole expired state, copy button and all.
+            clearInterval(ticking);
+            return window.appNavigate("/setup");
+          }
+
+          var minutes = Math.floor(left / 60);
+          var seconds = left % 60;
+          timer.textContent =
+            "Expires in " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+        };
+
+        var ticking = setInterval(tick, 1000);
+        tick();
+      }
+
+      /* ---------------- copy the code ---------------- */
+
+      var copy = document.getElementById("copy-code");
+
+      if (copy) {
+        copy.addEventListener("click", async function () {
+          var code = document.getElementById("setup-code").textContent.trim();
+
+          try {
+            await navigator.clipboard.writeText(code);
+            window.appToast("Code copied");
+          } catch (err) {
+            // Clipboard access is refused often enough inside an iframe that
+            // failing silently would look like a dead button.
+            window.appToast("Could not copy -- select the code instead", true);
+          }
+        });
+      }
+
+      /* ---------------- skipping ---------------- */
+
+      var skip = document.getElementById("skip-setup");
+      var pageError = document.getElementById("page-error");
+
+      if (skip) {
+        skip.addEventListener("click", async function () {
+          if (!(await window.appConfirm(
+            "Skip setup?\n\n" +
+            "Nothing you have already done is lost, and the dashboard will " +
+            "keep showing what is left until it is finished.",
+            { confirmLabel: "Skip setup" }
+          ))) return;
+
+          try {
+            var response = await window.appFetch("/setup/skip", {
+              method: "POST",
+              busy: skip
+            });
+
+            if (!response.ok) throw new Error("Could not skip setup.");
+
+            window.appNavigate("/dashboard");
+          } catch (err) {
+            pageError.textContent = err.message;
+            pageError.hidden = false;
+          }
+        });
+      }
+    })();
+  </script>
+
+</body>
+
+</html>
