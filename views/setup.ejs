@@ -3,7 +3,7 @@
 
 <head>
   <%- include("partials/head") %>
-  <title>Set up <%= store.store_name || store.shop_domain %></title>
+  <title>Configure your store</title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 
@@ -20,7 +20,7 @@
       <section class="setup-done">
         <span class="setup-done__mark"><%- include("partials/icon", { name: "check", size: 28 }) %></span>
 
-        <h1><%= store.store_name || store.shop_domain %> is ready</h1>
+        <h1>Your store is ready</h1>
 
         <p class="setup-done__body">
           <% if (store.store_type === "source") { %>
@@ -41,7 +41,7 @@
 
       <header class="shell__header">
         <div>
-          <h1>Set up <%= store.store_name || store.shop_domain %></h1>
+          <h1>Configure your store</h1>
           <p class="shell__sub">
             <% if (store.store_type === "source") { %>
               Three things and you are ready to supply.

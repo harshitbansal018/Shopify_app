@@ -55,7 +55,7 @@ const STEPS = {
       // itself the moment a code was made, and a code is single-use and dies
       // after CODE_TTL_MINUTES -- so it would go on claiming success long
       // after the code stopped working.
-      title: "Connect a buyer",
+      title: "Connect with destination store",
       body:
         "Generate a pairing code and give it to whoever runs the buying " +
         "store. They enter it on their own Stores screen.",
@@ -77,7 +77,7 @@ const STEPS = {
     {
       key: "connect",
       icon: "link",
-      title: "Connect your supplier",
+      title: "Connect with source store",
       body:
         "Ask your supplier to open this app, go to Stores, and press " +
         "Generate a code. Then enter that code on your Stores screen.",
@@ -244,9 +244,12 @@ function build(role, progress, code) {
       state = "done";
     } else if (step.blockedBy && !done.has(step.blockedBy)) {
       state = "locked";
-      note = `Available once you have ${
-        STEPS[role].find((other) => other.key === step.blockedBy).title.toLowerCase()
-      }.`;
+      // The blocking step quoted as its own heading rather than folded into
+      // the sentence: a title is a title, and lower-casing one into "once you
+      // have connect with destination store" reads as broken English.
+      note = `Available once "${
+        STEPS[role].find((other) => other.key === step.blockedBy).title
+      }" is done.`;
     } else if (role === "source" && step.key === "connect") {
       // The merchant's part is done as soon as a code is in their buyer's
       // hands; the rest is out of their control.
