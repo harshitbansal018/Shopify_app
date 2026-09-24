@@ -10,6 +10,21 @@
 const { query, pool } = require("../config/db");
 const { parseJson } = require("./helpers");
 
+/**
+ * Rows, from the caller's transaction when it has one.
+ *
+ * Reading what has shipped and writing the next shipment have to happen
+ * inside one transaction, or two requests both read "2 left" and both ship 2.
+ * services/orderSync.recordShipment opens that transaction and passes its
+ * connection down; everything else calls these the ordinary way and gets the
+ * pool.
+ */
+async function rowsVia(connection, sql, params = []) {
+  if (!connection) return query(sql, params);
+  const [rows] = await connection.query(sql, params);
+  return rows;
+}
+
 /** JSON columns come back from MariaDB as strings. */
 function hydrate(row) {
   if (!row) return null;
@@ -41,10 +56,10 @@ function cleanTracking(tracking) {
  * the buyer are one decision, and splitting them would leave a gap where the
  * source thinks it is done and the shopper has heard nothing.
  */
-async function create(mappingId, { lines, tracking = [] }) {
+async function create(mappingId, { lines, tracking = [] }, { connection = null } = {}) {
   const parcels = cleanTracking(tracking);
 
-  const [result] = await pool.query(
+  const [result] = await (connection || pool).query(
     `INSERT INTO order_shipments (order_mapping_id, shipped_lines, tracking)
      VALUES (?, ?, ?)`,
     [
@@ -59,17 +74,22 @@ async function create(mappingId, { lines, tracking = [] }) {
     ]
   );
 
-  return findById(result.insertId);
+  return findById(result.insertId, { connection });
 }
 
-async function findById(id) {
-  const rows = await query("SELECT * FROM order_shipments WHERE id = ? LIMIT 1", [id]);
+async function findById(id, { connection = null } = {}) {
+  const rows = await rowsVia(
+    connection,
+    "SELECT * FROM order_shipments WHERE id = ? LIMIT 1",
+    [id]
+  );
   return hydrate(rows[0]);
 }
 
 /** Every shipment on a sale, oldest first -- cancelled ones included, as history. */
-async function listForMapping(mappingId) {
-  const rows = await query(
+async function listForMapping(mappingId, { connection = null } = {}) {
+  const rows = await rowsVia(
+    connection,
     "SELECT * FROM order_shipments WHERE order_mapping_id = ? ORDER BY id",
     [mappingId]
   );
@@ -80,8 +100,8 @@ async function listForMapping(mappingId) {
  * How many of each line have shipped so far: Map(line_id -> quantity), over
  * every shipment that still stands. A cancelled shipment shipped nothing.
  */
-async function shippedByLine(mappingId) {
-  const shipments = await listForMapping(mappingId);
+async function shippedByLine(mappingId, { connection = null } = {}) {
+  const shipments = await listForMapping(mappingId, { connection });
   const shipped = new Map();
 
   shipments

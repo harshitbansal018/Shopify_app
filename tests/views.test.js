@@ -960,6 +960,19 @@ const STORE_ROW = {
       unsynced.includes('id="accept-button"') &&
         unsynced.includes('id="decline-button"'));
 
+    // Sync and Decline sit side by side here, so a shared helper that picked
+    // one of them would spin and relabel Sync while Decline was running.
+    check("each bulk action reports back on the button that was pressed",
+      unsynced.includes('send("/products/accept", "Syncing…", acceptButton)') &&
+        unsynced.includes('send("/products/decline", "Declining…", declineButton)') &&
+        unsynced.includes('send("/products/decline", "Unsyncing…", unsyncButton)'),
+      "the spinner and the busy label belong on the button the merchant hit");
+    check("and every one of them gets its word back after a failure",
+      /declineButton\.textContent = "Decline"/.test(unsynced) &&
+        /acceptButton\.textContent = count/.test(unsynced) &&
+        /unsyncButton\.textContent = count/.test(unsynced),
+      "a failed attempt would leave the button reading 'Declining…' for good");
+
     check("the source store is named", unsynced.includes("Warehouse"));
     check("the product's own state moved next to its name",
       /table__title[\s\S]{0,220}ACTIVE/.test(unsynced),
@@ -2177,11 +2190,34 @@ const STORE_ROW = {
 
   console.log("\nPartials");
   {
-    await expectRenders("nav renders", "partials/nav", {}, [
-      "s-app-nav",
-      "/images/product-sync-logo-256.png",
-      "Product Sync",
-    ]);
+    await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
+
+    // The admin draws the app's name and icon above every screen, so drawing
+    // them again at the top of the page said the same thing twice.
+    {
+      const nav = await render("partials/nav", {});
+
+      check("the nav carries no logo or app name of its own",
+        !nav.includes("app-brand") && !nav.includes("product-sync-logo"),
+        "the admin is already showing both");
+
+      const picker = await render("storeType", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: null },
+        roles: ["source", "destination"].map((value) => ({
+          value,
+          title: value,
+          blurb: "",
+          points: [],
+        })),
+        chosen: null,
+        copy: null,
+      });
+
+      check("and neither does the screen that runs before the nav exists",
+        !picker.includes("app-brand"),
+        "it is inside the admin too");
+    }
     await expectRenders("head renders", "partials/head", BASE, [
       "shopify-api-key",
       "app-bridge.js",

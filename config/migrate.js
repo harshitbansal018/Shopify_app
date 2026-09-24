@@ -24,6 +24,27 @@ async function safeAlter(label, sql) {
   }
 }
 
+/**
+ * Does `table` already carry `index` over exactly `columns`, in that order?
+ *
+ * Lets a migration that rebuilds an index skip the work when the index is
+ * already the shape it is trying to produce -- otherwise every boot pays for
+ * a rebuild that changes nothing.
+ */
+async function indexIs(table, index, columns) {
+  const rows = await query(
+    `SELECT COLUMN_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?
+      ORDER BY SEQ_IN_INDEX`,
+    [table, index]
+  );
+
+  return (
+    rows.length === columns.length &&
+    rows.every((row, position) => row.COLUMN_NAME === columns[position])
+  );
+}
+
 /** Drop something that may already be gone. */
 async function safeDrop(label, sql) {
   try {
@@ -564,8 +585,15 @@ const CREATE_CUSTOMERS = `
  */
 async function slimOrdersCustomerColumns() {
   await safeDrop("orders.idx_orders_email", "ALTER TABLE orders DROP INDEX idx_orders_email");
-  // Indexed a column that is going; rebuilt on created_at below.
-  await safeDrop("orders.idx_orders_placed", "ALTER TABLE orders DROP INDEX idx_orders_placed");
+
+  /* The old idx_orders_placed indexed a column that is going, so it has to be
+   * rebuilt on created_at. Only when it is actually still the old one, though:
+   * dropping and re-adding it unconditionally rebuilt the index on EVERY boot,
+   * which on a busy orders table is a table rebuild at startup and a window
+   * with no index for the queries that need it. */
+  if (!(await indexIs("orders", "idx_orders_placed", ["store_id", "created_at"]))) {
+    await safeDrop("orders.idx_orders_placed", "ALTER TABLE orders DROP INDEX idx_orders_placed");
+  }
 
   for (const column of [
     "presentment_currency",

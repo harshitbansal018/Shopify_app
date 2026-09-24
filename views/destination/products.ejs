@@ -487,6 +487,10 @@
             ? "Unsync " + count + " selected"
             : "Unsync selected";
         }
+        // No count on Decline -- it is the quieter of the two actions on this
+        // tab -- but its word still has to come back after a failed attempt
+        // left it reading "Declining…".
+        if (declineButton) declineButton.textContent = "Decline";
       }
 
       checks().forEach(function (check) {
@@ -500,22 +504,24 @@
         });
       }
 
-      async function send(url, label) {
+      async function send(url, label, pressed) {
         pageError.hidden = true;
 
         // Every one of them, not just the one pressed: a second action fired
         // mid-request would send the same ids twice.
         bulkButtons.forEach(function (button) { button.disabled = true; });
 
-        var busy = acceptButton || unsyncButton;
-        if (busy) busy.textContent = label;
+        // The button the merchant actually pressed is the one that reports
+        // back. Sync and Decline sit side by side on the Unsynced tab, so
+        // picking a fixed one would spin Sync while Decline was running.
+        if (pressed) pressed.textContent = label;
 
         try {
           var response = await window.appFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ mapping_ids: chosen() }),
-            busy: busy
+            busy: pressed
           });
 
           var data = await response.json().catch(function () { return {}; });
@@ -532,7 +538,7 @@
 
       if (acceptButton) acceptButton.addEventListener("click", async function () {
         // Accepting also pulls the products in, so this can take a moment.
-        var data = await send("/products/accept", "Syncing…");
+        var data = await send("/products/accept", "Syncing…", acceptButton);
 
         if (!data) return;
 
@@ -557,7 +563,7 @@
           { confirmLabel: "Stop syncing" }
         ))) return;
 
-        var data = await send("/products/decline", "Unsyncing…");
+        var data = await send("/products/decline", "Unsyncing…", unsyncButton);
 
         if (!data) return;
 
@@ -573,7 +579,7 @@
           { confirmLabel: "Decline" }
         ))) return;
 
-        var data = await send("/products/decline", "Declining…");
+        var data = await send("/products/decline", "Declining…", declineButton);
 
         if (!data) return;
 

@@ -790,6 +790,80 @@ function shopifyOrder(overrides = {}) {
           .every((row) => row.id !== queued.id));
     }
 
+    /* ---------------- two requests for the same sale at once ---------------- */
+
+    console.log("\nTwo requests shipping the same sale at once");
+    {
+      /* Shipping reads what is left, then writes what went. Without a lock
+       * both halves of a double request read the same "2 left" and each ship
+       * 2, and a sale for two is recorded as four shipped -- which Shopify
+       * then refuses, leaving a failed push to unpick by hand.
+       *
+       * A second tab, or a retry landing on a request that had not finished:
+       * rarer than a double click, and no longer stopped by the button. */
+      const second = await orderSync.cacheOrder(
+        destination.id,
+        shopifyOrder({
+          id: 900077,
+          order_number: 2077,
+          name: "#2077",
+          line_items: [{
+            id: 950077,
+            product_id: 990001,
+            variant_id: 910001,
+            quantity: 2,
+            price: String(PAID_SHIRT_PRICE.toFixed(2)),
+            title: "Blue Shirt",
+            variant_title: "S",
+            sku: "SH-S",
+          }],
+        })
+      );
+
+      await orderSync.queueForSources(destination.id, second);
+      const race = await orderMappingModel.findByPair(connection.id, second.id);
+
+      check("a fresh sale for two, nothing shipped",
+        race && race.source_fulfillment_status === "unfulfilled");
+
+      // Both fired before either can finish -- the real shape of the race.
+      const [a, b] = await Promise.allSettled([
+        orderSync.recordShipment(race.id, {}),
+        orderSync.recordShipment(race.id, {}),
+      ]);
+
+      const won = [a, b].filter((r) => r.status === "fulfilled" && r.value);
+      const refused = [a, b].filter(
+        (r) => r.status === "rejected" && r.reason.statusCode === 400
+      );
+
+      check("one of them ships",
+        won.length === 1,
+        `${won.length} succeeded -- both would mean the sale shipped twice`);
+      // Refused with the ordinary 400 the screen knows how to show. Without
+      // the lock this is where it goes wrong: the two transactions deadlock
+      // and one dies with ER_LOCK_DEADLOCK, which reaches the merchant as a
+      // 500 rather than "nothing left to ship".
+      check("and the other is refused cleanly, not left to the database",
+        refused.length === 1,
+        [a, b]
+          .map((r) => r.status + (r.reason ? `: [${r.reason.code || "400"}] ${r.reason.message}` : ""))
+          .join(" // "));
+
+      const shipments = await orderShipmentModel.listForMapping(race.id);
+      const total = shipments
+        .flatMap((shipment) => shipment.lines)
+        .reduce((sum, line) => sum + Number(line.quantity), 0);
+
+      check("exactly two units are recorded as shipped, not four",
+        total === 2,
+        `${total} units across ${shipments.length} shipment(s)`);
+      check("and the sale is fulfilled once",
+        (await orderMappingModel.findById(race.id)).source_fulfillment_status === "fulfilled");
+
+      await query("DELETE FROM orders WHERE id = ?", [second.id]);
+    }
+
     /* ---------------- the sale goes away ---------------- */
 
     console.log("\nDeleting the sale");
