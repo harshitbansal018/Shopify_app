@@ -2190,11 +2190,34 @@ const STORE_ROW = {
 
   console.log("\nPartials");
   {
-    await expectRenders("nav renders", "partials/nav", {}, [
-      "s-app-nav",
-      "/images/product-sync-logo-256.png",
-      "Product Sync",
-    ]);
+    await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
+
+    // The admin draws the app's name and icon above every screen, so drawing
+    // them again at the top of the page said the same thing twice.
+    {
+      const nav = await render("partials/nav", {});
+
+      check("the nav carries no logo or app name of its own",
+        !nav.includes("app-brand") && !nav.includes("product-sync-logo"),
+        "the admin is already showing both");
+
+      const picker = await render("storeType", {
+        ...BASE,
+        store: { ...STORE_ROW, store_type: null },
+        roles: ["source", "destination"].map((value) => ({
+          value,
+          title: value,
+          blurb: "",
+          points: [],
+        })),
+        chosen: null,
+        copy: null,
+      });
+
+      check("and neither does the screen that runs before the nav exists",
+        !picker.includes("app-brand"),
+        "it is inside the admin too");
+    }
     await expectRenders("head renders", "partials/head", BASE, [
       "shopify-api-key",
       "app-bridge.js",

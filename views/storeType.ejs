@@ -9,13 +9,11 @@
 
 <body>
 
-  <%# Before the choice there is nowhere else to go, so the nav is noise. %>
+  <%# Before the choice there is nowhere else to go, so the nav is noise. And
+      nothing stands in for it: this screen runs inside the admin, which is
+      already showing the app's name and icon above it. %>
   <% if (chosen) { %>
     <%- include("partials/nav") %>
-  <% } else { %>
-    <div class="app-brand-shell">
-      <%- include("partials/brand") %>
-    </div>
   <% } %>
 
   <main class="shell">

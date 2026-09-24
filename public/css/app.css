@@ -92,16 +92,6 @@ body {
   margin: 0 0 1.25rem;
 }
 
-.app-brand-shell {
-  max-width: none;
-  margin: 0 auto;
-  padding: 0 .75rem;
-}
-
-.app-brand-shell .app-brand {
-  width: 100%;
-}
-
 .app-brand__logo {
   display: block;
   flex: 0 0 auto;

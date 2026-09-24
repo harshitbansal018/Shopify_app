@@ -29,8 +29,9 @@
   <s-link href="/help">Help &amp; support</s-link>
 </s-app-nav>
 
-<%- include("brand") %>
+<%# No logo or app name here: the admin already puts both in its own header
+    above this app, so a second one is the same thing said twice. %>
 
-<%# Plan warnings, under the brand on every screen. Renders nothing unless a
-    destination store has something to be told. %>
+<%# Plan warnings on every screen. Renders nothing unless a destination store
+    has something to be told. %>
 <%- include("planBanner") %>
