@@ -2261,11 +2261,11 @@ const STORE_ROW = {
     /* ---- and what is left of it, on the dashboard ---- */
 
     const banner = await render("partials/setupBanner", {
-      setup: { done: 1, total: 3, complete: false, next: { title: "Connect your supplier" } },
+      setup: { done: 1, total: 3, complete: false, next: { title: "Connect with source store" } },
     });
 
     check("the dashboard banner counts what is left",
-      banner.includes("1 of 3") && banner.includes("Connect your supplier"));
+      banner.includes("1 of 3") && banner.includes("Connect with source store"));
     check("and links back to finish it",
       /data-navigate="\/setup"/.test(banner));
     check("a finished store gets no banner at all",
