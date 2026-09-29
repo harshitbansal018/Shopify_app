@@ -210,7 +210,24 @@ function featureLines(plan) {
     "Unlimited source stores"
   );
 
+  // A feature, not a ceiling, so it is listed only where it is included -- a
+  // Free card reading "no collection sync" would be advertising what it
+  // cannot do.
+  if (allowsCollections(plan)) lines.push("Collection sync");
+
   return [...lines, ...extraLines(plan)];
+}
+
+/**
+ * May a store on this plan switch Collection sync on?
+ *
+ * A plan row read before the column existed has no answer at all, and a
+ * missing answer has to mean no: the alternative is a store quietly creating
+ * collections in somebody's Shopify admin on the strength of a column that
+ * was never set.
+ */
+function allowsCollections(plan) {
+  return Number(plan && plan.allow_collections) === 1;
 }
 
 /** The free plan: where a store that has never chosen a plan sits. */
@@ -252,6 +269,7 @@ module.exports = {
   finishPaidPurchase,
   limitsOf,
   featureLines,
+  allowsCollections,
   extraLines,
   findFree,
   activeMembership,

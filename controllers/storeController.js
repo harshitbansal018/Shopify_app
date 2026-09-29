@@ -44,6 +44,7 @@ const FIELD_LABELS = {
   variant_cost: "Cost per item",
   variant_taxable: "Charge tax on variant",
   variant_continue_selling: "Continue selling when out of stock",
+  collections: "Collections",
 };
 
 /**
@@ -408,6 +409,12 @@ exports.getSettings = async (req, res) => {
       ? await notificationSettingsModel.forConnection(current.id)
       : null;
 
+    // Whether the Collections switch may be used, and which plan would open
+    // it. Asked of the same function the push asks, so the screen can never
+    // offer something the push would then refuse.
+    const planLimits = require("../services/planLimits");
+    const collections = await planLimits.collectionsAllowed(req.store);
+
     res.render("destination/settings", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
@@ -419,6 +426,8 @@ exports.getSettings = async (req, res) => {
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: FIELD_LABELS,
+      collectionsAllowed: collections.ok,
+      collectionsPlan: await planLimits.firstPlanWithCollections(),
     });
   } catch (err) {
     console.error("Settings screen failed:", err.message);
@@ -484,7 +493,28 @@ exports.postSettings = async (req, res) => {
       return res.status(404).json({ error: "Connection not found." });
     }
 
-    const saved = await syncSettingsModel.save(connectionId, req.body.settings || {});
+    const wanted = req.body.settings || {};
+
+    /* A disabled checkbox is only a disabled checkbox: the request behind it
+     * can say anything. Collection sync is the one switch here that depends
+     * on the plan, so it is checked again on the way in.
+     *
+     * Only TURNING IT ON is refused. A store that ticked this on a paid plan
+     * and has since downgraded still posts it ticked -- the box is locked,
+     * not cleared -- and refusing that would block every other setting on the
+     * screen with an error about a switch they did not touch. It keeps its
+     * value, does nothing, and works again the day they upgrade. */
+    const current = await syncSettingsModel.forConnection(connectionId);
+
+    if (wanted.collections === true && current.collections !== true) {
+      const allowed = await require("../services/planLimits").collectionsAllowed(req.store);
+
+      if (!allowed.ok) {
+        return res.status(402).json({ error: allowed.message });
+      }
+    }
+
+    const saved = await syncSettingsModel.save(connectionId, wanted);
     const queued = await productMappingModel.requeueForConnection(connectionId);
 
     console.log(

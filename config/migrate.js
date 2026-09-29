@@ -1009,17 +1009,21 @@ const CREATE_MEMBERSHIP_PAYMENTS = `
  *             ENFORCES (services/planLimits.js), and the cards' "Up to ..."
  *             lines are written from them -- so a card can never promise
  *             something different from what the app does.
+ *   collections
+ *             whether the destination may switch Collection sync on. Not a
+ *             limit but a gate: off, the Settings switch is shown locked with
+ *             the plan that would unlock it.
  *   extras    any other card lines (support level etc.), after the limits.
  *
  * The name is how a plan is found in the database: renaming one creates a new
  * plan and leaves the old one on sale. Removing a line does not remove a plan.
  */
 const PLANS = [
-  { name: "Free",       price: 0,   popular: false, products: 10,   orders: 50,   emails: 100,  sources: 1,    extras: ["Community support"] },
-  { name: "Starter",    price: 10,  popular: false, products: 100,   orders: 150,  emails: 200,  sources: 2,    extras: ["Email support"] },
-  { name: "Basic",      price: 25,  popular: false, products: 300,  orders: 500,  emails: 550, sources: 5,    extras: ["Email support"] },
-  { name: "Pro",        price: 50,  popular: true,  products: null,  orders: null, emails: null, sources: null, extras: ["Priority support"] },
-  // { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, extras: ["Dedicated support"] },
+  { name: "Free",       price: 0,   popular: false, products: 10,   orders: 50,   emails: 100,  sources: 1,    collections: false, extras: ["Community support"] },
+  { name: "Starter",    price: 10,  popular: false, products: 100,   orders: 150,  emails: 200,  sources: 2,    collections: true,  extras: ["Email support"] },
+  { name: "Basic",      price: 25,  popular: false, products: 300,  orders: 500,  emails: 550, sources: 5,    collections: true,  extras: ["Email support"] },
+  { name: "Pro",        price: 50,  popular: true,  products: null,  orders: null, emails: null, sources: null, collections: true,  extras: ["Priority support"] },
+  // { name: "Enterprise", price: 100, popular: false, products: null, orders: null, emails: null, sources: null, collections: true, extras: ["Dedicated support"] },
 ];
 
 /** The limit columns. NULL means unlimited; max_limit (products) already existed. */
@@ -1027,6 +1031,13 @@ async function addPlanLimitColumns() {
   await safeAlter("plans.max_orders", "ALTER TABLE plans ADD COLUMN max_orders INT NULL DEFAULT NULL");
   await safeAlter("plans.max_emails", "ALTER TABLE plans ADD COLUMN max_emails INT NULL DEFAULT NULL");
   await safeAlter("plans.max_sources", "ALTER TABLE plans ADD COLUMN max_sources INT NULL DEFAULT NULL");
+  // A gate rather than a limit: 0 means the Settings switch stays locked.
+  // Defaulting to 0 is the safe way round -- a plan that has not said it
+  // includes the feature does not include it.
+  await safeAlter(
+    "plans.allow_collections",
+    "ALTER TABLE plans ADD COLUMN allow_collections TINYINT(1) NOT NULL DEFAULT 0"
+  );
 }
 
 async function seedPlans() {
@@ -1038,14 +1049,16 @@ async function seedPlans() {
     await query(
       `INSERT INTO plans
         (name, price, is_popular, is_active, created_at, updated_at, days, status,
-         plan_for, plan_content, max_limit, max_orders, max_emails, max_sources)
-       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?, ?, ?, ?)
+         plan_for, plan_content, max_limit, max_orders, max_emails, max_sources,
+         allow_collections)
+       VALUES (?, ?, ?, 1, NOW(), NOW(), 30, 1, 1, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          price = VALUES(price), is_popular = VALUES(is_popular), is_active = 1,
          updated_at = NOW(), days = VALUES(days), status = VALUES(status),
          plan_for = VALUES(plan_for), plan_content = VALUES(plan_content),
          max_limit = VALUES(max_limit), max_orders = VALUES(max_orders),
-         max_emails = VALUES(max_emails), max_sources = VALUES(max_sources)`,
+         max_emails = VALUES(max_emails), max_sources = VALUES(max_sources),
+         allow_collections = VALUES(allow_collections)`,
       [
         plan.name,
         plan.price,
@@ -1055,6 +1068,7 @@ async function seedPlans() {
         plan.orders,
         plan.emails,
         plan.sources,
+        plan.collections ? 1 : 0,
       ]
     );
   }
@@ -1118,6 +1132,8 @@ async function runMigrations() {
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
   await addSyncSettingsReviewed();
+  await addSyncSettingsCollections();
+  await query(CREATE_COLLECTION_MAPPINGS);
   await backfillSyncSettings();
   // After BOTH store_connections and orders -- it has a foreign key onto each.
   await query(CREATE_ORDER_MAPPINGS);
@@ -1306,6 +1322,67 @@ async function addStoreOnboarding() {
  * good to the second, so a save in the same second as the connection reads as
  * no save at all.
  */
+/**
+ * Collection sync, off until the destination asks for it.
+ *
+ * Kept out of the TOGGLES list in models/syncSettingsModel.js on purpose:
+ * that list reads a missing key as ON, which is right for a field the app has
+ * always copied and wrong for one that starts CREATING things in a merchant's
+ * admin. DEFAULT 0 means no store wakes up to collections it did not ask for.
+ */
+async function addSyncSettingsCollections() {
+  await safeAlter(
+    "sync_settings.sync_collections",
+    "ALTER TABLE sync_settings ADD COLUMN sync_collections TINYINT(1) NOT NULL DEFAULT 0"
+  );
+}
+
+/*
+ * Which source collection became which destination collection.
+ *
+ * Two jobs, and the second is the important one:
+ *
+ *   1. A cache. Without it every product would ask the destination "is there
+ *      a collection with this handle" before it could be pushed -- fifty
+ *      products in one collection would be fifty needless calls against a
+ *      rate limit that is already the tightest thing in this app.
+ *
+ *   2. A record of WHO MADE IT. A destination that already had a collection
+ *      of that name keeps it, and we note that it is theirs. Nothing this app
+ *      did not create is ever renamed or removed, however the source's own
+ *      collection changes.
+ */
+const CREATE_COLLECTION_MAPPINGS = `
+  CREATE TABLE IF NOT EXISTS collection_mappings (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+
+    connection_id INT NOT NULL,
+
+    -- The source's collection, as Shopify numbers it over there.
+    source_shopify_collection_id BIGINT UNSIGNED NOT NULL,
+
+    -- What it became here. NULL while a create is being retried.
+    destination_shopify_collection_id BIGINT UNSIGNED DEFAULT NULL,
+
+    -- Kept for the log and for matching by handle on the first look.
+    title  VARCHAR(255) DEFAULT NULL,
+    handle VARCHAR(255) DEFAULT NULL,
+
+    -- 1 when this app created it, 0 when the destination already had one of
+    -- that handle and we joined theirs. Only our own are ever written to.
+    created_by_app TINYINT(1) NOT NULL DEFAULT 0,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uniq_connection_source_collection
+      (connection_id, source_shopify_collection_id),
+
+    CONSTRAINT fk_collection_mapping_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
 async function addSyncSettingsReviewed() {
   if (await columnExists("sync_settings", "reviewed_at")) return;
 

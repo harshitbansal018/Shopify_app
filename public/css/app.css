@@ -2451,3 +2451,22 @@ s-modal:not(:defined)[open] s-button {
 .setup-banner__text {
   flex: 1 1 18rem;
 }
+
+/* A switch this plan does not include. Readable, not hidden: a merchant
+   cannot decide to upgrade for something they never knew existed. */
+.toggles__item--locked {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.toggles__item--locked input {
+  cursor: not-allowed;
+}
+
+.tag--locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--waiting-ink);
+  background: var(--waiting-bg);
+}

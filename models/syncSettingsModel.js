@@ -37,6 +37,18 @@ const VARIANT_FIELDS = [
 // too but reads as a product-level idea to a merchant, so it sits on its own.
 const TOGGLES = [...PRODUCT_FIELDS, "variants", ...VARIANT_FIELDS, "inventory"];
 
+/*
+ * Switches that start OFF and stay off until the merchant says otherwise.
+ *
+ * Everything in TOGGLES is a field of a product this app already writes, so
+ * defaulting it on only decides whether a value follows the source. Collection
+ * sync is different in kind: it CREATES collections in the destination's
+ * admin. A store that upgrades its plan, or one that has been running for a
+ * year, must not find new collections in its catalogue because a default
+ * changed under it.
+ */
+const OFF_BY_DEFAULT = ["collections"];
+
 /**
  * How a source variant is matched to the destination variant it became.
  *
@@ -62,10 +74,16 @@ function hydrate(row) {
     settings[field] = Boolean(row[`sync_${field}`]);
   });
 
+  // Deliberately outside TOGGLES -- see OFF_BY_DEFAULT below.
+  settings.collections = Boolean(row.sync_collections);
+
   return settings;
 }
 
-/** What a connection with no row yet behaves like: everything on. */
+/**
+ * What a connection with no row yet behaves like: everything on, except the
+ * fields that start off.
+ */
 function defaults(connectionId = null) {
   const settings = {
     id: null,
@@ -76,6 +94,10 @@ function defaults(connectionId = null) {
 
   TOGGLES.forEach((field) => {
     settings[field] = true;
+  });
+
+  OFF_BY_DEFAULT.forEach((field) => {
+    settings[field] = false;
   });
 
   return settings;
@@ -144,6 +166,14 @@ async function save(connectionId, input = {}) {
     values[`sync_${field}`] = input[field] === false ? 0 : 1;
   });
 
+  // The other way round from TOGGLES: only an explicit true switches these
+  // on. A field the app has always copied is safe to default ON; one that
+  // CREATES things in the merchant's admin is not, and a key missing from a
+  // request must never be read as permission.
+  OFF_BY_DEFAULT.forEach((field) => {
+    values[`sync_${field}`] = input[field] === true ? 1 : 0;
+  });
+
   // Stamped on every save, so the setup screen can tell a merchant who
   // reviewed these and kept the defaults from one who never opened the
   // screen. No value here can say that: every default is also a choice.
@@ -177,6 +207,7 @@ module.exports = {
   PRODUCT_FIELDS,
   VARIANT_FIELDS,
   TOGGLES,
+  OFF_BY_DEFAULT,
   MATCH_KEYS,
   defaults,
   forConnection,
