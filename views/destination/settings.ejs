@@ -122,7 +122,38 @@
                 <input type="checkbox" name="inventory" <%= sync.inventory ? "checked" : "" %>>
                 <span><%= labels.inventory %></span>
               </label>
+
+              <%# Collection sync. Unlike every switch above it, this one does
+                  not decide whether a FIELD follows the source -- it decides
+                  whether the app CREATES collections in this store. So it
+                  starts off, and on a plan that does not include it the box
+                  is shown locked rather than hidden: a merchant cannot choose
+                  to upgrade for something they never knew was there. %>
+              <label class="toggles__item <%= collectionsAllowed ? "" : "toggles__item--locked" %>">
+                <input
+                  type="checkbox"
+                  name="collections"
+                  <%= sync.collections ? "checked" : "" %>
+                  <%= collectionsAllowed ? "" : "disabled" %>>
+                <span><%= labels.collections %></span>
+                <% if (!collectionsAllowed) { %>
+                  <span class="tag tag--locked">
+                    <%- include("../partials/icon", { name: "key", size: 12 }) %>
+                    <%= collectionsPlan %>
+                  </span>
+                <% } %>
+              </label>
             </div>
+
+            <% if (!collectionsAllowed) { %>
+              <p class="settings__hint">
+                Collection sync copies the groups a supplier keeps its products
+                in, so they arrive filed rather than loose.
+                <button class="btn btn--plain btn--small" type="button" data-navigate="/plans">
+                  See plans
+                </button>
+              </p>
+            <% } %>
           </div>
 
           <%# No master "Variants" checkbox: this is a section like the one

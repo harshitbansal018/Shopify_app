@@ -243,6 +243,54 @@ async function acceptProducts(store, mappingIds) {
 }
 
 /** Is there room for one more active source store? Checked before a code is spent. */
+/**
+ * May this store use Collection sync?
+ *
+ * Asked in two places that must never disagree: the Settings screen, which
+ * shows the switch locked or not, and the push itself, which decides whether
+ * to create anything. Reading it from the plan in one function is what stops
+ * a store that downgraded going on creating collections because a switch it
+ * ticked last month is still ticked.
+ *
+ * A store that never chose a plan is on Free, which does not include it.
+ */
+async function collectionsAllowed(store) {
+  const { plan } = await effectivePlan(store);
+
+  // No plan catalogue at all -- a misconfigured database -- is the one case
+  // that opens rather than closes: the same call elsewhere treats missing
+  // plans as "no limits" and locking a paying merchant out of a feature over
+  // our own mistake would be worse than letting it run.
+  if (!plan) return { ok: true, plan: null };
+
+  if (planModel.allowsCollections(plan)) return { ok: true, plan };
+
+  return {
+    ok: false,
+    plan,
+    message:
+      `Collection sync is not part of the ${plan.name} plan. ` +
+      "Upgrade to switch it on.",
+  };
+}
+
+/**
+ * The cheapest plan that includes Collection sync, by name.
+ *
+ * Named rather than hard-coded so the lock on the Settings screen follows the
+ * plan list in config/migrate.js. Move the feature down to Free and the
+ * screen stops mentioning an upgrade on its own.
+ */
+async function firstPlanWithCollections() {
+  const plans = await planModel.listActive();
+
+  const cheapest = plans
+    .filter((plan) => planModel.allowsCollections(plan))
+    .sort((a, b) => Number(a.price) - Number(b.price))[0];
+
+  return cheapest ? `${cheapest.name} plan` : "a paid plan";
+}
+
 async function sourceRoom(store) {
   const { plan } = await effectivePlan(store);
   const limit = plan ? planModel.limitsOf(plan).sources : null;
@@ -433,6 +481,8 @@ module.exports = {
   formatDate,
   acceptProducts,
   sourceRoom,
+  collectionsAllowed,
+  firstPlanWithCollections,
   resumeSource,
   emailAllowance,
   fitCheck,

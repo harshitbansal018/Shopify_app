@@ -14,6 +14,8 @@ const productMappingModel = require("../models/productMappingModel");
 const mappingVariantProductModel = require("../models/mappingVariantProductModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
+const collectionSync = require("./collectionSync");
+const planLimits = require("./planLimits");
 
 /* ------------------------------------------------------------------ */
 /* Reading the source catalogue                                        */
@@ -83,6 +85,12 @@ function flatten(node) {
       type: metafield.type,
       value: metafield.value,
     })),
+    collections: (node.collections?.nodes || []).map((collection) => ({
+      id: numericId(collection.id),
+      title: collection.title,
+      handle: collection.handle,
+      descriptionHtml: collection.descriptionHtml || null,
+    })),
     // The thumbnail for our own tables.
     image: featured || (images[0] ? images[0].url : null),
     // Everything, for copying onto the destination.
@@ -105,6 +113,10 @@ const PRODUCTS_BY_ID_QUERY = `
         id title handle vendor productType status descriptionHtml tags
         updatedAt totalInventory
         category { id }
+        # The groups this product sits in at the source. Membership only --
+        # a smart collection's RULES are never copied, because the buyer's
+        # margin has already changed every price they could be about.
+        collections(first: 20) { nodes { id title handle descriptionHtml } }
         metafields(first: 25) { nodes { namespace key type value } }
         featuredMedia { preview { image { url } } }
         media(first: 10) {
@@ -268,6 +280,17 @@ async function applySourceUpdate(storeId, payload) {
 
   // Not staged in the app: nothing to update and nothing to push.
   if (!known) return null;
+
+  /* A products/update payload does not carry collection membership -- Shopify
+   * simply does not put it in there -- and upsert replaces product_data
+   * wholesale. Without this line, editing a product's title at the source
+   * would quietly erase the collections we had read for it, and the next push
+   * would file it nowhere. Absent from the payload means UNCHANGED, not gone.
+   */
+  const cached = known.product_data || {};
+  if (product.collections === undefined && cached.collections !== undefined) {
+    product.collections = cached.collections;
+  }
 
   await sourceProductModel.upsert(storeId, product);
 
@@ -496,7 +519,7 @@ function buildProductInput(
   variants,
   settings,
   destinationProductId,
-  { locationId = null } = {}
+  { locationId = null, collections = null } = {}
 ) {
   const data = product.product_data || {};
   const sourceOptions = data.options || [];
@@ -636,6 +659,16 @@ function buildProductInput(
     }));
   }
 
+  /* Collections, when the destination asked for them and its plan includes
+   * them. Already resolved to destination ids by services/collectionSync,
+   * and already merged with whatever the buyer filed this product in
+   * themselves -- this field REPLACES membership, so a partial list would
+   * quietly undo their own filing.
+   *
+   * null means "could not work it out this round": leave the field off
+   * entirely and the destination keeps what it has. */
+  if (Array.isArray(collections)) input.collections = collections;
+
   // The handle is NOT copied: it must be unique per store, and a collision
   // fails the whole mutation. Shopify derives one from the title instead.
 
@@ -684,12 +717,47 @@ async function pushOne(connection, mapping) {
     ? await destinationLocationId(connection.destination.shop_domain)
     : null;
 
+  /* Two gates, both of which have to be open. The switch is the destination's
+   * own choice; the plan is what the switch was offered under. Checking the
+   * plan HERE as well as on the Settings screen is what stops a store that
+   * downgraded going on creating collections because a tick it made last
+   * month is still in the database. */
+  let collections = null;
+
+  if (settings.collections) {
+    const allowed = await planLimits.collectionsAllowed(connection.destination);
+
+    if (allowed.ok) {
+      /* Products staged before this app read collections have no record of
+       * them at all -- not an empty list, no key. Those are re-read from the
+       * source once, here, rather than being pushed into no collection for
+       * ever. An empty list IS an answer and is left alone. */
+      let staged = product;
+
+      if ((staged.product_data || {}).collections === undefined) {
+        const refreshed = await importProducts(
+          connection.source.shop_domain,
+          connection.source_store_id,
+          [staged.shopify_product_id]
+        );
+
+        staged = refreshed.products?.[0] || staged;
+      }
+
+      collections = await collectionSync.collectionsForProduct(
+        connection,
+        (staged.product_data || {}).collections,
+        mapping.destination_shopify_product_id
+      );
+    }
+  }
+
   const input = buildProductInput(
     product,
     variants,
     settings,
     mapping.destination_shopify_product_id,
-    { locationId }
+    { locationId, collections }
   );
 
   const data = await shopify.forShop(connection.destination.shop_domain, {
@@ -1260,6 +1328,7 @@ function stopAutoSync() {
 }
 
 module.exports = {
+  publishToOnlineStore,
   importProducts,
   fromWebhook,
   applySourceUpdate,

@@ -1259,6 +1259,9 @@ const STORE_ROW = {
         productFields: syncSettingsModel.PRODUCT_FIELDS,
         variantFields: syncSettingsModel.VARIANT_FIELDS,
         labels: controller.FIELD_LABELS,
+        // The plan gate on the Collections switch, as getSettings passes it.
+        collectionsAllowed: true,
+        collectionsPlan: "Starter plan",
         // The email panel's locals, exactly as getSettings passes them.
         notifications: require(path.join(SERVER, "models/notificationSettingsModel"))
           .defaults(9),
@@ -1287,9 +1290,13 @@ const STORE_ROW = {
     const notifyModel = require(path.join(SERVER, "models/notificationSettingsModel"));
     const emailCount = notifyModel.EMAILS.length;
 
+    // Plus the switches that start off -- Collections -- which are rendered
+    // alongside the rest but are not part of "everything on".
+    const offByDefault = syncSettingsModel.OFF_BY_DEFAULT;
+
     check("every toggle is rendered",
-      boxes(allOn).length === shown.length + emailCount,
-      `${boxes(allOn).length} of ${shown.length} + ${emailCount}`);
+      boxes(allOn).length === shown.length + offByDefault.length + emailCount,
+      `${boxes(allOn).length} of ${shown.length} + ${offByDefault.length} + ${emailCount}`);
 
     /* ---- email notifications, on a panel of their own ---- */
     check("the email panel is on the page", allOn.includes('class="panel notify"'));
@@ -1326,8 +1333,31 @@ const STORE_ROW = {
       !/<input[^>]*name="variants"/.test(allOn),
       "it read as a checkbox in front of a heading");
     check("defaults render as ticked",
-      boxes(allOn).every((tag) => /\bchecked\b/.test(tag)),
+      boxes(allOn)
+        .filter((tag) => !/name="collections"/.test(tag))
+        .every((tag) => /\bchecked\b/.test(tag)),
       "a merchant who has chosen nothing wants everything synced");
+
+    /* ---- except Collections, which starts off and is gated by plan ---- */
+
+    check("Collections starts unticked, unlike every other switch",
+      /<input[^>]*name="collections"(?![^>]*checked)[^>]*>/.test(allOn),
+      "the others decide whether a field follows; this one CREATES collections");
+
+    const locked = await settingsPage(syncSettingsModel.defaults(9), {
+      collectionsAllowed: false,
+      collectionsPlan: "Starter plan",
+    });
+
+    check("a plan without it shows the switch locked, not hidden",
+      /<input[^>]*name="collections"[^>]*disabled/.test(locked) &&
+        locked.includes("Starter plan"),
+      "nobody upgrades for a feature they were never shown");
+    check("and says what it would do, with a way to the plans",
+      locked.includes("arrive filed rather than loose") &&
+        /data-navigate="\/plans"/.test(locked));
+    check("while an allowed plan leaves it usable",
+      /<input[^>]*name="collections"(?![^>]*disabled)[^>]*>/.test(allOn));
 
     check("title cannot be turned off",
       /name="title"[^>]*disabled/.test(allOn),
@@ -1367,6 +1397,8 @@ const STORE_ROW = {
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: controller.FIELD_LABELS,
+      collectionsAllowed: true,
+      collectionsPlan: "Starter plan",
     });
 
     check("with no connection it points at Stores",
