@@ -23,20 +23,21 @@
       </div>
     </header>
 
-    <%# Two tabs, the same shape as every other screen here. FAQ is first
-        because someone opening Help usually has a question, not a fresh
-        install. %>
+    <%# Two tabs, the same shape as every other screen here. The steps come
+        first and open first: most people on this screen are still setting the
+        app up. %>
     <nav class="tabs">
-      <button
-        class="tabs__tab<%= tab === "faq" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="faq">
-        FAQ
-      </button>
       <button
         class="tabs__tab<%= tab === "install" ? " tabs__tab--on" : "" %>"
         type="button" data-tab="install">
         Installation steps
       </button>
+      <button
+        class="tabs__tab<%= tab === "faq" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="faq">
+        FAQ
+      </button>
+      
     </nav>
 
     <% if (tab === "install") { %>
