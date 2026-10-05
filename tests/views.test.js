@@ -1005,9 +1005,27 @@ const STORE_ROW = {
       /shell__actions[\s\S]{0,400}id="unsync-button"[\s\S]{0,400}id="sync-button"/
         .test(synced),
       "they are a pair -- refresh these, or stop receiving these");
-    check("it starts disabled",
-      /id="unsync-button"[^>]*disabled/.test(synced),
-      "it acts on ticked rows, and nothing is ticked on load");
+    check("BOTH start disabled",
+      /id="unsync-button"[^>]*disabled/.test(synced) &&
+        /id="sync-button"[^>]*disabled/.test(synced),
+      "they act on ticked rows, and nothing is ticked on load");
+    check("and both are wired to the selection",
+      /bulkButtons = \[[^\]]*unsyncButton[^\]]*syncButton/.test(synced),
+      "whatever enables one has to enable the other");
+    // "Upgrade your plan to add more" is half a sentence without somewhere
+    // to go, and the message arrives from the server, not the template.
+    check("a refusal by the plan offers the way out of it",
+      /error\.plan = Boolean\(data\.limit\)/.test(synced) &&
+        /link\.setAttribute\("data-navigate", "\/plans"\)/.test(synced),
+      "the merchant should not have to hunt the nav for Plans");
+    check("and the link is built as a node, not as HTML",
+      /link\.textContent = "See plans"/.test(synced) &&
+        !/pageError\.innerHTML/.test(synced),
+      "the message carries names a merchant typed");
+
+    check("Sync now sends what was ticked, not everything",
+      /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
+      "a button that acts on everything when nothing is chosen gets pressed by accident");
     check("and is styled as the destructive one",
       /class="btn btn--danger"[^>]*id="unsync-button"/.test(synced));
     check("it posts to decline, which is what clears accepted_at",
@@ -1072,9 +1090,13 @@ const STORE_ROW = {
       !unsynced.includes('id="allow-button"') &&
         !unsynced.includes('id="add-button"') &&
         !unsynced.includes("resourcePicker"));
-    check("but it does get its own Sync now",
-      unsynced.includes('id="sync-button"'),
-      "accepted products could never receive an update");
+    // Sync now refreshes products ALREADY in the store, so it belongs beside
+    // Unsync on the Synced tab. On Unsynced, ticking a row means "accept
+    // this", and a second button acting on the same ticks would be two
+    // different answers to one selection.
+    check("and no Sync now on the tab where ticks mean accept",
+      !unsynced.includes('id="sync-button"'),
+      "Sync and Decline already answer that selection");
 
     /* ---- Empty tabs still show the tabs ---- */
     const emptyUnsynced = await render("destination/products", {
@@ -1542,6 +1564,15 @@ const STORE_ROW = {
       /pill--pending">unfulfilled</.test(open),
       "the same word on both ends, so the two merchants are talking about the same state");
     check("every row opens", /class="[^"]*view-order"[^>]*data-order="11"/.test(open));
+
+    // The number is the one thing on the row that means something outside
+    // this app, so it goes to the order itself.
+    check("the order number opens the real order in Shopify",
+      open.includes("https://dst.myshopify.com/admin/orders/900001"),
+      "the buyer's own admin, where the sale actually lives");
+    check("in a new tab, so the app is not replaced",
+      /admin\/orders\/900001"[\s\S]{0,80}target="_blank"/.test(open),
+      "this app runs inside that admin's frame");
     check("and the destination has nothing to do here",
       !/class="[^"]*btn--primary"/.test(open),
       "the supplier does the work; this screen is a window onto it");

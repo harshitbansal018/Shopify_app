@@ -126,5 +126,34 @@ console.log("\nNo script looks up an element that is not there");
     stale.join(", "));
 }
 
+console.log("\nEvery link into the app stays in the app");
+{
+  /* <s-link> is App Bridge's link into the ADMIN. Handed a path belonging to
+   * this app it sends the merchant to admin.shopify.com instead, and even
+   * when it lands somewhere real the session token is gone. The app's own
+   * screens are reached with data-navigate, which goes through appNavigate.
+   *
+   * views/partials/nav.ejs is the exception: that IS the admin nav. */
+  const strays = [];
+
+  files
+    .filter((file) => path.relative(VIEWS, file) !== path.join("partials", "nav.ejs"))
+    .forEach((file) => {
+      const source = fs.readFileSync(file, "utf8");
+      const hits = source.match(/<s-link\s+href="[^"]*"/g) || [];
+      hits.forEach((hit) => strays.push(`${path.relative(VIEWS, file)} ${hit}`));
+    });
+
+  check("no screen outside the admin nav uses <s-link>", strays.length === 0,
+    strays.join("; "));
+
+  // And the replacement really is wired up, not just stripped out.
+  const dashboard = fs.readFileSync(path.join(VIEWS, "destination", "dashboard.ejs"), "utf8");
+
+  check("in-app links carry data-navigate",
+    /<a class="link" href="\/stores" data-navigate="\/stores">/.test(dashboard),
+    "href alone loses the session token");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;

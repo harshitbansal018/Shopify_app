@@ -440,6 +440,38 @@ async function requeueForConnection(connectionId) {
   return result.affectedRows;
 }
 
+/**
+ * Queue the chosen products for another push.
+ *
+ * What "Sync now" acts on. Scoped by destination store rather than by mapping
+ * id alone, for the same reason acceptForDestination is: the ids come from a
+ * browser, and one store must not be able to reach into another by guessing
+ * numbers.
+ *
+ * Only rows this store has accepted. A product still awaiting a decision has
+ * nothing to refresh, and a deleted one must not be quietly recreated.
+ */
+async function requeueForDestination(destinationStoreId, mappingIds) {
+  const ids = [...new Set((mappingIds || []).map(Number))].filter(
+    (id) => Number.isInteger(id) && id > 0
+  );
+
+  if (!ids.length) return 0;
+
+  const [result] = await pool.query(
+    `UPDATE product_mappings m
+       JOIN store_connections c ON c.id = m.connection_id
+        SET m.sync_status = 'pending'
+      WHERE m.id IN (?)
+        AND c.destination_store_id = ?
+        AND m.accepted_at IS NOT NULL
+        AND m.sync_status <> 'deleted'`,
+    [ids, destinationStoreId]
+  );
+
+  return result.affectedRows;
+}
+
 /** Change which variants may go out, without touching anything else. */
 async function setAllowedVariants(id, ids) {
   await query(
@@ -521,6 +553,7 @@ module.exports = {
   resetAllowedVariantsForProduct,
   requeueForSourceProduct,
   requeueForConnection,
+  requeueForDestination,
   acceptForDestination,
   declineForDestination,
   markSynced,

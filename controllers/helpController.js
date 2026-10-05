@@ -250,7 +250,7 @@ exports.getHelp = async (req, res) => {
 
     // FAQ first: someone opening Help usually has a question, not a fresh
     // install. The steps are one click away for the times it is the other way.
-    const tab = req.query.tab === "install" ? "install" : "faq";
+    const tab = req.query.tab === "faq" ? "faq" : "install";
 
     // Read every time rather than cached: the whole reason these are in the
     // database is that somebody can change them, and a cache would mean the
