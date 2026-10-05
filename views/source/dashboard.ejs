@@ -41,7 +41,7 @@
         <span class="card__value"><%= stats.cards.shared %></span>
         <span class="card__note">
           <% if (stats.cards.unshared) { %>
-            <%= stats.cards.unshared %> ready on <s-link href="/products?filter=unshared">Products</s-link>
+            <%= stats.cards.unshared %> ready on <a class="link" href="/products?filter=unshared" data-navigate="/products?filter=unshared">Products</a>
           <% } else { %>
             Everything staged is shared
           <% } %>
@@ -61,7 +61,7 @@
         <% if (!total) { %>
           <p class="panel__copy">
             No products staged yet. Add products on
-            <s-link href="/products?filter=unshared">Products</s-link>.
+            <a class="link" href="/products?filter=unshared" data-navigate="/products?filter=unshared">Products</a>.
           </p>
         <% } else { %>
           <div class="chart chart--pie">
@@ -102,13 +102,13 @@
       <section class="panel">
         <div class="panel__header">
           <h2 class="panel__title">Connected destination stores</h2>
-          <s-link href="/stores">Manage</s-link>
+          <a class="link" href="/stores" data-navigate="/stores">Manage</a>
         </div>
 
         <% if (!stats.byDestination.length) { %>
           <p class="panel__copy">
             No destination store is connected. Generate a pairing code on
-            <s-link href="/stores">Stores</s-link> and give it to the destination store.
+            <a class="link" href="/stores" data-navigate="/stores">Stores</a> and give it to the destination store.
           </p>
         <% } else { %>
           <%

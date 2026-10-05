@@ -12,7 +12,7 @@
       <p class="notice notice--<%= item.level === "error" ? "error" : "warn" %> plan-banner__item"
          data-limit="<%= item.key %>">
         <span><%= item.text %></span>
-        <s-link href="/plans">See plans</s-link>
+        <a class="link" href="/plans" data-navigate="/plans">See plans</a>
       </p>
     <% }); %>
   </div>

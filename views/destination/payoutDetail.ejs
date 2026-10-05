@@ -194,10 +194,13 @@
             %>
             <tr class="<%= counts ? "" : "row--placeholder" %>">
               <td>
-                <span class="table__title">
-                  <%= order.destination_order_name
-                      || ("#" + order.destination_shopify_order_id) %>
-                </span>
+                <%# The sale in the buyer's own Shopify admin. A new tab: this app
+                    lives inside that admin's frame, and replacing it would put the
+                    merchant outside the app with no way back but the browser. %>
+                <a class="table__title record-link"
+                   href="<%= shopifyAdminUrl(order.destination_shop_domain, 'orders', order.destination_shopify_order_id) %>"
+                   target="_blank" rel="noopener noreferrer"><%= order.destination_order_name
+                    || ("#" + order.destination_shopify_order_id) %></a>
               </td>
               <td>
                 <span class="pill pill--<%=

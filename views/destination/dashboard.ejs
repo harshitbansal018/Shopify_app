@@ -53,7 +53,7 @@
         </span>
         <span class="card__note">
           <% if (stats.cards.unsynced) { %>
-            Waiting for you on <s-link href="/products?tab=unsynced">Products</s-link>
+            Waiting for you on <a class="link" href="/products?tab=unsynced" data-navigate="/products?tab=unsynced">Products</a>
           <% } else { %>
             Nothing waiting
           <% } %>
@@ -114,13 +114,13 @@
       <section class="panel">
         <div class="panel__header">
           <h2 class="panel__title">Connected source stores</h2>
-          <s-link href="/stores">Manage</s-link>
+          <a class="link" href="/stores" data-navigate="/stores">Manage</a>
         </div>
 
         <% if (!stats.bySource.length) { %>
           <p class="panel__copy">
             No source store is connected. Get a pairing code from one and
-            enter it on <s-link href="/stores">Stores</s-link>.
+            enter it on <a class="link" href="/stores" data-navigate="/stores">Stores</a>.
           </p>
         <% } else { %>
           <%

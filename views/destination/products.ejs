@@ -22,17 +22,21 @@
       </div>
 
       <div class="shell__actions">
-        <%# Beside Sync now, and only on the tab it can act on: the two read as
-            a pair -- refresh these, or stop receiving these. Starts disabled
-            because it acts on the ticked rows, and nothing is ticked yet. %>
+        <%# A pair, and both act on the ticked rows: refresh these, or stop
+            receiving these. Both start disabled, because nothing is ticked on
+            load -- a button that does something to "everything" when nothing
+            is chosen is the one a merchant presses by accident.
+
+            Only on the Synced tab: these are products already in the store.
+            The Unsynced tab's own buttons accept or decline instead. %>
         <% if (tab === "synced" && products.length) { %>
           <button class="btn btn--danger" type="button" id="unsync-button" disabled>
             Unsync selected
           </button>
-        <% } %>
-        <% if (connections.length) { %>
           <%# Updates to products already accepted -- nothing new is added. %>
-          <button class="btn" type="button" id="sync-button">Sync now</button>
+          <button class="btn" type="button" id="sync-button" disabled>
+            Sync now
+          </button>
         <% } %>
       </div>
     </header>
@@ -107,7 +111,7 @@
         <% if (room > 0) { %>
           &middot; room for <%= room %> more
         <% } else { %>
-          &middot; <s-link href="/plans">upgrade</s-link> or unsync products to add more
+          &middot; <a class="link" href="/plans" data-navigate="/plans">upgrade</a> or unsync products to add more
         <% } %>
       </p>
     <% } %>
@@ -151,7 +155,7 @@
               <th>Inventory</th>
               <th>Total variants</th>
               <th>Status</th>
-              <th>Actions</th>
+              <th>Variants</th>
               <th></th>
             </tr>
           </thead>
@@ -300,9 +304,43 @@
       var checkAll = document.getElementById("check-all-awaiting");
       var pageError = document.getElementById("page-error");
 
-      function fail(message) {
+      /*
+       * Show an error, and where the plan refused one, the way out of it.
+       *
+       * "Upgrade your plan to add more" is only half a sentence without
+       * somewhere to go, and a merchant reading it should not have to hunt
+       * the nav for Plans.
+       *
+       * Built with DOM nodes rather than innerHTML: the message is written by
+       * the server and carries names a merchant typed.
+       */
+      function fail(message, offerPlans) {
         pageError.textContent = message;
+
+        if (offerPlans) {
+          pageError.appendChild(document.createTextNode(" "));
+
+          var link = document.createElement("a");
+          link.className = "link";
+          link.href = "/plans";
+          // Picked up by the delegated handler in shopifyClient.js, which
+          // watches the document -- so a link added now works like any other.
+          link.setAttribute("data-navigate", "/plans");
+          link.textContent = "See plans";
+
+          pageError.appendChild(link);
+        }
+
         pageError.hidden = false;
+      }
+
+      /* The server sends a `limit` object when a plan is what refused the
+       * request. Carried on the Error so the catch can tell a plan refusal
+       * from an ordinary failure. */
+      function requestFailed(data) {
+        var error = new Error(data.error || "Request failed");
+        error.plan = Boolean(data.limit);
+        return error;
       }
 
       /* A /products URL that keeps whatever is being searched for.
@@ -370,24 +408,28 @@
       if (syncButton) {
         syncButton.addEventListener("click", async function () {
           pageError.hidden = true;
-          syncButton.disabled = true;
+
+          // Every bulk button goes down together: a second action fired
+          // mid-request would send the same ids twice.
+          bulkButtons.forEach(function (button) { button.disabled = true; });
           syncButton.textContent = "Syncing…";
 
           try {
             var response = await window.appFetch("/products/sync", {
               method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mapping_ids: chosen() }),
               busy: syncButton
             });
             var data = await response.json().catch(function () { return {}; });
 
-            if (!response.ok) throw new Error(data.error || "Request failed");
+            if (!response.ok) throw requestFailed(data);
 
             window.appToast(data.synced + " updated, " + data.failed + " failed");
-            window.appNavigate(productsUrl());
+            window.appNavigate(productsUrl("synced"));
           } catch (err) {
-            syncButton.disabled = false;
-            syncButton.textContent = "Sync now";
-            fail(err.message);
+            refresh();
+            fail(err.message, err.plan);
           }
         });
       }
@@ -425,7 +467,7 @@
 
               var data = await response.json().catch(function () { return {}; });
 
-              if (!response.ok) throw new Error(data.error || "Request failed");
+              if (!response.ok) throw requestFailed(data);
 
               window.appToast(unsync ? "Moved to Unsynced" : "Synced");
               // The row belongs on the other tab now, so go and show it there.
@@ -433,7 +475,7 @@
             } catch (err) {
               pill.disabled = false;
               pill.textContent = pill.dataset.was;
-              fail(err.message);
+              fail(err.message, err.plan);
             }
           });
 
@@ -449,7 +491,7 @@
          tab actually rendered it. */
 
       // Buttons that act on the selection, whichever tab we are on.
-      var bulkButtons = [acceptButton, declineButton, unsyncButton]
+      var bulkButtons = [acceptButton, declineButton, unsyncButton, syncButton]
         .filter(Boolean);
 
       // A page with no rows to tick: the rest of this is a read-only list.
@@ -486,6 +528,9 @@
           unsyncButton.textContent = count
             ? "Unsync " + count + " selected"
             : "Unsync selected";
+        }
+        if (syncButton) {
+          syncButton.textContent = count ? "Sync " + count + " now" : "Sync now";
         }
         // No count on Decline -- it is the quieter of the two actions on this
         // tab -- but its word still has to come back after a failed attempt
@@ -526,12 +571,12 @@
 
           var data = await response.json().catch(function () { return {}; });
 
-          if (!response.ok) throw new Error(data.error || "Request failed");
+          if (!response.ok) throw requestFailed(data);
 
           return data;
         } catch (err) {
           refresh();
-          fail(err.message);
+          fail(err.message, err.plan);
           return null;
         }
       }

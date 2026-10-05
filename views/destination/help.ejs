@@ -28,15 +28,16 @@
         install. %>
     <nav class="tabs">
       <button
-        class="tabs__tab<%= tab === "faq" ? " tabs__tab--on" : "" %>"
-        type="button" data-tab="faq">
-        FAQ
-      </button>
-      <button
         class="tabs__tab<%= tab === "install" ? " tabs__tab--on" : "" %>"
         type="button" data-tab="install">
         Configuration steps
       </button>
+      <button
+        class="tabs__tab<%= tab === "faq" ? " tabs__tab--on" : "" %>"
+        type="button" data-tab="faq">
+        FAQ
+      </button>
+      
     </nav>
 
     <% if (tab === "install") { %>

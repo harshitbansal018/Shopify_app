@@ -627,16 +627,37 @@ function destinationOnly(req, res) {
 }
 
 /**
- * Refresh products this store has already accepted.
+ * Refresh the products this store picked.
  *
- * Adds nothing new: a product the source has since changed goes back to
- * 'pending', and this is what carries that change across. Anything still
- * awaiting a decision is untouched.
+ * Adds nothing new: the ticked rows go back to 'pending' and are pushed
+ * again, which is what carries a change made at the source across. Anything
+ * still awaiting a decision is untouched.
+ *
+ * A selection is required. The button that calls this sits beside Unsync
+ * selected and is disabled until rows are ticked, so a request arriving
+ * without any is a request that bypassed the screen.
  */
 exports.postSync = async (req, res) => {
   if (!destinationOnly(req, res)) return;
 
+  const ids = Array.isArray(req.body.mapping_ids) ? req.body.mapping_ids : [];
+
+  if (!ids.length) {
+    return res.status(400).json({ error: "Pick at least one product." });
+  }
+
   try {
+    const requeued = await productMappingModel.requeueForDestination(
+      req.storeId,
+      ids
+    );
+
+    if (!requeued) {
+      return res.status(404).json({
+        error: "Those products are not in your store.",
+      });
+    }
+
     return await runSync(
       req,
       res,
