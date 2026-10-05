@@ -150,6 +150,17 @@ console.log("\nEvery link into the app stays in the app");
   // And the replacement really is wired up, not just stripped out.
   const dashboard = fs.readFileSync(path.join(VIEWS, "destination", "dashboard.ejs"), "utf8");
 
+  /* Both Help screens have to name the query the server actually reads.
+   * They drifted apart once -- one navigated to "?configuration=", which
+   * getHelp does not look at -- and the tab simply stopped working. */
+  ["source", "destination"].forEach((role) => {
+    const help = fs.readFileSync(path.join(VIEWS, role, "help.ejs"), "utf8");
+
+    check(`${role} Help switches tabs on the query getHelp reads`,
+      help.includes('appNavigate("/help?tab=" + button.dataset.tab)'),
+      "any other name leaves the server seeing no tab at all");
+  });
+
   check("in-app links carry data-navigate",
     /<a class="link" href="\/stores" data-navigate="\/stores">/.test(dashboard),
     "href alone loses the session token");

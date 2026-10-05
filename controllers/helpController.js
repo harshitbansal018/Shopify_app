@@ -242,15 +242,33 @@ const DEFAULT_FAQ = {
   ],
 };
 
+/**
+ * Which tab a request opens.
+ *
+ * The steps first: a merchant opening Help is usually part way through
+ * setting the app up, and the steps are what they came for. The FAQ is one
+ * click away for the times it is the other way round.
+ *
+ * Written as "faq only when it is asked for" rather than the other way round,
+ * so anything unrecognised -- a stale bookmark, a link written before this
+ * screen had tabs, a tab button naming the wrong query -- lands on the steps
+ * rather than on whatever the mistake happens to mean.
+ *
+ * Its own function so it can be tested without a request: the rule had been
+ * inline, and a tab button sending the wrong parameter name went unnoticed
+ * because nothing could check the rule on its own.
+ */
+function tabFrom(query) {
+  return (query || {}).tab === "faq" ? "faq" : "install";
+}
+
 exports.getHelp = async (req, res) => {
   try {
     if (!req.store.store_type) return renderStoreType(req, res);
 
     const role = req.store.store_type;
 
-    // FAQ first: someone opening Help usually has a question, not a fresh
-    // install. The steps are one click away for the times it is the other way.
-    const tab = req.query.tab === "faq" ? "faq" : "install";
+    const tab = tabFrom(req.query);
 
     // Read every time rather than cached: the whole reason these are in the
     // database is that somebody can change them, and a cache would mean the
@@ -276,6 +294,7 @@ exports.getHelp = async (req, res) => {
 // it names, so changing one without a deploy would only produce instructions
 // that no longer match the app.
 exports.INSTALL_STEPS = INSTALL_STEPS;
+exports.tabFrom = tabFrom;
 
 // The seed, read by config/migrate.js and used as fixture data by the view
 // tests. NOT what the Help screen renders -- that comes from the faqs table.

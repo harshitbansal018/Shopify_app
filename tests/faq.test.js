@@ -157,6 +157,34 @@ async function cleanup() {
         (await faqModel.listForRole("nonsense")).length === 0,
         "the screen must not 500 because a role string drifted");
     }
+
+    /* ---------------- which tab Help opens on ---------------- */
+
+    console.log("\nWhich tab Help opens on");
+    {
+      const tabFrom = helpController.tabFrom;
+
+      check("plain /help opens the setup steps",
+        tabFrom({}) === "install",
+        "most people here are still setting the app up");
+      check("and so does a request with no query at all",
+        tabFrom() === "install" && tabFrom(null) === "install");
+      check("the FAQ opens only when it is asked for",
+        tabFrom({ tab: "faq" }) === "faq");
+      check("and the steps can be asked for too",
+        tabFrom({ tab: "install" }) === "install");
+
+      /* The failure this guards against really happened: the destination's
+       * tab buttons navigated to "?configuration=faq" while the server read
+       * "tab", so the server saw no tab and used its default. Under the old
+       * default that looked like it worked. Anything unrecognised has to land
+       * on the steps, which is the screen a lost request is least wrong on. */
+      check("a parameter nobody recognises still lands somewhere chosen",
+        tabFrom({ configuration: "faq" }) === "install" &&
+          tabFrom({ tab: "FAQ" }) === "install" &&
+          tabFrom({ tab: "" }) === "install",
+        "a typo must not decide which screen a merchant gets");
+    }
   } catch (err) {
     check("suite ran", false, err.message);
     console.error(err);
