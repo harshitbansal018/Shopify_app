@@ -42,22 +42,28 @@
         two catalogues; this shows how much of it is out there and lets the
         merchant narrow it when they want to. %>
     <div class="listbar">
-      <div class="listbar__filter">
-        <label class="field__label" for="filter">Show</label>
-        <select class="field__input field__input--compact" id="filter">
-          <%# Every count is on the option, so the merchant knows what a filter
-              holds before choosing it. %>
-          <option value="all" <%= filter === "all" ? "selected" : "" %>>
-            All products (<%= counts.all %>)
-          </option>
-          <option value="shared" <%= filter === "shared" ? "selected" : "" %>>
-            Shared (<%= counts.shared %>)
-          </option>
-          <option value="unshared" <%= filter === "unshared" ? "selected" : "" %>>
-            Unshared (<%= counts.unshared %>)
-          </option>
-        </select>
-      </div>
+      <%# Segmented filter. Real links, not a client-side hide: the server
+          decides which rows there are, so counts and list cannot disagree.
+          The search travels along -- "the shared ones OF WHAT I SEARCHED". %>
+      <nav class="segment" aria-label="Filter products">
+        <% [
+          { key: "all", label: "All", dot: "" },
+          { key: "shared", label: "Shared", dot: "ok" },
+          { key: "unshared", label: "Not shared", dot: "muted" },
+        ].forEach(function (tab) {
+          var params = [];
+          if (tab.key !== "all") params.push("filter=" + tab.key);
+          if (search) params.push("q=" + encodeURIComponent(search));
+          var href = "/products" + (params.length ? "?" + params.join("&") : "");
+        %>
+          <a class="segment__item <%= filter === tab.key ? "segment__item--on" : "" %>"
+             href="<%= href %>" data-navigate="<%= href %>"
+             <%= filter === tab.key ? 'aria-current="page"' : "" %>>
+            <% if (tab.dot) { %><span class="dot dot--<%= tab.dot %>" aria-hidden="true"></span><% } %>
+            <%= tab.label %>
+            <span class="segment__count"><%= counts[tab.key] %></span>
+          </a>
+        <% }); %></nav>
 
       <%# On the same row as the filter: both narrow the same list, and the two
           screens should not look like different designs. %>
@@ -68,38 +74,29 @@
         hidden: [{ name: "filter", value: filter === "all" ? "" : filter }],
         clearHref: filter === "all" ? "/products" : "/products?filter=" + filter,
       }) %>
-
-      <div class="listbar__actions">
-        <%# Only ever acts on the ticked rows, and only unshared rows can be
-            ticked -- so it stays hidden until there is something to act on. %>
-        <button class="btn btn--small" type="button" id="allow-button" disabled>
-          Allow selected
-        </button>
-      </div>
     </div>
 
     <%# The table keeps its columns when it is empty and says so in a row of
         its own: a table that vanishes reads as a screen that failed. %>
-    <table class="table">
+    <table class="table table--select">
       <thead>
         <tr>
           <th class="table__check">
-            <%# Ticks only the rows that can be allowed; an already-shared
-                product has nothing left to offer. Only this page's rows --
-                nothing off-screen is ever silently included in an action. %>
+            <%# Only this page's rows -- nothing off-screen is ever silently
+                included in an action. %>
             <input type="checkbox" id="check-all" aria-label="Select all on this page">
           </th>
           <th>Product</th>
-          <th>Variants</th>
           <th>Status</th>
           <th>Shared</th>
-          <th>Actions</th>
+          <th class="table__actions-head">Actions</th>
         </tr>
       </thead>
       <tbody>
         <% if (!products.length) { %>
           <tr class="row--empty">
-            <td class="table__empty" colspan="6">
+            <td class="table__empty" colspan="5">
+              <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
               <strong>No records found</strong>
               <span>
                 <%# A search that found nothing is not an empty catalogue.
@@ -118,7 +115,7 @@
                 <% } else if (filter === "shared") { %>
                   <%# The catalogue is not empty -- the filter is. Saying which
                       one is hiding everything is the useful half. %>
-                  Nothing is shared yet. Switch to <strong>All products</strong>,
+                  Nothing is shared yet. Switch to <strong>All</strong>,
                   tick what you want to sell through a destination store, and
                   press Allow selected.
                 <% } else { %>
@@ -132,15 +129,15 @@
         <% products.forEach(function (product) { %>
           <tr>
             <td class="table__check">
-              <%# Disabled rather than absent on a shared row: a column that
-                  sometimes has no control in it reads as broken. %>
+              <%# Every row can be ticked: Delete works on any product. Allow
+                  only ever acts on the ticked rows that are not shared yet. %>
               <input
                 type="checkbox"
                 class="row-check"
                 value="<%= product.id %>"
-                <%= product.allowed ? "disabled" : "" %>
-                title="<%= product.allowed
-                  ? "Already shared" : "Select to share this product" %>"
+                data-allowed="<%= product.allowed ? 1 : 0 %>"
+                data-title="<%= product.title %>"
+                data-synced="<%= product.synced || 0 %>"
                 aria-label="Select <%= product.title %>">
             </td>
             <td>
@@ -157,21 +154,27 @@
                      target="_blank" rel="noopener noreferrer">
                     <%= product.title %>
                   </a>
-                  <% if (product.vendor) { %>
-                    <span class="muted"><%= product.vendor %></span>
-                  <% } %>
+                  <%# Vendor and variant count on one quiet line; the variants
+                      themselves live on the product's own page, behind View. %>
+                  <span class="muted">
+                    <% if (product.vendor) { %><%= product.vendor %> &middot; <% } %><%
+                    %><%= product.variants.length %><%
+                    %><% if (product.variants.length < product.variant_count) { %> of <%= product.variant_count %><% } %>
+                    variant<%= product.variant_count === 1 ? "" : "s" %>
+                  </span>
                 </span>
               </span>
             </td>
             <td>
-              <%# Just the count here; the variants themselves live on the
-                  product's own page, behind View. %>
-              <%= product.variants.length %>
-              <% if (product.variants.length < product.variant_count) { %>
-                <span class="muted">of <%= product.variant_count %></span>
+              <% var status = String(product.status || "").toLowerCase(); %>
+              <% if (status) { %>
+                <span class="status status--<%= status %>">
+                  <span class="dot" aria-hidden="true"></span><%= status %>
+                </span>
+              <% } else { %>
+                <span class="muted">&mdash;</span>
               <% } %>
             </td>
-            <td><span class="muted"><%= product.status || "—" %></span></td>
             <td>
               <% if (!product.allowed) { %>
                 <span class="muted">Not shared</span>
@@ -179,13 +182,13 @@
                 <% if (product.synced) { %>
                   <span class="pill pill--active"
                         title="Live in <%= product.synced %> destination store(s)">
-                    <%= product.synced %> synced
+                    &#10003; <%= product.synced %> synced
                   </span>
                 <% } %>
                 <% if (product.awaiting) { %>
                   <%# Offered, but the destination has not ticked it yet --
                       nothing the source can do about it. %>
-                  <span class="pill"
+                  <span class="pill pill--pending"
                         title="Offered, but the destination store has not accepted it yet. Nothing for you to do.">
                     <%= product.awaiting %> awaiting them
                   </span>
@@ -211,12 +214,14 @@
                 View
               </button>
               <button
-                class="btn btn--small btn--danger delete-product"
+                class="icon-btn icon-btn--danger delete-product"
                 type="button"
                 data-product="<%= product.id %>"
                 data-title="<%= product.title %>"
-                data-synced="<%= product.synced %>">
-                Delete
+                data-synced="<%= product.synced %>"
+                title="Delete"
+                aria-label="Delete <%= product.title %>">
+                <%- include("../partials/icon", { name: "trash" }) %>
               </button>
             </td>
           </tr>
@@ -224,6 +229,17 @@
         <% } %>
       </tbody>
     </table>
+
+    <%# Floats in over the table once anything is ticked, so the actions sit
+        next to the selection instead of up in the toolbar. %>
+    <div class="bulkbar" id="bulkbar" role="region" aria-label="Bulk actions" hidden>
+      <span class="bulkbar__count" id="bulk-count">0 selected</span>
+      <button class="bulkbar__btn" type="button" id="allow-button">Allow selected</button>
+      <button class="bulkbar__btn bulkbar__btn--danger" type="button" id="bulk-delete">
+        <%- include("../partials/icon", { name: "trash" }) %> Delete
+      </button>
+      <button class="bulkbar__close" type="button" id="bulk-clear" aria-label="Clear selection">&times;</button>
+    </div>
 
     <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
 
@@ -250,96 +266,135 @@
         return data;
       }
 
-      /* ---------------- the table: allow selected ---------------- */
+      /* ---------------- the table: selection + bulk bar ---------------- */
 
+      var bulkbar = document.getElementById("bulkbar");
+      var bulkCount = document.getElementById("bulk-count");
       var allowButton = document.getElementById("allow-button");
+      var bulkDelete = document.getElementById("bulk-delete");
+      var bulkClear = document.getElementById("bulk-clear");
       var checkAll = document.getElementById("check-all");
 
       function rowChecks() {
-        // Not disabled ones: an already-shared product cannot be allowed
-        // again, so select-all must skip it and the count must not include it.
-        return Array.prototype.slice.call(
-          document.querySelectorAll(".row-check:not(:disabled)")
-        );
+        return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
+      }
+
+      function ticked() {
+        return rowChecks().filter(function (c) { return c.checked; });
       }
 
       /**
-       * One entry per ticked product, always offering EVERY variant.
-       *
-       * variant_ids is null on purpose: the table shares whole products, and
-       * dropping individual variants happens on the product's own page. The
-       * server keeps any narrowing already made rather than overwriting it.
+       * One entry per ticked product that is NOT shared yet, always offering
+       * EVERY variant. variant_ids is null on purpose: the table shares whole
+       * products; narrowing variants happens on the product's own page.
        */
       function selections() {
-        return rowChecks()
-          .filter(function (c) { return c.checked; })
+        return ticked()
+          .filter(function (c) { return c.dataset.allowed !== "1"; })
           .map(function (c) {
             return { source_product_id: c.value, variant_ids: null };
           });
       }
 
-      function refreshAllowButton() {
-        if (!allowButton) return;
+      function refresh() {
+        var checks = rowChecks();
+        var count = 0;
 
-        var count = selections().length;
-        allowButton.disabled = count === 0;
-        allowButton.textContent = count
-          ? "Allow " + count + " selected"
+        checks.forEach(function (c) {
+          c.closest("tr").classList.toggle("is-selected", c.checked);
+          if (c.checked) count++;
+        });
+
+        if (checkAll) {
+          checkAll.checked = count > 0 && count === checks.length;
+          checkAll.indeterminate = count > 0 && count < checks.length;
+        }
+
+        bulkbar.hidden = count === 0;
+        bulkCount.textContent = count + " selected";
+
+        // Allow only means something for the unshared ones in the selection.
+        var allowable = selections().length;
+        allowButton.disabled = allowable === 0;
+        allowButton.textContent = allowable && allowable !== count
+          ? "Allow " + allowable + " unshared"
           : "Allow selected";
+        allowButton.title = allowable ? "" : "Everything selected is already shared";
       }
 
       rowChecks().forEach(function (check) {
-        check.addEventListener("change", refreshAllowButton);
+        check.addEventListener("change", refresh);
       });
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
           rowChecks().forEach(function (c) { c.checked = checkAll.checked; });
-          refreshAllowButton();
+          refresh();
         });
       }
 
-      if (allowButton) {
-        allowButton.addEventListener("click", async function () {
-          pageError.hidden = true;
-          allowButton.disabled = true;
+      bulkClear.addEventListener("click", function () {
+        rowChecks().forEach(function (c) { c.checked = false; });
+        refresh();
+      });
 
-          try {
-            var data = await post("/products/allow", { selections: selections() }, allowButton);
-            window.appToast("Allowed on " + data.destinations + " destination store(s)");
-            // Reload where they were -- same filter, same search. Page 1,
-            // though: the rows they just shared have moved.
-            window.appNavigate(<%- json(pager.href(1)) %>);
-          } catch (err) {
-            allowButton.disabled = false;
-            fail(pageError, err.message);
+      allowButton.addEventListener("click", async function () {
+        pageError.hidden = true;
+        allowButton.disabled = true;
+
+        try {
+          var data = await post("/products/allow", { selections: selections() }, allowButton);
+          window.appToast("Allowed on " + data.destinations + " destination store(s)");
+          // Reload where they were -- same filter, same search. Page 1,
+          // though: the rows they just shared have moved.
+          window.appNavigate(<%- json(pager.href(1)) %>);
+        } catch (err) {
+          allowButton.disabled = false;
+          fail(pageError, err.message);
+        }
+      });
+
+      bulkDelete.addEventListener("click", async function () {
+        var rows = ticked();
+        if (!rows.length) return;
+
+        var synced = rows.filter(function (c) { return Number(c.dataset.synced) > 0; }).length;
+
+        // This removes products from OTHER merchants' stores, so say so in as
+        // many words before doing it.
+        if (!(await window.appConfirm(
+          "Delete " + rows.length + " product(s)?\n\n" +
+          (synced
+            ? synced + " of them are live in destination stores and will be " +
+              "PERMANENTLY DELETED there, along with their variants and images.\n\n"
+            : "") +
+          "They will also be removed from this list. This cannot be undone.",
+          { confirmLabel: "Delete", destructive: true }
+        ))) return;
+
+        pageError.hidden = true;
+        bulkDelete.disabled = true;
+        allowButton.disabled = true;
+
+        // One at a time: each delete reaches out to every destination store,
+        // and firing them all at once would trip Shopify's rate limits.
+        var done = 0;
+        try {
+          for (var i = 0; i < rows.length; i++) {
+            await post("/products/" + rows[i].value + "/delete", {}, bulkDelete);
+            done++;
           }
-        });
-      }
+          window.appToast("Deleted " + done + " product(s)");
+        } catch (err) {
+          window.appToast("Deleted " + done + " of " + rows.length + " product(s)");
+          fail(pageError, err.message);
+        }
+        window.appNavigate(<%- json(pager.href(1)) %>);
+      });
 
       /** "gid://shopify/Product/900" -> "900" */
       function numericId(gid) {
         return String(gid).split("/").pop();
-      }
-
-      /* ---------------- tabs ---------------- */
-
-      var filterSelect = document.getElementById("filter");
-
-      if (filterSelect) {
-        filterSelect.addEventListener("change", function () {
-          // A real navigation, not a client-side hide: the server decides
-          // which rows there are, so the counts and the list cannot disagree.
-          //
-          // The search comes along. Changing the filter mid-search means "the
-          // shared ones OF WHAT I SEARCHED FOR", not "start again".
-          var params = new URLSearchParams({ filter: filterSelect.value });
-          var q = <%- json(search || "") %>;
-
-          if (q) params.set("q", q);
-
-          window.appNavigate("/products?" + params.toString());
-        });
       }
 
       /* ---------------- row actions: view / delete ---------------- */
@@ -370,7 +425,6 @@
 
             pageError.hidden = true;
             button.disabled = true;
-            button.textContent = "Deleting…";
 
             try {
               var data = await post("/products/" + button.dataset.product + "/delete", {}, button);
@@ -378,7 +432,6 @@
               window.appNavigate("/products");
             } catch (err) {
               button.disabled = false;
-              button.textContent = "Delete";
               fail(pageError, err.message);
             }
           });

@@ -451,13 +451,13 @@ const STORE_ROW = {
     check(
       "with a row per connection",
       destinationHtml.includes("dst.myshopify.com") === false &&
-        /<td class="muted">src\.myshopify\.com<\/td>/.test(destinationHtml),
+        /<span class="muted">src\.myshopify\.com<\/span>/.test(destinationHtml),
       "a destination must see the SOURCE it receives from, and only that"
     );
     check(
       "and the connection's state beside it",
       destinationHtml.includes('pill--active') &&
-        destinationHtml.includes(">manual<")
+        /<\/span>manual\s*</.test(destinationHtml)
     );
 
     const noConnections = await render("destination/stores", {
@@ -472,7 +472,7 @@ const STORE_ROW = {
       "an empty list keeps the columns",
       noConnections.includes("<table") &&
         noConnections.includes("No records found") &&
-        noConnections.includes('colspan="6"')
+        noConnections.includes('colspan="5"')
     );
 
     /* ---- the destination adds a store through a popup ---- */
@@ -703,28 +703,27 @@ const STORE_ROW = {
       all.includes("Blue Shirt") && all.includes("Red Cap"));
 
     check("the filter offers all three views with their counts",
-      all.includes("All products (2)") && all.includes("Shared (1)") &&
-        all.includes("Unshared (1)"),
+      /All\s*<span class="segment__count">2</.test(all) &&
+        /Shared\s*<span class="segment__count">1</.test(all) &&
+        /Not shared\s*<span class="segment__count">1</.test(all),
       "a merchant should know what a filter holds before choosing it");
     check("and marks the one in use",
-      /value="all"\s+selected/.test(all) &&
-        /value="shared"\s+selected/.test(await sourceList("shared", [SHARED_ROW])),
+      /segment__item--on"\s+href="\/products"/.test(all) &&
+        /segment__item--on"\s+href="\/products\?filter=shared"/.test(await sourceList("shared", [SHARED_ROW])),
       "otherwise the list and the control disagree");
     check("choosing one is a real navigation",
-      all.includes("filter: filterSelect.value") &&
-        all.includes('appNavigate("/products?" + params.toString())'),
+      /<a class="segment__item[^"]*"\s+href="\/products\?filter=unshared" data-navigate=/.test(all),
       "hiding rows in the browser would leave the counts lying");
 
     check("an unshared row can be ticked",
       /class="row-check"[^>]*value="11"(?![^>]*disabled)/.test(all));
-    check("but a shared one cannot",
-      /class="row-check"[^>]*value="12"[^>]*disabled/.test(all),
-      "an already-shared product has nothing left to allow");
-    check("and says why on hover",
-      all.includes('title="Already shared"'));
-    check("select-all skips the disabled ones",
-      all.includes('".row-check:not(:disabled)"'),
-      "it would otherwise count rows the button cannot act on");
+    check("a shared one can be ticked too, marked as shared",
+      /class="row-check"[^>]*value="12"[^>]*data-allowed="1"/.test(all) &&
+        !/class="row-check"[^>]*value="12"[^>]*disabled/.test(all),
+      "Delete works on any product; Allow skips the shared ones");
+    check("Allow only sends the unshared ones in the selection",
+      all.includes('c.dataset.allowed !== "1"'),
+      "a shared product has nothing left to allow");
 
     check("View and Delete are on every row",
       (all.match(/view-product/g) || []).length >= 2 &&
@@ -748,7 +747,7 @@ const STORE_ROW = {
     const emptyShared = await sourceList("shared", []);
 
     check("an empty filter keeps the filter visible",
-      emptyShared.includes("All products (2)"));
+      /All\s*<span class="segment__count">2</.test(emptyShared));
     check("and says it is the filter that is empty",
       emptyShared.includes("Nothing is shared yet") &&
         emptyShared.includes("Switch to"),
@@ -784,7 +783,7 @@ const STORE_ROW = {
     );
     check(
       "the shared variant count is shown",
-      /<td>\s*2\s*<\/td>/.test(sourceHtml),
+      /&middot;\s*2(\s*of \d+)?\s*variants/.test(sourceHtml),
       "2 of the product's variants are shared"
     );
 
@@ -827,7 +826,7 @@ const STORE_ROW = {
     );
     check(
       "Delete carries what the confirm dialog needs",
-      /class="btn btn--small btn--danger delete-product"[\s\S]{0,160}data-title="Blue Shirt"/.test(
+      /class="icon-btn icon-btn--danger delete-product"[\s\S]{0,160}data-title="Blue Shirt"/.test(
         sourceHtml
       ),
       "the warning could not name the product"
@@ -1001,8 +1000,8 @@ const STORE_ROW = {
 
     check("the synced tab offers Unsync selected",
       synced.includes('id="unsync-button"'));
-    check("in the header, next to Sync now",
-      /shell__actions[\s\S]{0,400}id="unsync-button"[\s\S]{0,400}id="sync-button"/
+    check("in the selection bar, next to Sync now",
+      /class="bulkbar"[\s\S]{0,400}id="sync-button"[\s\S]{0,200}id="unsync-button"/
         .test(synced),
       "they are a pair -- refresh these, or stop receiving these");
     check("BOTH start disabled",
@@ -1027,7 +1026,7 @@ const STORE_ROW = {
       /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
       "a button that acts on everything when nothing is chosen gets pressed by accident");
     check("and is styled as the destructive one",
-      /class="btn btn--danger"[^>]*id="unsync-button"/.test(synced));
+      /class="bulkbar__btn bulkbar__btn--danger"[^>]*id="unsync-button"/.test(synced));
     check("it posts to decline, which is what clears accepted_at",
       synced.includes('"/products/decline"'));
     check("and warns that nothing leaves the store",
@@ -1858,7 +1857,7 @@ const STORE_ROW = {
     const list = await payouts([SUPPLIER]);
 
     check("all four cards are shown",
-      (list.match(/class="card"/g) || []).length === 4);
+      (list.match(/class="[^"]*\bcard"/g) || []).length === 4);
     check("the money is shown with its currency",
       list.includes("USD 125.00") && list.includes("USD 100.00") &&
         list.includes("USD 25.00"));
@@ -2443,7 +2442,7 @@ const STORE_ROW = {
       sourceScreen.includes("Nothing matches") && sourceScreen.includes("widget"),
       "an empty catalogue and an empty result are different problems");
     check("the search survives a change of filter",
-      sourceScreen.includes('params.set("q", q)'),
+      /href="\/products\?filter=shared&amp;q=/.test(sourceScreen),
       "narrowing mid-search must mean 'the shared ones OF THIS'");
 
     const destinationScreen = await render("destination/products", {
@@ -2529,7 +2528,7 @@ const STORE_ROW = {
 
     check("and the source search sits on the filter row",
       controlRow(sourceScreen).includes('role="search"') &&
-        controlRow(sourceScreen).includes('id="filter"'),
+        controlRow(sourceScreen).includes('class="segment"'),
       "the two screens must not look like different designs");
   }
 

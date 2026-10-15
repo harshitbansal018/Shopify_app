@@ -57,13 +57,14 @@
                 store's business. %>
             <th>You are owed</th>
             <th>Status</th>
-            <th></th>
+            <th class="table__actions-head">Actions</th>
           </tr>
         </thead>
         <tbody>
           <% if (!orders.length) { %>
             <tr class="row--empty">
               <td class="table__empty" colspan="7">
+                <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "truck" }) %></span>
                 <strong>No records found</strong>
                 <span>
                   <% if (tab === "open") { %>

@@ -29,15 +29,8 @@
 
             Only on the Synced tab: these are products already in the store.
             The Unsynced tab's own buttons accept or decline instead. %>
-        <% if (tab === "synced" && products.length) { %>
-          <button class="btn btn--danger" type="button" id="unsync-button" disabled>
-            Unsync selected
-          </button>
-          <%# Updates to products already accepted -- nothing new is added. %>
-          <button class="btn" type="button" id="sync-button" disabled>
-            Sync now
-          </button>
-        <% } %>
+        <%# The actions on ticked rows live in the floating bar under the
+            table, which appears once anything is ticked. %>
       </div>
     </header>
 
@@ -125,14 +118,6 @@
           <strong>Sync selected</strong> &mdash; nothing is added to your
           store until you do.
         </p>
-        <div class="panel__add">
-          <button class="btn btn--small" type="button" id="decline-button" disabled>
-            Decline
-          </button>
-          <button class="btn btn--primary btn--small" type="button" id="accept-button" disabled>
-            Sync selected
-          </button>
-        </div>
       </div>
     <% } %>
 
@@ -156,7 +141,7 @@
               <th>Total variants</th>
               <th>Status</th>
               <th>Variants</th>
-              <th></th>
+              <th class="table__actions-head">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -164,6 +149,7 @@
               <tr class="row--empty">
                 <%# One cell across every column, the checkbox one included. %>
                 <td class="table__empty" colspan="8">
+                  <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
                   <strong>No records found</strong>
                   <span>
                     <%# A search that found nothing is not an empty tab. %>
@@ -290,6 +276,23 @@
             <% } %>
           </tbody>
         </table>
+
+    <%# Floats in over the table once anything is ticked. Unsynced: accept or
+        decline. Synced: refresh ("Sync now" -- nothing new is added) or stop
+        receiving. %>
+    <% if (products.length) { %>
+      <div class="bulkbar" id="bulkbar" role="region" aria-label="Bulk actions" hidden>
+        <span class="bulkbar__count" id="bulk-count">0 selected</span>
+        <% if (tab === "unsynced") { %>
+          <button class="bulkbar__btn" type="button" id="accept-button" disabled>Sync selected</button>
+          <button class="bulkbar__btn bulkbar__btn--ghost" type="button" id="decline-button" disabled>Decline</button>
+        <% } else { %>
+          <button class="bulkbar__btn" type="button" id="sync-button" disabled>Sync now</button>
+          <button class="bulkbar__btn bulkbar__btn--danger" type="button" id="unsync-button" disabled>Unsync selected</button>
+        <% } %>
+        <button class="bulkbar__close" type="button" id="bulk-clear" aria-label="Clear selection">&times;</button>
+      </div>
+    <% } %>
 
     <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
 
@@ -512,8 +515,25 @@
           .map(function (c) { return c.value; });
       }
 
+      var bulkbar = document.getElementById("bulkbar");
+      var bulkCount = document.getElementById("bulk-count");
+      var bulkClear = document.getElementById("bulk-clear");
+
       function refresh() {
         var count = chosen().length;
+
+        checks().forEach(function (c) {
+          c.closest("tr").classList.toggle("is-selected", c.checked);
+        });
+        if (bulkbar) {
+          bulkbar.hidden = count === 0;
+          bulkCount.textContent = count + " selected";
+        }
+        if (checkAll) {
+          var all = checks().length;
+          checkAll.checked = count > 0 && count === all;
+          checkAll.indeterminate = count > 0 && count < all;
+        }
 
         bulkButtons.forEach(function (button) { button.disabled = count === 0; });
 
@@ -545,6 +565,13 @@
       if (checkAll) {
         checkAll.addEventListener("change", function () {
           checks().forEach(function (c) { c.checked = checkAll.checked; });
+          refresh();
+        });
+      }
+
+      if (bulkClear) {
+        bulkClear.addEventListener("click", function () {
+          checks().forEach(function (c) { c.checked = false; });
           refresh();
         });
       }
