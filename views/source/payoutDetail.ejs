@@ -26,9 +26,15 @@
 
     <header class="shell__header">
       <div>
-        <button class="link link--back" type="button" id="back">&larr; Payouts</button>
-        <h1><%= connection.destination.store_name || connection.destination.shop_domain %></h1>
-        <p class="shell__sub"><%= connection.destination.shop_domain %></p>
+        <button class="back-btn" type="button" id="back"><span class="back-btn__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></span>Payouts</button>
+        <% var buyerName = connection.destination.store_name || connection.destination.shop_domain; %>
+        <div class="detail-title">
+          <span class="avatar avatar--lg" aria-hidden="true"><%= String(buyerName).charAt(0).toUpperCase() %></span>
+          <div>
+            <h1><%= buyerName %></h1>
+            <p class="shell__sub"><%= connection.destination.shop_domain %></p>
+          </div>
+        </div>
       </div>
       <% if (owed > 0) { %>
         <span class="pill pill--pending"><%= money(owed) %> owed to you</span>
@@ -39,39 +45,75 @@
       <% } %>
     </header>
 
-    <section class="cards">
-      <div class="card">
-        <span class="card__label">Earned</span>
-        <span class="card__value"><%= money(buyer ? buyer.earned : 0) %></span>
-        <span class="card__note">
-          <%= buyer ? buyer.fulfilled_orders : 0 %> order(s) you fulfilled
-        </span>
-      </div>
-      <div class="card">
-        <span class="card__label">Received</span>
-        <span class="card__value"><%= money(buyer ? buyer.received : 0) %></span>
-        <span class="card__note">
-          <%= buyer ? buyer.payments : 0 %> payment(s) recorded
-        </span>
-      </div>
-      <div class="card">
-        <span class="card__label">Still owed</span>
+    <%
+      var earned = buyer ? Number(buyer.earned) || 0 : 0;
+      var received = buyer ? Number(buyer.received) || 0 : 0;
+      var collected = earned > 0
+        ? Math.max(0, Math.min(100, Math.round((received / earned) * 100)))
+        : 0;
+    %>
+
+    <section class="payout-hero">
+      <div class="payout-hero__main">
+        <span class="payout-hero__label">Still owed by this buyer</span>
         <span class="card__value <%= owed > 0 ? "card__value--warn" : "" %>">
           <%= money(owed) %>
         </span>
-        <span class="card__note">Earned minus received</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Not yet shipped</span>
-        <span class="card__value"><%= money(buyer ? buyer.upcoming : 0) %></span>
-        <span class="card__note">
-          <%= buyer ? buyer.open_orders : 0 %> order(s) still to fulfil
+        <span class="payout-hero__note">
+          <% if (owed < 0) { %>
+            They have paid ahead
+          <% } else if (owed > 0) { %>
+            Earned minus received
+          <% } else { %>
+            All settled &mdash; nothing outstanding
+          <% } %>
         </span>
+
+        <div class="payout-hero__progress">
+          <div class="payout-hero__progress-row">
+            <span>Collected</span>
+            <strong><%= collected %>%</strong>
+          </div>
+          <span class="progress" aria-hidden="true"><span style="width: <%= collected %>%"></span></span>
+          <span class="payout-hero__fine">
+            <%= money(received) %> received of <%= money(earned) %> earned
+          </span>
+        </div>
+      </div>
+
+      <div class="payout-hero__stats">
+        <div class="stat">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "wallet" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Earned</span>
+            <span class="stat__value"><%= money(buyer ? buyer.earned : 0) %></span>
+            <span class="stat__note"><%= buyer ? buyer.fulfilled_orders : 0 %> order(s) you fulfilled</span>
+          </span>
+        </div>
+        <div class="stat">
+          <span class="stat__icon stat__icon--ok" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Received</span>
+            <span class="stat__value"><%= money(buyer ? buyer.received : 0) %></span>
+            <span class="stat__note"><%= buyer ? buyer.payments : 0 %> payment(s) recorded</span>
+          </span>
+        </div>
+        <div class="stat">
+          <span class="stat__icon stat__icon--waiting" aria-hidden="true"><%- include("../partials/icon", { name: "truck" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Not yet shipped</span>
+            <span class="stat__value"><%= money(buyer ? buyer.upcoming : 0) %></span>
+            <span class="stat__note"><%= buyer ? buyer.open_orders : 0 %> order(s) still to fulfil</span>
+          </span>
+        </div>
       </div>
     </section>
 
     <section class="panel">
-      <h2 class="panel__title">Payments received</h2>
+      <h2 class="panel__title panel__title--icon">
+        <span class="stat__icon stat__icon--ok" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+        Payments received
+      </h2>
       <p class="panel__copy">
         <%# Said plainly, because a list of payments on a money screen is
             easily read as money this app has handled. %>
@@ -114,7 +156,10 @@
     </section>
 
     <section class="panel">
-      <h2 class="panel__title">Orders behind this</h2>
+      <h2 class="panel__title panel__title--icon">
+        <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "truck" }) %></span>
+        Orders behind this
+      </h2>
       <p class="panel__copy">
         <%# "You are owed 459.00" is not something a merchant can check or
             dispute without seeing which orders it came from. %>
@@ -134,7 +179,7 @@
           <% if (!orders.length) { %>
             <tr class="row--empty">
               <td class="table__empty" colspan="4">
-                <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "wallet" }) %></span>
+                <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "truck" }) %></span>
                 <strong>No records found</strong>
                 <span>This buyer has not sold any of your products yet.</span>
               </td>
