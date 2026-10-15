@@ -24,43 +24,66 @@
     </header>
 
     <%# A source hands its code out; the destination types it in. %>
-    <section class="panel">
-      <h2 class="panel__title">Your pairing code</h2>
-      <p class="panel__copy">
-        Give this code to the destination store. Someone with admin access
-        there enters it to start receiving your products. It lasts
-        <%= codeTtlMinutes %> minutes and can only be used once.
-      </p>
+    <section class="pair">
+      <div class="pair__intro">
+        <span class="pair__eyebrow">Connect a store</span>
+        <h2 class="pair__title">Your pairing code</h2>
+        <p class="pair__copy">
+          Give this code to the destination store. Someone with admin access
+          there enters it to start receiving your products. It lasts
+          <%= codeTtlMinutes %> minutes and can only be used once.
+        </p>
 
-      <div class="code" id="code-box" <%= pairingCode ? "" : "hidden" %>>
-        <span class="code__value" id="code-value"><%= pairingCode ? pairingCode.code : "" %></span>
-        <span class="code__meta" id="code-meta">
-          <% if (pairingCode && pairingCode.expiresAt) { %>
-            expires <%= new Date(pairingCode.expiresAt).toISOString().slice(11, 16) %> UTC
-          <% } %>
-        </span>
+        <ol class="pair__steps">
+          <li><span class="pair__num">1</span>Share the code with the destination store</li>
+          <li><span class="pair__num">2</span>They enter it on their <strong>Stores</strong> page</li>
+          <li><span class="pair__num">3</span>Products you allow start syncing to them</li>
+        </ol>
       </div>
 
-      <p class="notice notice--error" id="code-error" hidden></p>
+      <div class="pair__ticket">
+        <div class="code" id="code-box" <%= pairingCode ? "" : "hidden" %>>
+          <span class="code__label">Pairing code</span>
+          <span class="code__value" id="code-value"><%= pairingCode ? pairingCode.code : "" %></span>
+          <button class="code__copy" type="button" id="code-copy">Copy code</button>
 
-      <div class="shell__actions">
-        <button class="btn btn--primary" type="button" id="code-button">
+          <div class="code__timer">
+            <span class="code__meta" id="code-meta"><% if (pairingCode && pairingCode.expiresAt) { %>expires <%= new Date(pairingCode.expiresAt).toISOString().slice(11, 16) %> UTC<% } %></span>
+            <span class="code__left" id="code-left"></span>
+          </div>
+          <span class="code__bar" aria-hidden="true"><span id="code-bar"></span></span>
+        </div>
+
+        <div class="pair__empty" id="code-empty" <%= pairingCode ? "hidden" : "" %>>
+          <span class="pair__lock" aria-hidden="true">
+            <%- include("../partials/icon", { name: "key" }) %>
+          </span>
+          <p>No active code. Generate one to pair a destination store.</p>
+        </div>
+
+        <p class="notice notice--error" id="code-error" hidden></p>
+
+        <button class="btn <%= pairingCode ? "" : "btn--primary" %> pair__button" type="button" id="code-button">
           <%= pairingCode ? "Generate a new code" : "Generate a code" %>
         </button>
+        <% if (pairingCode) { %>
+          <p class="pair__hint">Generating a new code makes the one above stop working.</p>
+        <% } %>
       </div>
-
-      <% if (pairingCode) { %>
-        <p class="muted">Generating a new code makes the one above stop working.</p>
-      <% } %>
     </section>
 
-      <h2 class="panel__title">Destination stores receiving from here</h2>
+    <section class="linked">
+      <header class="linked__head">
+        <h2 class="linked__title">
+          Destination stores receiving from here
+          <span class="segment__count"><%= connections.length %></span>
+        </h2>
+      </header>
 
       <table class="table">
         <thead>
           <tr>
             <th>Store</th>
-            <th>Domain</th>
             <th>Status</th>
             <th>Sync</th>
           </tr>
@@ -68,8 +91,11 @@
         <tbody>
           <% if (!connections.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="4">
-                <strong>No records found</strong>
+              <td class="table__empty" colspan="3">
+                <span class="linked__icon" aria-hidden="true">
+                  <%- include("../partials/icon", { name: "link" }) %>
+                </span>
+                <strong>No stores connected yet</strong>
                 <span>
                   No destination store is connected yet. Share your code above.
                 </span>
@@ -78,22 +104,31 @@
           <% } else { %>
           <% connections.forEach(function (connection) { %>
             <% var other = connection.destination; %>
+            <% var name = other.store_name || other.shop_domain; %>
             <tr>
               <td>
-                <span class="table__title">
-                  <%= other.store_name || other.shop_domain %>
+                <span class="media">
+                  <span class="avatar" aria-hidden="true"><%= String(name).charAt(0).toUpperCase() %></span>
+                  <span class="media__body">
+                    <span class="table__title"><%= name %></span>
+                    <span class="muted"><%= other.shop_domain %></span>
+                  </span>
                 </span>
               </td>
-              <td class="muted"><%= other.shop_domain %></td>
               <td>
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
               </td>
-              <td class="muted"><%= connection.sync_mode %></td>
+              <td>
+                <span class="status status--<%= connection.sync_mode === "auto" ? "active" : "draft" %>">
+                  <span class="dot" aria-hidden="true"></span><%= connection.sync_mode %>
+                </span>
+              </td>
             </tr>
           <% }); %>
           <% } %>
         </tbody>
       </table>
+    </section>
 
   </main>
 
@@ -104,6 +139,51 @@
       var codeValue = document.getElementById("code-value");
       var codeMeta = document.getElementById("code-meta");
       var codeError = document.getElementById("code-error");
+      var codeEmpty = document.getElementById("code-empty");
+      var codeCopy = document.getElementById("code-copy");
+      var codeLeft = document.getElementById("code-left");
+      var codeBar = document.getElementById("code-bar");
+      var ttlMs = <%- json(codeTtlMinutes) %> * 60 * 1000;
+      var expiresAt = <%- json(pairingCode && pairingCode.expiresAt ? new Date(pairingCode.expiresAt).getTime() : null) %>;
+
+      /* ---------------- countdown ---------------- */
+      function tick() {
+        if (!expiresAt) return;
+        var left = expiresAt - Date.now();
+
+        if (left <= 0) {
+          codeLeft.textContent = "Expired";
+          codeBox.classList.add("code--expired");
+          codeBar.style.width = "0%";
+          return;
+        }
+
+        var m = Math.floor(left / 60000);
+        var sec = Math.floor((left % 60000) / 1000);
+        codeLeft.textContent = m + ":" + (sec < 10 ? "0" : "") + sec + " left";
+        codeBox.classList.remove("code--expired");
+        codeBar.style.width = Math.min(100, (left / ttlMs) * 100) + "%";
+      }
+
+      tick();
+      setInterval(tick, 1000);
+
+      /* ---------------- copy ---------------- */
+      codeCopy.addEventListener("click", async function () {
+        try {
+          await navigator.clipboard.writeText(codeValue.textContent.trim());
+          codeCopy.textContent = "Copied";
+          setTimeout(function () { codeCopy.textContent = "Copy code"; }, 1600);
+        } catch (err) {
+          // Clipboard can be blocked inside the admin iframe: select instead.
+          var range = document.createRange();
+          range.selectNodeContents(codeValue);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          window.appToast("Press Ctrl+C to copy");
+        }
+      });
 
       function showError(message) {
         codeError.textContent = message;
@@ -130,7 +210,11 @@
           codeMeta.textContent = "expires " +
             new Date(data.expiresAt).toISOString().slice(11, 16) + " UTC";
           codeBox.hidden = false;
+          codeEmpty.hidden = true;
+          expiresAt = new Date(data.expiresAt).getTime();
+          tick();
           codeButton.textContent = "Generate a new code";
+          codeButton.classList.remove("btn--primary");
           window.appToast("New pairing code ready");
         } catch (err) {
           showError("Could not reach the app. Try again.");

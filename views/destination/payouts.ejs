@@ -32,38 +32,75 @@
       };
     %>
 
-    <section class="cards">
-      <div class="card">
-        <span class="card__label">Revenue</span>
-        <span class="card__value"><%= money(totals.revenue) %></span>
-        <span class="card__note">What shoppers paid for supplied goods</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Cost</span>
-        <span class="card__value"><%= money(totals.cost) %></span>
-        <span class="card__note">What your suppliers charge for them</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Profit</span>
-        <%# The whole point of the screen, so it is the one figure that gets a
-            colour: green when you are ahead, red when the markup is negative. %>
-        <span class="card__value <%= totals.profit < 0 ? "card__value--warn" : "" %>">
-          <%= money(totals.profit) %>
-        </span>
-        <span class="card__note">Revenue minus cost</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Still to pay</span>
+    <%
+      var costTotal = Number(totals.cost) || 0;
+      var revenueTotal = Number(totals.revenue) || 0;
+      /* Share of the suppliers' bill already paid. */
+      var paidPct = costTotal > 0
+        ? Math.max(0, Math.min(100, Math.round(((costTotal - (Number(totals.outstanding) || 0)) / costTotal) * 100)))
+        : 0;
+      /* Profit as a share of revenue. */
+      var margin = revenueTotal > 0 ? Math.round(((Number(totals.profit) || 0) / revenueTotal) * 100) : null;
+    %>
+
+    <%# What has to be paid leads: it is the one figure here the merchant must
+        act on. Revenue, cost and profit explain how it was reached. %>
+    <section class="payout-hero">
+      <div class="payout-hero__main card">
+        <span class="payout-hero__label">Still to pay</span>
         <span class="card__value <%= totals.outstanding > 0 ? "card__value--warn" : "" %>">
           <%= money(totals.outstanding) %>
         </span>
-        <span class="card__note">
+        <span class="payout-hero__note">
           <% if (totals.upcoming > 0) { %>
             <%= money(totals.upcoming) %> more once shipped
           <% } else { %>
             Nothing else pending
           <% } %>
         </span>
+
+        <div class="payout-hero__progress">
+          <div class="payout-hero__progress-row">
+            <span>Paid to suppliers</span>
+            <strong><%= paidPct %>%</strong>
+          </div>
+          <span class="progress" aria-hidden="true"><span style="width: <%= paidPct %>%"></span></span>
+          <span class="payout-hero__fine">
+            of <%= money(totals.cost) %> owed for fulfilled orders
+          </span>
+        </div>
+      </div>
+
+      <div class="payout-hero__stats">
+        <div class="stat card">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "wallet" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Revenue</span>
+            <span class="stat__value"><%= money(totals.revenue) %></span>
+            <span class="stat__note">What shoppers paid for supplied goods</span>
+          </span>
+        </div>
+        <div class="stat card">
+          <span class="stat__icon stat__icon--waiting" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Cost</span>
+            <span class="stat__value"><%= money(totals.cost) %></span>
+            <span class="stat__note">What your suppliers charge for them</span>
+          </span>
+        </div>
+        <div class="stat card">
+          <%# Green when ahead, red when the markup is negative. %>
+          <span class="stat__icon <%= totals.profit < 0 ? "stat__icon--danger" : "stat__icon--ok" %>" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Profit</span>
+            <span class="stat__value card__value <%= totals.profit < 0 ? "card__value--warn" : "stat__value--ok" %>">
+              <%= money(totals.profit) %>
+            </span>
+            <span class="stat__note">
+              Revenue minus cost<% if (margin !== null) { %> &middot; <strong><%= margin %>% margin</strong><% } %>
+            </span>
+          </span>
+        </div>
       </div>
     </section>
 
@@ -89,13 +126,16 @@
             <th>Profit</th>
             <th>Paid</th>
             <th>Still to pay</th>
-            <th></th>
+            <th class="table__actions-head">Actions</th>
           </tr>
         </thead>
         <tbody>
           <% if (!suppliers.length) { %>
             <tr class="row--empty">
               <td class="table__empty" colspan="8">
+                <span class="linked__icon" aria-hidden="true">
+                  <%- include("../partials/icon", { name: "wallet" }) %>
+                </span>
                 <strong>No records found</strong>
                 <span>
                   No supplier is connected yet. Enter a source store's pairing
@@ -107,13 +147,15 @@
           <% suppliers.forEach(function (supplier) { %>
             <tr>
               <td>
-                <span class="media__body">
-                  <span class="table__title">
-                    <%= supplier.source_store_name || supplier.source_shop_domain %>
+                <% var supplierName = supplier.source_store_name || supplier.source_shop_domain || "?"; %>
+                <span class="media">
+                  <span class="avatar" aria-hidden="true"><%= String(supplierName).charAt(0).toUpperCase() %></span>
+                  <span class="media__body">
+                    <span class="table__title"><%= supplierName %></span>
+                    <% if (supplier.source_store_name) { %>
+                      <span class="muted"><%= supplier.source_shop_domain %></span>
+                    <% } %>
                   </span>
-                  <% if (supplier.source_store_name) { %>
-                    <span class="muted"><%= supplier.source_shop_domain %></span>
-                  <% } %>
                 </span>
               </td>
 
@@ -128,11 +170,20 @@
               <td><%= money(supplier.revenue) %></td>
               <td class="muted"><%= money(supplier.cost) %></td>
               <td>
-                <strong class="<%= supplier.profit < 0 ? "stock--none" : "" %>">
+                <strong class="<%= supplier.profit < 0 ? "stock--none" : "profit--ok" %>">
                   <%= money(supplier.profit) %>
                 </strong>
+                <% var rowRevenue = Number(supplier.revenue) || 0; %>
+                <% if (rowRevenue > 0) { %>
+                  <span class="muted"><%= Math.round((Number(supplier.profit) || 0) / rowRevenue * 100) %>% margin</span>
+                <% } %>
               </td>
-              <td class="muted"><%= money(supplier.paid) %></td>
+              <td>
+                <% var rowCost = Number(supplier.cost) || 0; %>
+                <% var rowPct = rowCost > 0 ? Math.max(0, Math.min(100, Math.round((Number(supplier.paid) || 0) / rowCost * 100))) : 0; %>
+                <span class="muted"><%= money(supplier.paid) %></span>
+                <span class="progress progress--small" title="<%= rowPct %>% paid" aria-hidden="true"><span style="width: <%= rowPct %>%"></span></span>
+              </td>
 
               <td>
                 <% if (supplier.outstanding > 0) { %>

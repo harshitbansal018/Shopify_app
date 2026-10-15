@@ -37,17 +37,17 @@
         <thead>
           <tr>
             <th>Store</th>
-            <th>Domain</th>
             <th>Status</th>
             <th>Sync</th>
             <th>Products</th>
-            <th>Actions</th>
+            <th class="table__actions-head">Actions</th>
           </tr>
         </thead>
         <tbody>
           <% if (!connections.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="6">
+              <td class="table__empty" colspan="5">
+                <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "link" }) %></span>
                 <strong>No records found</strong>
                 <span>
                   No source store is connected yet. Press <strong>Add store</strong>
@@ -59,12 +59,16 @@
           <% connections.forEach(function (connection) { %>
             <% var other = connection.source; %>
             <tr>
+              <% var otherName = other.store_name || other.shop_domain; %>
               <td>
-                <span class="table__title">
-                  <%= other.store_name || other.shop_domain %>
+                <span class="media">
+                  <span class="avatar" aria-hidden="true"><%= String(otherName).charAt(0).toUpperCase() %></span>
+                  <span class="media__body">
+                    <span class="table__title"><%= otherName %></span>
+                    <span class="muted"><%= other.shop_domain %></span>
+                  </span>
                 </span>
               </td>
-              <td class="muted"><%= other.shop_domain %></td>
               <td>
                 <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
                 <%# A downgrade pauses stores rather than deleting them, so
@@ -79,7 +83,11 @@
                   </button>
                 <% } %>
               </td>
-              <td class="muted"><%= connection.sync_mode %></td>
+              <td>
+                <span class="status status--<%= connection.sync_mode === "auto" ? "active" : "draft" %>">
+                  <span class="dot" aria-hidden="true"></span><%= connection.sync_mode %>
+                </span>
+              </td>
               <td>
                 <%# What removing this store would actually delete. Shown in
                     the row as well as in the dialog, so the number is not a
