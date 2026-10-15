@@ -26,7 +26,7 @@
 
     <header class="shell__header">
       <div>
-        <button class="link link--back" type="button" id="back">&larr; Payouts</button>
+        <button class="back-btn" type="button" id="back"><span class="back-btn__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></span>Payouts</button>
         <h1><%= connection.source.store_name || connection.source.shop_domain %></h1>
         <p class="shell__sub">
           <%= connection.source.shop_domain %>
