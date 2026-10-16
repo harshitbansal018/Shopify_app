@@ -27,10 +27,14 @@
     <header class="shell__header">
       <div>
         <button class="back-btn" type="button" id="back"><span class="back-btn__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></span>Payouts</button>
-        <h1><%= connection.source.store_name || connection.source.shop_domain %></h1>
-        <p class="shell__sub">
-          <%= connection.source.shop_domain %>
-        </p>
+        <% var supplierName = connection.source.store_name || connection.source.shop_domain; %>
+        <div class="detail-title">
+          <span class="avatar avatar--lg" aria-hidden="true"><%= String(supplierName).charAt(0).toUpperCase() %></span>
+          <div>
+            <h1><%= supplierName %></h1>
+            <p class="shell__sub"><%= connection.source.shop_domain %></p>
+          </div>
+        </div>
       </div>
       <% if (owed > 0) { %>
         <span class="pill pill--pending"><%= money(owed) %> to pay</span>
@@ -43,41 +47,81 @@
 
     <p class="notice notice--error" id="page-error" hidden></p>
 
-    <section class="cards">
-      <div class="card">
-        <span class="card__label">Revenue</span>
-        <span class="card__value"><%= money(supplier ? supplier.revenue : 0) %></span>
-        <span class="card__note"><%= supplier ? supplier.fulfilled_orders : 0 %> fulfilled order(s)</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Cost</span>
-        <span class="card__value"><%= money(supplier ? supplier.cost : 0) %></span>
-        <span class="card__note">
-          <% if (supplier && supplier.upcoming_cost > 0) { %>
+    <%
+      var cost = supplier ? Number(supplier.cost) || 0 : 0;
+      var paid = supplier ? Number(supplier.paid) || 0 : 0;
+      var revenue = supplier ? Number(supplier.revenue) || 0 : 0;
+      var paidPct = cost > 0 ? Math.max(0, Math.min(100, Math.round((paid / cost) * 100))) : 0;
+      var margin = revenue > 0 ? Math.round(((supplier ? Number(supplier.profit) || 0 : 0) / revenue) * 100) : null;
+    %>
+
+    <section class="payout-hero">
+      <div class="payout-hero__main">
+        <span class="payout-hero__label">Still to pay this supplier</span>
+        <span class="card__value <%= owed > 0 ? "card__value--warn" : "" %>">
+          <%= money(owed) %>
+        </span>
+        <span class="payout-hero__note">
+          <% if (owed < 0) { %>
+            You are in credit with them
+          <% } else if (supplier && supplier.upcoming_cost > 0) { %>
             <%= money(supplier.upcoming_cost) %> more once shipped
+          <% } else if (owed > 0) { %>
+            Cost minus what you have paid
           <% } else { %>
-            Nothing else pending
+            All settled &mdash; nothing outstanding
           <% } %>
         </span>
+
+        <div class="payout-hero__progress">
+          <div class="payout-hero__progress-row">
+            <span>Paid so far</span>
+            <strong><%= paidPct %>%</strong>
+          </div>
+          <span class="progress" aria-hidden="true"><span style="width: <%= paidPct %>%"></span></span>
+          <span class="payout-hero__fine">
+            <%= money(paid) %> paid of <%= money(cost) %> &middot; <%= supplier ? supplier.payments : 0 %> payment(s) recorded
+          </span>
+        </div>
       </div>
-      <div class="card">
-        <span class="card__label">Profit</span>
-        <span class="card__value <%= supplier && supplier.profit < 0 ? "card__value--warn" : "" %>">
-          <%= money(supplier ? supplier.profit : 0) %>
-        </span>
-        <span class="card__note">Your margin on their goods</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Paid so far</span>
-        <span class="card__value"><%= money(supplier ? supplier.paid : 0) %></span>
-        <span class="card__note">
-          <%= supplier ? supplier.payments : 0 %> payment(s) recorded
-        </span>
+
+      <div class="payout-hero__stats">
+        <div class="stat">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "wallet" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Revenue</span>
+            <span class="stat__value"><%= money(supplier ? supplier.revenue : 0) %></span>
+            <span class="stat__note"><%= supplier ? supplier.fulfilled_orders : 0 %> fulfilled order(s)</span>
+          </span>
+        </div>
+        <div class="stat">
+          <span class="stat__icon stat__icon--waiting" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Cost</span>
+            <span class="stat__value"><%= money(supplier ? supplier.cost : 0) %></span>
+            <span class="stat__note">What this supplier charges</span>
+          </span>
+        </div>
+        <div class="stat">
+          <span class="stat__icon <%= supplier && supplier.profit < 0 ? "stat__icon--danger" : "stat__icon--ok" %>" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+          <span class="stat__body">
+            <span class="stat__label">Profit</span>
+            <span class="stat__value <%= supplier && supplier.profit < 0 ? "stock--none" : "stat__value--ok" %>">
+              <%= money(supplier ? supplier.profit : 0) %>
+            </span>
+            <span class="stat__note">
+              Your margin on their goods<% if (margin !== null) { %> &middot; <strong><%= margin %>%</strong><% } %>
+            </span>
+          </span>
+        </div>
       </div>
     </section>
 
     <section class="panel">
-      <h2 class="panel__title">Record a payment</h2>
+      <h2 class="panel__title panel__title--icon">
+        <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "wallet" }) %></span>
+        Record a payment
+      </h2>
       <p class="panel__copy">
         <%# Said plainly, because a screen full of money can easily be mistaken
             for one that moves it. %>
@@ -115,7 +159,10 @@
     </section>
 
     <section class="panel">
-      <h2 class="panel__title">Payments</h2>
+      <h2 class="panel__title panel__title--icon">
+        <span class="stat__icon stat__icon--ok" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+        Payments
+      </h2>
 
       <table class="table">
         <thead>
@@ -162,7 +209,10 @@
     </section>
 
     <section class="panel">
-      <h2 class="panel__title">Sales behind this</h2>
+      <h2 class="panel__title panel__title--icon">
+        <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "truck" }) %></span>
+        Sales behind this
+      </h2>
       <p class="panel__copy">
         <%# "You owe 459.00" is not something a merchant can check or dispute
             without seeing which sales it came from. %>

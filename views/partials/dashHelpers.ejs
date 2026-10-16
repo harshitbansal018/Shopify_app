@@ -1,0 +1,53 @@
+<%#
+  Helpers shared by both dashboards. The page creates an empty object and
+  passes it in as `dash`; this fills it, so the helpers are usable after.
+
+  The new panels (sales, activity) read stats.sales / stats.activity /
+  stats.money, which an older caller may not pass -- so every one falls back
+  to an empty shape instead of throwing.
+%>
+<%
+  dash.sales = stats.sales || {
+    series: [],
+    current: { orders: 0, source_total: 0, destination_total: 0 },
+    previous: { orders: 0, source_total: 0, destination_total: 0 },
+  };
+  dash.activity = stats.activity || [];
+  dash.money = stats.money || { outstanding: 0, openOrders: 0, payers: 0, currency: null };
+  dash.currency = dash.money.currency || store.currency || "";
+
+  dash.money_ = function (value) {
+    var amount = Number(value);
+    return (dash.currency ? dash.currency + " " : "") +
+      (isFinite(amount) ? amount : 0).toLocaleString("en-US", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+  };
+
+  /* "+12%" against the 30 days before; null when there is nothing to compare. */
+  dash.trend = function (now, before) {
+    now = Number(now) || 0;
+    before = Number(before) || 0;
+    if (!before) return now ? { up: true, text: "New" } : null;
+    var change = Math.round(((now - before) / before) * 100);
+    return { up: change >= 0, text: (change >= 0 ? "+" : "") + change + "%" };
+  };
+
+  /* "2 min ago", "3 hr ago", "Yesterday", then a date. */
+  dash.ago = function (when) {
+    var then = new Date(when);
+    if (isNaN(then)) return "";
+    var seconds = Math.max(0, (Date.now() - then.getTime()) / 1000);
+    if (seconds < 60) return "Just now";
+    if (seconds < 3600) return Math.floor(seconds / 60) + " min ago";
+    if (seconds < 86400) return Math.floor(seconds / 3600) + " hr ago";
+    if (seconds < 172800) return "Yesterday";
+    if (seconds < 604800) return Math.floor(seconds / 86400) + " days ago";
+    return then.toISOString().slice(0, 10);
+  };
+
+  /* A stored image that is really JSON null comes back as the text "null". */
+  dash.image = function (url) {
+    return url && url !== "null" ? url : null;
+  };
+%>

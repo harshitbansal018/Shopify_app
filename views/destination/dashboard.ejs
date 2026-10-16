@@ -16,21 +16,27 @@
     <header class="shell__header">
       <div>
         <h1>Dashboard</h1>
-        <!-- <p class="shell__sub">
-          <%= store.store_name || shop %> &mdash;
-          <strong><%= store.store_type %></strong> store
-        </p> -->
+        <p class="shell__sub">What your suppliers are sending you, and how it is selling.</p>
+      </div>
+
+      <div class="shell__actions">
+        <a class="btn btn--icon" href="/stores" data-navigate="/stores">
+          <%- include("../partials/icon", { name: "sliders" }) %> Manage stores
+        </a>
       </div>
     </header>
 
     <%- include("../partials/setupBanner") %>
 
+    <% var dash = {}; %>
+    <%- include("../partials/dashHelpers", { dash: dash }) %>
+
     <%
       var total = stats.cards.synced + stats.cards.unsynced;
+      var syncedPct = total ? Math.round(stats.cards.synced / total * 100) : 0;
 
-      /* Pie slices are drawn with stroke-dasharray on a circle: each arc is
-         "its share of the circumference, then the rest as a gap", rotated by
-         however much came before it. No library, no canvas, and it scales. */
+      /* Slices drawn with stroke-dasharray on a circle: each arc is its share
+         of the circumference, rotated by however much came before it. */
       var R = 60;
       var C = 2 * Math.PI * R;
       var slices = [
@@ -38,83 +44,135 @@
         { label: "Unsynced", value: stats.cards.unsynced, className: "slice--unsynced" },
       ];
       var offset = 0;
+      var waitingFrom = stats.bySource.filter(function (s) { return s.unsynced > 0; }).length;
+      var inactive = stats.bySource.filter(function (s) { return !s.active; }).length;
     %>
 
-    <section class="cards">
-      <div class="card">
-        <span class="card__label">Total synced products</span>
-        <span class="card__value"><%= stats.cards.synced %></span>
-        <span class="card__note">Live in this store</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Unsynced products</span>
-        <span class="card__value <%= stats.cards.unsynced ? "card__value--warn" : "" %>">
-          <%= stats.cards.unsynced %>
+    <%# 1. What is waiting on the merchant, said first. Gone when nothing is. %>
+    <% if (stats.cards.unsynced || dash.money.openOrders || dash.money.outstanding > 0) { %>
+      <section class="callout">
+        <span class="callout__icon" aria-hidden="true"><%- include("../partials/icon", { name: "bolt" }) %></span>
+        <span class="callout__body">
+          <% if (stats.cards.unsynced) { %>
+            <strong>
+              <%= stats.cards.unsynced %> product<%= stats.cards.unsynced === 1 ? "" : "s" %> offered by your suppliers
+            </strong>
+            <span>Accept them on Products to add them to your store.</span>
+          <% } else { %>
+            <strong>Things to keep an eye on</strong>
+          <% } %>
+          <% if (dash.money.openOrders || dash.money.outstanding > 0) { %>
+            <span class="callout__extra">
+              <% if (dash.money.openOrders) { %>&#9888; <%= dash.money.openOrders %> order<%= dash.money.openOrders === 1 ? "" : "s" %> not shipped yet<% } %>
+              <% if (dash.money.openOrders && dash.money.outstanding > 0) { %> &middot; <% } %>
+              <% if (dash.money.outstanding > 0) { %><%= dash.money_(dash.money.outstanding) %> to pay suppliers<% } %>
+            </span>
+          <% } %>
         </span>
+        <% if (stats.cards.unsynced) { %>
+          <a class="btn btn--small" href="/products?tab=unsynced" data-navigate="/products?tab=unsynced">Review &rarr;</a>
+        <% } else { %>
+          <a class="btn btn--small" href="/payouts" data-navigate="/payouts">View payouts &rarr;</a>
+        <% } %>
+      </section>
+    <% } %>
+
+    <%# 2. Every card opens the screen behind its number. %>
+    <section class="cards">
+      <a class="card card--link" href="/products?tab=synced" data-navigate="/products?tab=synced">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--ok" aria-hidden="true"><%- include("../partials/icon", { name: "check" }) %></span>
+          <span class="card__label">Total synced products</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
+        <span class="card__figure">
+          <span class="card__value"><%= stats.cards.synced %></span>
+          <% if (total) { %><span class="card__of">of <%= total %> &middot; <%= syncedPct %>%</span><% } %>
+        </span>
+        <span class="progress" aria-hidden="true"><span style="width: <%= syncedPct %>%"></span></span>
+      </a>
+
+      <a class="card card--link" href="/products?tab=unsynced" data-navigate="/products?tab=unsynced">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--waiting" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
+          <span class="card__label">Unsynced products</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
+        <span class="card__value <%= stats.cards.unsynced ? "card__value--warn" : "" %>"><%= stats.cards.unsynced %></span>
         <span class="card__note">
           <% if (stats.cards.unsynced) { %>
-            Waiting for you on <a class="link" href="/products?tab=unsynced" data-navigate="/products?tab=unsynced">Products</a>
+            Waiting for you<% if (waitingFrom) { %> &middot; from <%= waitingFrom %> supplier<%= waitingFrom === 1 ? "" : "s" %><% } %>
           <% } else { %>
             Nothing waiting
           <% } %>
         </span>
-      </div>
-      <div class="card">
-        <span class="card__label">Stores connected</span>
+      </a>
+
+      <a class="card card--link" href="/stores" data-navigate="/stores">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "link" }) %></span>
+          <span class="card__label">Source stores</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
         <span class="card__value"><%= stats.cards.stores %></span>
-        <span class="card__note">Sending products here</span>
-      </div>
+        <span class="card__note">
+          <% if (inactive) { %><%= stats.cards.stores %> active &middot; <%= inactive %> paused<% } else if (stats.cards.stores) { %>All active<% } else { %>Sending products here<% } %>
+        </span>
+      </a>
     </section>
 
-    <div class="charts">
-
+    <div class="dash-grid">
+      <%# 3. Catalogue status. %>
       <section class="panel">
-        <h2 class="panel__title">Sync status</h2>
+        <h2 class="panel__title">Catalogue status</h2>
+        <p class="panel__copy">Offered products by sync state</p>
 
         <% if (!total) { %>
           <p class="panel__copy">
             Nothing has been offered to this store yet.
           </p>
         <% } else { %>
-          <div class="chart chart--pie">
+          <div class="donut">
             <svg viewBox="0 0 160 160" role="img"
                  aria-label="<%= stats.cards.synced %> synced, <%= stats.cards.unsynced %> unsynced">
+              <circle class="donut__track" cx="80" cy="80" r="<%= R %>"></circle>
               <g transform="rotate(-90 80 80)">
                 <% slices.forEach(function (slice) { %>
                   <% if (slice.value) { %>
-                    <circle
-                      class="slice <%= slice.className %>"
-                      cx="80" cy="80" r="<%= R %>"
+                    <circle class="donut__slice <%= slice.className %>" cx="80" cy="80" r="<%= R %>"
                       stroke-dasharray="<%= (slice.value / total * C).toFixed(2) %> <%= C.toFixed(2) %>"
                       stroke-dashoffset="<%= (-offset / total * C).toFixed(2) %>"></circle>
                     <% offset += slice.value; %>
                   <% } %>
                 <% }); %>
               </g>
-              <text x="80" y="76" class="chart__total"><%= total %></text>
-              <text x="80" y="94" class="chart__caption">products</text>
+              <text x="80" y="82" class="donut__total"><%= syncedPct %>%</text>
+              <text x="80" y="102" class="donut__caption">of <%= total %> synced</text>
             </svg>
-
-            <ul class="legend">
-              <% slices.forEach(function (slice) { %>
-                <li class="legend__item">
-                  <span class="legend__swatch <%= slice.className %>"></span>
-                  <span><%= slice.label %></span>
-                  <span class="legend__value">
-                    <%= slice.value %>
-                    <span class="muted"><%= Math.round(slice.value / total * 100) %>%</span>
-                  </span>
-                </li>
-              <% }); %>
-            </ul>
           </div>
+
+          <ul class="keylist">
+            <% slices.forEach(function (slice) { %>
+              <li>
+                <span class="keylist__swatch <%= slice.className %>" aria-hidden="true"></span>
+                <span><%= slice.label %></span>
+                <strong><%= slice.value %></strong>
+                <span class="muted"><%= Math.round(slice.value / total * 100) %>%</span>
+              </li>
+            <% }); %>
+          </ul>
         <% } %>
       </section>
 
+      <%# 4. One card per supplier. Every connection is listed, even one that
+          has offered nothing yet, so the list agrees with the card above. %>
       <section class="panel">
         <div class="panel__header">
-          <h2 class="panel__title">Connected source stores</h2>
-          <a class="link" href="/stores" data-navigate="/stores">Manage</a>
+          <div>
+            <h2 class="panel__title">Your suppliers</h2>
+            <p class="panel__copy">Sync progress for each source store</p>
+          </div>
+          <a class="btn btn--small" href="/stores" data-navigate="/stores">Manage</a>
         </div>
 
         <% if (!stats.bySource.length) { %>
@@ -123,105 +181,115 @@
             enter it on <a class="link" href="/stores" data-navigate="/stores">Stores</a>.
           </p>
         <% } else { %>
-          <%
-            /* Bars are scaled against the biggest store, not against the
-               total: otherwise one large store flattens every other bar to
-               an unreadable sliver. */
-            var peak = Math.max.apply(null, stats.bySource.map(function (s) {
-              return s.synced + s.unsynced;
-            })) || 1;
-          %>
-          <ul class="bars">
+          <ul class="dest-list">
             <% stats.bySource.forEach(function (source) { %>
-              <li class="bars__row">
-                <span class="bars__label">
-                  <span class="bars__name" title="<%= source.domain %>">
-                    <%= source.name %>
+              <%
+                var offered = source.synced + source.unsynced;
+                var pct = offered ? Math.round(source.synced / offered * 100) : 0;
+              %>
+              <li class="dest">
+                <div class="dest__head">
+                  <span class="avatar avatar--solid" aria-hidden="true"><%= String(source.name || source.domain).charAt(0).toUpperCase() %></span>
+                  <span class="media__body">
+                    <span class="table__title" title="<%= source.domain %>"><%= source.name %></span>
+                    <span class="muted"><%= source.domain %></span>
                   </span>
-                  <span class="muted"><%= source.domain %></span>
-                </span>
-
-                <span class="bars__track">
-                  <span class="bars__fill slice--synced"
-                        style="width: <%= (source.synced / peak * 100).toFixed(1) %>%"></span>
-                  <span class="bars__fill slice--unsynced"
-                        style="width: <%= (source.unsynced / peak * 100).toFixed(1) %>%"></span>
-                </span>
-
-                <span class="bars__value">
-                  <% if (source.synced + source.unsynced) { %>
-                    <%= source.synced + source.unsynced %>
+                  <% if (source.active) { %>
+                    <span class="pill pill--active">&bull; Active</span>
                   <% } else { %>
-                    <%# Connected, but has not offered anything yet. Saying so
-                        beats a blank row the merchant has to interpret. %>
-                    <span class="muted">none yet</span>
-                  <% } %>
-                </span>
-
-                <% if (!source.active) { %>
-                  <span class="bars__status">
                     <span class="pill pill--<%= source.status %>"><%= source.status %></span>
+                  <% } %>
+                </div>
+
+                <% if (offered) { %>
+                  <div class="dest__row">
+                    <span><strong><%= source.synced %></strong> of <%= offered %> products synced</span>
+                    <span class="muted"><%= pct %>%</span>
+                  </div>
+                  <span class="stackbar" aria-hidden="true">
+                    <span class="slice--synced" style="width: <%= (source.synced / offered * 100).toFixed(1) %>%"></span>
+                    <span class="slice--unsynced" style="width: <%= (source.unsynced / offered * 100).toFixed(1) %>%"></span>
                   </span>
+                  <span class="dest__legend">
+                    <span><span class="keylist__swatch slice--synced"></span>Synced &middot; <%= source.synced %></span>
+                    <span><span class="keylist__swatch slice--unsynced"></span>Waiting &middot; <%= source.unsynced %></span>
+                  </span>
+                <% } else { %>
+                  <p class="muted dest__none">No products offered by this store yet.</p>
                 <% } %>
               </li>
             <% }); %>
           </ul>
-
-          <ul class="legend legend--inline">
-            <li class="legend__item">
-              <span class="legend__swatch slice--synced"></span><span>Synced</span>
-            </li>
-            <li class="legend__item">
-              <span class="legend__swatch slice--unsynced"></span><span>Unsynced</span>
-            </li>
-          </ul>
         <% } %>
-      </section>
 
+        <a class="dest-add" href="/stores" data-navigate="/stores">+ Add a supplier</a>
+      </section>
     </div>
 
+    <div class="dash-grid dash-grid--wide">
+      <%# 5. Sales. %>
+      <%- include("../partials/dashSales", { dash: dash, side: "destination" }) %>
+      <%# 7. Recent activity. %>
+      <%- include("../partials/dashActivity", { dash: dash, side: "destination" }) %>
+    </div>
+
+    <%# 6. Top sellers, ranked. %>
     <section class="panel">
       <div class="panel__header">
         <h2 class="panel__title">Top selling products</h2>
       </div>
-
       <p class="panel__copy">
         Synced products ranked by units sold in this store.
       </p>
 
+      <% var topUnits = Math.max.apply(null, stats.topSellers.map(function (p) { return p.units; }).concat([1])); %>
       <table class="table">
         <thead>
           <tr>
+            <th class="table__rank">#</th>
             <th>Product</th>
-            <th>Source store</th>
             <th>Units sold</th>
+            <th>Source store</th>
             <th>Revenue</th>
           </tr>
         </thead>
         <tbody>
           <% if (!stats.topSellers.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="4">
+              <td class="table__empty" colspan="5">
                 <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
                 <strong>No records found</strong>
                 <span>Nothing has sold yet.</span>
               </td>
             </tr>
           <% } else { %>
-          <% stats.topSellers.forEach(function (row) { %>
+          <% stats.topSellers.forEach(function (row, i) { %>
             <tr>
+              <td class="table__rank"><span class="rank <%= i === 0 ? "rank--1" : "" %>"><%= i + 1 %></span></td>
               <td>
-                <% if (row.destination_shopify_product_id) { %>
-                  <a class="table__title record-link"
-                     href="<%= shopifyAdminUrl(shop, 'products', row.destination_shopify_product_id) %>"
-                     target="_blank" rel="noopener noreferrer"><%= row.title %></a>
-                <% } else { %>
-                  <span class="table__title"><%= row.title %></span>
-                <% } %>
+                <span class="media">
+                  <% if (dash.image(row.image_url)) { %>
+                    <img class="media__thumb" src="<%= dash.image(row.image_url) %>" alt="" loading="lazy" width="40" height="40">
+                  <% } else { %>
+                    <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                  <% } %>
+                  <% if (row.destination_shopify_product_id) { %>
+                    <a class="table__title record-link"
+                       href="<%= shopifyAdminUrl(shop, 'products', row.destination_shopify_product_id) %>"
+                       target="_blank" rel="noopener noreferrer"><%= row.title %></a>
+                  <% } else { %>
+                    <span class="table__title"><%= row.title %></span>
+                  <% } %>
+                </span>
+              </td>
+              <td>
+                <span class="units">
+                  <span class="progress" aria-hidden="true"><span style="width: <%= (row.units / topUnits * 100).toFixed(1) %>%"></span></span>
+                  <strong><%= row.units %></strong>
+                </span>
               </td>
               <td class="muted"><%= row.source %></td>
-              <td><%= row.units %></td>
-              <td><%= row.currency || store.currency || "" %> <%= Number(row.revenue).toFixed(2) %></td>
+              <td><strong><%= row.currency || store.currency || "" %> <%= Number(row.revenue).toFixed(2) %></strong></td>
             </tr>
           <% }); %>
           <% } %>

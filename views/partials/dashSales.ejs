@@ -1,0 +1,84 @@
+<%#
+  "Sales — last 30 days": three figures and a bar per day.
+  Locals: dash (from dashHelpers), side ("source" | "destination").
+%>
+<%
+  var cur = dash.sales.current;
+  var prev = dash.sales.previous;
+  var isSource = side === "source";
+  var orderTrend = dash.trend(cur.orders, prev.orders);
+  var moneyNow = isSource ? cur.source_total : cur.destination_total;
+  var moneyTrend = dash.trend(moneyNow, isSource ? prev.source_total : prev.destination_total);
+  var profit = cur.destination_total - cur.source_total;
+  var margin = cur.destination_total > 0 ? Math.round(profit / cur.destination_total * 100) : null;
+  var peak = Math.max.apply(null, dash.sales.series.map(function (d) { return d.orders; }).concat([0]));
+%>
+<section class="panel">
+  <div class="panel__header">
+    <div>
+      <h2 class="panel__title">Sales &mdash; last 30 days</h2>
+      <p class="panel__copy">Orders across every connected store. Cancelled orders are left out.</p>
+    </div>
+    <a class="btn btn--small" href="/payouts" data-navigate="/payouts">View payouts &rarr;</a>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi">
+      <span class="kpi__label">Orders</span>
+      <strong class="kpi__value"><%= cur.orders %></strong>
+      <% if (orderTrend) { %>
+        <span class="trend <%= orderTrend.up ? "" : "trend--down" %>"><%= orderTrend.up ? "▲" : "▼" %> <%= orderTrend.text %></span>
+      <% } else { %>
+        <span class="kpi__note">No orders yet</span>
+      <% } %>
+    </div>
+
+    <div class="kpi">
+      <span class="kpi__label"><%= isSource ? "Earned" : "Revenue" %></span>
+      <strong class="kpi__value"><%= dash.money_(moneyNow) %></strong>
+      <% if (moneyTrend) { %>
+        <span class="trend <%= moneyTrend.up ? "" : "trend--down" %>"><%= moneyTrend.up ? "▲" : "▼" %> <%= moneyTrend.text %></span>
+      <% } else { %>
+        <span class="kpi__note">vs previous 30 days</span>
+      <% } %>
+    </div>
+
+    <% if (isSource) { %>
+      <div class="kpi">
+        <span class="kpi__label">Owed to you</span>
+        <strong class="kpi__value <%= dash.money.outstanding > 0 ? "kpi__value--warn" : "" %>"><%= dash.money_(dash.money.outstanding) %></strong>
+        <span class="kpi__note">
+          <%= dash.money.payers ? dash.money.payers + " buyer" + (dash.money.payers === 1 ? "" : "s") : "All settled" %>
+        </span>
+      </div>
+    <% } else { %>
+      <div class="kpi">
+        <span class="kpi__label">Profit</span>
+        <strong class="kpi__value <%= profit < 0 ? "kpi__value--bad" : "kpi__value--ok" %>"><%= dash.money_(profit) %></strong>
+        <span class="kpi__note"><%= margin === null ? "Revenue minus cost" : margin + "% margin" %></span>
+      </div>
+      <div class="kpi">
+        <span class="kpi__label">To pay suppliers</span>
+        <strong class="kpi__value <%= dash.money.outstanding > 0 ? "kpi__value--warn" : "" %>"><%= dash.money_(dash.money.outstanding) %></strong>
+        <span class="kpi__note">All time, after payments</span>
+      </div>
+    <% } %>
+  </div>
+
+  <% if (!peak) { %>
+    <p class="spark__empty">No sales in the last 30 days. The chart fills in as orders arrive.</p>
+  <% } else { %>
+    <div class="spark" role="img" aria-label="Orders per day over the last 30 days">
+      <% dash.sales.series.forEach(function (day, i) { %>
+        <span class="spark__bar <%= i === dash.sales.series.length - 1 ? "spark__bar--today" : "" %>"
+              style="height: <%= day.orders ? Math.max(6, day.orders / peak * 100).toFixed(1) : 2 %>%"
+              title="<%= day.day %>: <%= day.orders %> order(s)"></span>
+      <% }); %>
+    </div>
+    <div class="spark__axis">
+      <span><%= dash.sales.series[0].day.slice(5) %></span>
+      <span><%= dash.sales.series[15].day.slice(5) %></span>
+      <span>Today</span>
+    </div>
+  <% } %>
+</section>

@@ -172,7 +172,7 @@ const STORE_ROW = {
     });
 
     check("all three cards are shown",
-      (busy.match(/class="card"/g) || []).length === 3);
+      (busy.match(/class="card card--link"/g) || []).length === 3);
     check("the numbers land in them",
       busy.includes(">8<") && busy.includes(">2<"));
     check("waiting products are flagged",
@@ -193,7 +193,7 @@ const STORE_ROW = {
       Math.abs(drawn - circumference) < 0.5,
       `${drawn.toFixed(2)} vs ${circumference.toFixed(2)}`);
 
-    check("the pie shows the total in the middle", busy.includes("10<"));
+    check("the donut shows the share and the total", busy.includes("80%<") && busy.includes("of 10 synced"));
     check("percentages are shown", busy.includes("80%") && busy.includes("20%"));
 
     // Bars are scaled against the BIGGEST store, so the largest fills the row.
@@ -201,7 +201,7 @@ const STORE_ROW = {
       busy.includes('width: 85.7%'),
       "6 of a 7-product peak");
     check("every source gets a row",
-      (busy.match(/class="bars__row"/g) || []).length === 2);
+      (busy.match(/class="dest"/g) || []).length === 2);
     check("sources are named", busy.includes("Warehouse") && busy.includes("Outlet"));
 
     // A store that is connected but has offered nothing must still be listed,
@@ -222,17 +222,17 @@ const STORE_ROW = {
     });
 
     check("a connected store with no products is still listed",
-      (idle.match(/class="bars__row"/g) || []).length === 2,
+      (idle.match(/class="dest"/g) || []).length === 2,
       "the card would say 2 stores beside an empty list");
     check("and says so instead of showing a blank",
-      (idle.match(/none yet/g) || []).length === 2);
+      (idle.match(/No products offered by this store yet/g) || []).length === 2);
     check("each row shows the shop domain",
       idle.includes("a.myshopify.com") && idle.includes("b.myshopify.com"),
       "two stores can share a display name");
     check("a connection that is not active is flagged",
       idle.includes("pill--paused") && idle.includes(">paused<"));
     check("an active one is not",
-      (idle.match(/class="bars__status"/g) || []).length === 1,
+      (idle.match(/class="pill pill--paused"/g) || []).length === 1,
       "only the paused store should carry a badge");
     check("the panel links to Stores",
       idle.includes("Manage") && idle.includes("/stores"));
@@ -253,7 +253,7 @@ const STORE_ROW = {
     });
 
     check("an empty store still renders the cards",
-      (empty.match(/class="card"/g) || []).length === 3);
+      (empty.match(/class="card card--link"/g) || []).length === 3);
     check("but draws no pie", !empty.includes("stroke-dasharray"));
     check("and explains both charts",
       empty.includes("Nothing has been offered") &&
