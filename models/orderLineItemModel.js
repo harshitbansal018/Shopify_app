@@ -252,6 +252,7 @@ async function topSellingProducts(storeId, { limit = 5 } = {}) {
             MAX(source_store.shop_domain) AS source_shop_domain,
             MAX(sp.shopify_product_id) AS source_shopify_product_id,
             MAX(pm.destination_shopify_product_id) AS destination_shopify_product_id,
+            MAX(JSON_UNQUOTE(JSON_EXTRACT(sp.product_data, '$.image'))) AS image_url,
             MAX(o.currency) AS currency,
             SUM(li.quantity) AS units,
             SUM((li.quantity * li.price) - COALESCE(li.total_discount, 0)) AS revenue
@@ -288,6 +289,7 @@ async function topSellingSourceProducts(sourceStoreId, { limit = 5 } = {}) {
     `SELECT sp.id AS source_product_id,
             MAX(COALESCE(sp.title, li.title, 'Deleted product')) AS title,
             MAX(sp.shopify_product_id) AS source_shopify_product_id,
+            MAX(JSON_UNQUOTE(JSON_EXTRACT(sp.product_data, '$.image'))) AS image_url,
             MAX(source_store.currency) AS currency,
             COUNT(DISTINCT o.id) AS orders,
             COUNT(DISTINCT connection.destination_store_id) AS stores,

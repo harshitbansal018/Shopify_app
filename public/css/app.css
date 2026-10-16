@@ -3225,3 +3225,300 @@ s-modal:not(:defined)[open] s-button {
 .back-btn:hover .back-btn__icon {
   transform: translateX(-2px);
 }
+
+/* Destination Stores: the intro card is lighter than the source's code card. */
+.pair--compact {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: center;
+}
+
+/* ---------------- dashboards ---------------- */
+
+.btn--icon .icon {
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0.3rem;
+  vertical-align: -0.15rem;
+}
+
+/* 1. "Needs your attention" banner. */
+.callout {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 1.15rem;
+  padding: 0.95rem 1.15rem;
+  background: var(--waiting-bg);
+  border: 1px solid var(--waiting-line);
+  border-radius: 12px;
+}
+
+.callout__icon {
+  display: inline-flex;
+  flex: none;
+  padding: 0.5rem;
+  color: var(--waiting-ink);
+  background: #fff;
+  border: 1px solid var(--waiting-line);
+  border-radius: 10px;
+}
+
+.callout__icon .icon { width: 1.1rem; height: 1.1rem; }
+
+.callout__body {
+  display: grid;
+  flex: 1;
+  gap: 0.15rem;
+  font-size: 0.86rem;
+  color: var(--waiting-ink);
+}
+
+.callout__body strong { font-size: 0.95rem; color: var(--text); }
+.callout__extra { font-weight: 600; }
+.callout .btn { flex: none; background: #fff; }
+
+@media (max-width: 640px) {
+  .callout { flex-wrap: wrap; }
+}
+
+/* 2. Clickable stat cards. */
+.card--link {
+  gap: 0.5rem;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.card--link:hover {
+  border-color: var(--brand);
+  box-shadow: 0 6px 18px rgba(16, 18, 22, 0.08);
+  transform: translateY(-1px);
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.35rem;
+}
+
+.card__head .stat__icon { padding: 0.45rem; }
+.card__head .stat__icon .icon { width: 1.05rem; height: 1.05rem; }
+
+.card__arrow {
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.card--link:hover .card__arrow {
+  color: var(--brand);
+  transform: translateX(3px);
+}
+
+.card__figure { display: flex; align-items: baseline; gap: 0.5rem; }
+.card__of { color: var(--muted); font-size: 0.86rem; }
+.card--link .progress { margin-top: 0.35rem; }
+.card--link .progress span { background: var(--brand); }
+
+/* Panels in pairs. */
+.dash-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
+  gap: 1.15rem;
+  margin-bottom: 1.15rem;
+}
+
+.dash-grid--wide { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+.dash-grid > .panel { margin-bottom: 0; }
+
+@media (max-width: 900px) {
+  .dash-grid,
+  .dash-grid--wide { grid-template-columns: 1fr; }
+}
+
+/* 3. Donut. */
+.donut { display: flex; justify-content: center; margin: 1rem 0 1.25rem; }
+.donut svg { width: 11rem; height: 11rem; }
+.donut__track, .donut__slice { fill: none; stroke-width: 18; }
+.donut__track { stroke: var(--line-soft); }
+.donut__total { font-size: 1.75rem; font-weight: 700; text-anchor: middle; fill: var(--text); }
+.donut__caption { font-size: 0.72rem; text-anchor: middle; fill: var(--muted); }
+
+.keylist {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+
+.keylist li {
+  display: grid;
+  grid-template-columns: auto 1fr auto 2.75rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.88rem;
+}
+
+.keylist li + li { border-top: 1px solid var(--line-soft); }
+.keylist .muted { text-align: right; }
+
+.keylist__swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.35rem;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+/* 4. One card per connected store. */
+.dest-list { display: grid; gap: 0.75rem; margin: 0.75rem 0; padding: 0; list-style: none; }
+.dest { padding: 1rem 1.1rem; border: 1px solid var(--line); border-radius: 12px; }
+.dest__head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.85rem; }
+.dest__head .media__body { flex: 1; min-width: 0; }
+.dest__head .pill { margin-left: auto; }
+.avatar--solid { color: #fff; background: var(--brand); }
+.dest__row { display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.86rem; }
+
+.stackbar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  background: var(--line-soft);
+  border-radius: 999px;
+}
+
+.stackbar span { display: block; height: 100%; }
+.dest__legend { display: flex; gap: 1.1rem; margin-top: 0.6rem; font-size: 0.8rem; color: var(--muted); }
+.dest__none { margin: 0; font-size: 0.85rem; }
+
+.dest-add {
+  display: block;
+  padding: 0.8rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-align: center;
+  color: var(--brand);
+  text-decoration: none;
+  background: var(--brand-soft);
+  border: 1.5px dashed #9cc4cf;
+  border-radius: 12px;
+  transition: background-color 0.15s ease;
+}
+
+.dest-add:hover { background: #d9ebf0; }
+
+/* 5. Sales: figures and a bar per day. */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.65rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.kpi {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.7rem 0.85rem;
+  background: #fafafb;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+
+.kpi__label { color: var(--muted); font-size: 0.8rem; }
+.kpi__value { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi__value--warn { color: var(--waiting-ink); }
+.kpi__value--ok { color: var(--ok); }
+.kpi__value--bad { color: var(--danger); }
+.kpi__note { color: var(--muted); font-size: 0.76rem; }
+
+.trend { font-size: 0.76rem; font-weight: 600; color: var(--ok); }
+.trend--down { color: var(--danger); }
+
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 6.5rem;
+  padding-top: 0.4rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.spark__bar {
+  flex: 1;
+  min-height: 2px;
+  background: linear-gradient(180deg, #1d7d97, var(--brand));
+  border-radius: 3px 3px 0 0;
+  opacity: 0.85;
+}
+
+.spark__bar:hover { opacity: 1; }
+.spark__bar--today { background: var(--waiting); opacity: 1; }
+
+.spark__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.spark__empty {
+  margin: 0;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+}
+
+/* 6. Top sellers: rank, thumbnail, units bar. */
+.table .table__rank { width: 3rem; }
+
+.rank {
+  display: inline-grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--line-soft);
+  border-radius: 8px;
+}
+
+.rank--1 { color: #6b4a00; background: #ffe7a3; }
+
+.units { display: flex; align-items: center; gap: 0.55rem; }
+.units .progress { width: 6.5rem; height: 6px; }
+.units .progress span { background: var(--brand); }
+
+/* 7. Recent activity. */
+.feed { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.feed__item { display: flex; gap: 0.75rem; padding: 0.65rem 0; font-size: 0.86rem; }
+.feed__item + .feed__item { border-top: 1px solid var(--line-soft); }
+
+.feed__dot {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 50%;
+}
+
+.feed__dot .icon { width: 0.95rem; height: 0.95rem; }
+.feed__dot--brand { color: var(--brand); background: var(--brand-soft); }
+.feed__dot--ok { color: var(--ok); background: var(--ok-bg); }
+.feed__dot--warn { color: var(--waiting-ink); background: var(--waiting-bg); }
+.feed__dot--bad { color: var(--danger); background: var(--danger-bg); }
+
+.feed__body { min-width: 0; line-height: 1.4; }
+.feed__body time { display: block; font-size: 0.74rem; color: var(--muted); }

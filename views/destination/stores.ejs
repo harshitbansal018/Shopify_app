@@ -31,7 +31,41 @@
       </div>
     </header>
 
-      <h2 class="panel__title">Source stores sending here</h2>
+    <%# Mirrors the source's pairing card: what pairing is, and where to start.
+        The code itself comes from the source store; it is entered through the
+        Add store button above. %>
+    <section class="pair pair--compact">
+      <div class="pair__intro">
+        <span class="pair__eyebrow">Connect a supplier</span>
+        <h2 class="pair__title">Receive products from a source store</h2>
+        <p class="pair__copy">
+          Ask the source store for its pairing code. Codes expire after a few minutes and
+          can only be used once.
+        </p>
+        <ol class="pair__steps">
+          <li><span class="pair__num">1</span>The source store generates a code on its <strong>Stores</strong> page</li>
+          <li><span class="pair__num">2</span>Press <strong>+ Add store</strong> and enter it</li>
+          <li><span class="pair__num">3</span>Accept the products they share on <strong>Products</strong></li>
+        </ol>
+      </div>
+
+      <div class="pair__ticket">
+        <div class="pair__empty">
+          <span class="pair__lock" aria-hidden="true">
+            <%- include("../partials/icon", { name: "key" }) %>
+          </span>
+          <p>Have a pairing code? Use <strong>+ Add store</strong> at the top of the page to connect.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="linked">
+      <header class="linked__head">
+        <h2 class="linked__title">
+          Source stores sending here
+          <span class="segment__count"><%= connections.length %></span>
+        </h2>
+      </header>
 
       <table class="table">
         <thead>
@@ -114,6 +148,7 @@
           <% } %>
         </tbody>
       </table>
+    </section>
 
   </main>
 

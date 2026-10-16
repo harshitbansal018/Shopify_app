@@ -1,0 +1,52 @@
+<%#
+  "Recent activity": the newest few events. Locals: dash, side.
+%>
+<section class="panel">
+  <h2 class="panel__title">Recent activity</h2>
+
+  <% if (!dash.activity.length) { %>
+    <p class="panel__copy">Nothing has happened yet. New orders, payments and accepted products show up here.</p>
+  <% } else { %>
+    <ul class="feed">
+      <% dash.activity.forEach(function (item) { %>
+        <li class="feed__item">
+          <% if (item.kind === "order") { %>
+            <span class="feed__dot feed__dot--brand" aria-hidden="true"><%- include("icon", { name: "box" }) %></span>
+            <span class="feed__body">
+              Order <strong><%= item.ref || "" %></strong>
+              <%= side === "source" ? "from" : "via" %> <%= item.store %>
+              <% if (item.lines) { %>&middot; <%= item.lines %> item<%= item.lines === 1 ? "" : "s" %><% } %>
+              <time><%= dash.ago(item.at) %></time>
+            </span>
+          <% } else if (item.kind === "cancelled") { %>
+            <span class="feed__dot feed__dot--bad" aria-hidden="true">!</span>
+            <span class="feed__body">
+              Order <strong><%= item.ref || "" %></strong> cancelled
+              <time><%= dash.ago(item.at) %></time>
+            </span>
+          <% } else if (item.kind === "payment") { %>
+            <span class="feed__dot feed__dot--warn" aria-hidden="true"><%- include("icon", { name: "wallet" }) %></span>
+            <span class="feed__body">
+              <% if (side === "source") { %>
+                Payment <strong><%= (item.currency || dash.currency) + " " + Number(item.amount).toFixed(2) %></strong> recorded by <%= item.store %>
+              <% } else { %>
+                You paid <strong><%= (item.currency || dash.currency) + " " + Number(item.amount).toFixed(2) %></strong> to <%= item.store %>
+              <% } %>
+              <time><%= dash.ago(item.at) %></time>
+            </span>
+          <% } else if (item.kind === "accepted") { %>
+            <span class="feed__dot feed__dot--ok" aria-hidden="true"><%- include("icon", { name: "check" }) %></span>
+            <span class="feed__body">
+              <% if (side === "source") { %>
+                <%= item.store %> accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong>
+              <% } else { %>
+                You accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong> from <%= item.store %>
+              <% } %>
+              <time><%= dash.ago(item.at) %></time>
+            </span>
+          <% } %>
+        </li>
+      <% }); %>
+    </ul>
+  <% } %>
+</section>

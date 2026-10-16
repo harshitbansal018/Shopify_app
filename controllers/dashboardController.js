@@ -6,18 +6,30 @@ const sourceProductModel = require("../models/sourceProductModel");
 const connectionModel = require("../models/connectionModel");
 const productMappingModel = require("../models/productMappingModel");
 const orderLineItemModel = require("../models/orderLineItemModel");
+const payoutModel = require("../models/payoutModel");
+const dashboardModel = require("../models/dashboardModel");
 const { renderStoreType } = require("./storeController");
 const setupController = require("./setupController");
 
+/** Adds one numeric field across rows, to the cent. */
+function sumOf(rows, field) {
+  return Number(
+    rows.reduce((total, row) => total + (Number(row[field]) || 0), 0).toFixed(2)
+  );
+}
+
 /** Products sent out, destinations receiving them, and orders coming back. */
 async function sourceStats(storeId) {
-  const [counts, connections, topSellers] = await Promise.all([
+  const [counts, connections, topSellers, buyers, sales, activity] = await Promise.all([
     // Counted in SQL. This used to read 5,000 whole product rows to produce
     // three numbers, and a store past that cap saw a total that was simply
     // wrong with nothing on the screen to say so.
     sourceProductModel.countsWithMappingStatus(storeId),
     connectionModel.listForSource(storeId),
     orderLineItemModel.topSellingSourceProducts(storeId, { limit: 5 }),
+    payoutModel.summaryForSource(storeId),
+    dashboardModel.salesSeries(storeId, "source"),
+    dashboardModel.recentActivity(storeId, "source"),
   ]);
 
   const byDestination = await Promise.all(
@@ -53,6 +65,15 @@ async function sourceStats(storeId) {
         a.name.localeCompare(b.name)
     ),
     topSellers,
+    // What is owed, and the work waiting, across every buyer.
+    money: {
+      outstanding: sumOf(buyers, "outstanding"),
+      openOrders: sumOf(buyers, "open_orders"),
+      payers: buyers.filter((buyer) => buyer.outstanding > 0).length,
+      currency: (buyers[0] && buyers[0].currency) || null,
+    },
+    sales,
+    activity,
   };
 }
 
@@ -61,11 +82,14 @@ async function destinationStats(storeId) {
   // Both counted in SQL. This used to read 500 whole product rows and tally
   // them here, so a store past 500 got a chart and two cards that were quietly
   // wrong -- and paid for the full product payload to produce two numbers.
-  const [counts, bySourceCounts, connections, topSellers] = await Promise.all([
+  const [counts, bySourceCounts, connections, topSellers, suppliers, sales, activity] = await Promise.all([
     sourceProductModel.countsSyncedIntoStore(storeId),
     sourceProductModel.countsSyncedBySource(storeId),
     connectionModel.listForDestination(storeId),
     orderLineItemModel.topSellingProducts(storeId, { limit: 5 }),
+    payoutModel.summaryForDestination(storeId),
+    dashboardModel.salesSeries(storeId, "destination"),
+    dashboardModel.recentActivity(storeId, "destination"),
   ]);
 
   // Seeded from the CONNECTIONS, not from the products: a store that is
@@ -121,6 +145,13 @@ async function destinationStats(storeId) {
         a.name.localeCompare(b.name)
     ),
     topSellers,
+    money: {
+      outstanding: sumOf(suppliers, "outstanding"),
+      openOrders: sumOf(suppliers, "open_orders"),
+      currency: (suppliers[0] && suppliers[0].currency) || null,
+    },
+    sales,
+    activity,
   };
 }
 

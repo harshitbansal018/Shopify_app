@@ -14,13 +14,26 @@
   <main class="shell shell--wide">
 
     <header class="shell__header">
-      <div><h1>Dashboard</h1></div>
+      <div>
+        <h1>Dashboard</h1>
+        <p class="shell__sub">How your products are being shared with your destination stores.</p>
+      </div>
+
+      <div class="shell__actions">
+        <a class="btn btn--icon" href="/stores" data-navigate="/stores">
+          <%- include("../partials/icon", { name: "sliders" }) %> Manage stores
+        </a>
+      </div>
     </header>
 
     <%- include("../partials/setupBanner") %>
 
+    <% var dash = {}; %>
+    <%- include("../partials/dashHelpers", { dash: dash }) %>
+
     <%
       var total = stats.cards.shared + stats.cards.unshared;
+      var sharedPct = total ? Math.round(stats.cards.shared / total * 100) : 0;
       var R = 60;
       var C = 2 * Math.PI * R;
       var slices = [
@@ -28,35 +41,77 @@
         { label: "Unshared", value: stats.cards.unshared, className: "slice--unsynced" },
       ];
       var offset = 0;
+      var paused = stats.byDestination.filter(function (d) { return !d.active; }).length;
     %>
 
-    <section class="cards">
-      <div class="card">
-        <span class="card__label">Products staged</span>
-        <span class="card__value"><%= stats.cards.staged %></span>
-        <span class="card__note">Imported from this store</span>
-      </div>
-      <div class="card">
-        <span class="card__label">Shared products</span>
-        <span class="card__value"><%= stats.cards.shared %></span>
-        <span class="card__note">
+    <%# 1. What is waiting on the merchant, said first. Gone when nothing is. %>
+    <% if (stats.cards.unshared || dash.money.openOrders) { %>
+      <section class="callout">
+        <span class="callout__icon" aria-hidden="true"><%- include("../partials/icon", { name: "bolt" }) %></span>
+        <span class="callout__body">
           <% if (stats.cards.unshared) { %>
-            <%= stats.cards.unshared %> ready on <a class="link" href="/products?filter=unshared" data-navigate="/products?filter=unshared">Products</a>
-          <% } else { %>
-            Everything staged is shared
+            <strong>
+              <%= stats.cards.unshared %> product<%= stats.cards.unshared === 1 ? " is" : "s are" %> ready to share
+            </strong>
+            <span><%= stats.cards.unshared %> ready on Products. Allow them so they go out to your destination stores.</span>
+          <% } %>
+          <% if (dash.money.openOrders) { %>
+            <span class="callout__extra">
+              &#9888; <%= dash.money.openOrders %> order<%= dash.money.openOrders === 1 ? "" : "s" %> waiting for you to fulfil
+            </span>
           <% } %>
         </span>
-      </div>
-      <div class="card">
-        <span class="card__label">Stores connected</span>
+        <% if (stats.cards.unshared) { %>
+          <a class="btn btn--small" href="/products?filter=unshared" data-navigate="/products?filter=unshared">Review products &rarr;</a>
+        <% } else { %>
+          <a class="btn btn--small" href="/orders" data-navigate="/orders">View orders &rarr;</a>
+        <% } %>
+      </section>
+    <% } %>
+
+    <%# 2. Every card opens the screen behind its number. %>
+    <section class="cards">
+      <a class="card card--link" href="/products" data-navigate="/products">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
+          <span class="card__label">Products staged</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
+        <span class="card__value"><%= stats.cards.staged %></span>
+        <span class="card__note">Imported from this store</span>
+      </a>
+
+      <a class="card card--link" href="/products?filter=shared" data-navigate="/products?filter=shared">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "share" }) %></span>
+          <span class="card__label">Shared products</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
+        <span class="card__figure">
+          <span class="card__value"><%= stats.cards.shared %></span>
+          <% if (total) { %><span class="card__of">of <%= total %> &middot; <%= sharedPct %>%</span><% } %>
+        </span>
+        <span class="progress" aria-hidden="true"><span style="width: <%= sharedPct %>%"></span></span>
+      </a>
+
+      <a class="card card--link" href="/stores" data-navigate="/stores">
+        <span class="card__head">
+          <span class="stat__icon stat__icon--brand" aria-hidden="true"><%- include("../partials/icon", { name: "link" }) %></span>
+          <span class="card__label">Stores connected</span>
+          <span class="card__arrow" aria-hidden="true">&rarr;</span>
+        </span>
         <span class="card__value"><%= stats.cards.stores %></span>
-        <span class="card__note">Receiving products from here</span>
-      </div>
+        <span class="card__note">
+          <% if (paused) { %><%= stats.cards.stores %> active &middot; <%= paused %> paused<% } else { %>Receiving products from here<% } %>
+        </span>
+      </a>
     </section>
 
-    <div class="charts">
+    <div class="dash-grid">
+      <%# 3. Sharing status. %>
       <section class="panel">
         <h2 class="panel__title">Sharing status</h2>
+        <p class="panel__copy">Staged products by sharing state</p>
 
         <% if (!total) { %>
           <p class="panel__copy">
@@ -64,45 +119,46 @@
             <a class="link" href="/products?filter=unshared" data-navigate="/products?filter=unshared">Products</a>.
           </p>
         <% } else { %>
-          <div class="chart chart--pie">
+          <div class="donut">
             <svg viewBox="0 0 160 160" role="img"
                  aria-label="<%= stats.cards.shared %> shared, <%= stats.cards.unshared %> unshared">
+              <circle class="donut__track" cx="80" cy="80" r="<%= R %>"></circle>
               <g transform="rotate(-90 80 80)">
                 <% slices.forEach(function (slice) { %>
                   <% if (slice.value) { %>
-                    <circle
-                      class="slice <%= slice.className %>"
-                      cx="80" cy="80" r="<%= R %>"
+                    <circle class="donut__slice <%= slice.className %>" cx="80" cy="80" r="<%= R %>"
                       stroke-dasharray="<%= (slice.value / total * C).toFixed(2) %> <%= C.toFixed(2) %>"
                       stroke-dashoffset="<%= (-offset / total * C).toFixed(2) %>"></circle>
                     <% offset += slice.value; %>
                   <% } %>
                 <% }); %>
               </g>
-              <text x="80" y="76" class="chart__total"><%= total %></text>
-              <text x="80" y="94" class="chart__caption">products</text>
+              <text x="80" y="82" class="donut__total"><%= sharedPct %>%</text>
+              <text x="80" y="102" class="donut__caption">shared</text>
             </svg>
-
-            <ul class="legend">
-              <% slices.forEach(function (slice) { %>
-                <li class="legend__item">
-                  <span class="legend__swatch <%= slice.className %>"></span>
-                  <span><%= slice.label %></span>
-                  <span class="legend__value">
-                    <%= slice.value %>
-                    <span class="muted"><%= Math.round(slice.value / total * 100) %>%</span>
-                  </span>
-                </li>
-              <% }); %>
-            </ul>
           </div>
+
+          <ul class="keylist">
+            <% slices.forEach(function (slice) { %>
+              <li>
+                <span class="keylist__swatch <%= slice.className %>" aria-hidden="true"></span>
+                <span><%= slice.label %></span>
+                <strong><%= slice.value %></strong>
+                <span class="muted"><%= Math.round(slice.value / total * 100) %>%</span>
+              </li>
+            <% }); %>
+          </ul>
         <% } %>
       </section>
 
+      <%# 4. One card per destination store. %>
       <section class="panel">
         <div class="panel__header">
-          <h2 class="panel__title">Connected destination stores</h2>
-          <a class="link" href="/stores" data-navigate="/stores">Manage</a>
+          <div>
+            <h2 class="panel__title">Connected destination stores</h2>
+            <p class="panel__copy">Sync progress for each store receiving your products</p>
+          </div>
+          <a class="btn btn--small" href="/stores" data-navigate="/stores">Manage</a>
         </div>
 
         <% if (!stats.byDestination.length) { %>
@@ -111,52 +167,59 @@
             <a class="link" href="/stores" data-navigate="/stores">Stores</a> and give it to the destination store.
           </p>
         <% } else { %>
-          <%
-            var peak = Math.max.apply(null, stats.byDestination.map(function (destination) {
-              return destination.synced + destination.unsynced;
-            })) || 1;
-          %>
-          <ul class="bars">
+          <ul class="dest-list">
             <% stats.byDestination.forEach(function (destination) { %>
-              <li class="bars__row">
-                <span class="bars__label">
-                  <span class="bars__name" title="<%= destination.domain %>"><%= destination.name %></span>
-                  <span class="muted"><%= destination.domain %></span>
-                </span>
-                <span class="bars__track">
-                  <span class="bars__fill slice--synced"
-                        style="width: <%= (destination.synced / peak * 100).toFixed(1) %>%"></span>
-                  <span class="bars__fill slice--unsynced"
-                        style="width: <%= (destination.unsynced / peak * 100).toFixed(1) %>%"></span>
-                </span>
-                <span class="bars__value">
-                  <% if (destination.synced + destination.unsynced) { %>
-                    <%= destination.synced + destination.unsynced %>
-                  <% } else { %>
-                    <span class="muted">none yet</span>
-                  <% } %>
-                </span>
-                <% if (!destination.active) { %>
-                  <span class="bars__status">
-                    <span class="pill pill--<%= destination.status %>"><%= destination.status %></span>
+              <%
+                var offered = destination.synced + destination.unsynced;
+                var pct = offered ? Math.round(destination.synced / offered * 100) : 0;
+              %>
+              <li class="dest">
+                <div class="dest__head">
+                  <span class="avatar avatar--solid" aria-hidden="true"><%= String(destination.name || destination.domain).charAt(0).toUpperCase() %></span>
+                  <span class="media__body">
+                    <span class="table__title" title="<%= destination.domain %>"><%= destination.name %></span>
+                    <span class="muted"><%= destination.domain %></span>
                   </span>
+                  <% if (destination.active) { %>
+                    <span class="pill pill--active">&bull; Connected</span>
+                  <% } else { %>
+                    <span class="pill pill--<%= destination.status %>"><%= destination.status %></span>
+                  <% } %>
+                </div>
+
+                <% if (offered) { %>
+                  <div class="dest__row">
+                    <span><strong><%= destination.synced %></strong> of <%= offered %> products synced</span>
+                    <span class="muted"><%= pct %>%</span>
+                  </div>
+                  <span class="stackbar" aria-hidden="true">
+                    <span class="slice--synced" style="width: <%= (destination.synced / offered * 100).toFixed(1) %>%"></span>
+                    <span class="slice--unsynced" style="width: <%= (destination.unsynced / offered * 100).toFixed(1) %>%"></span>
+                  </span>
+                  <span class="dest__legend">
+                    <span><span class="keylist__swatch slice--synced"></span>Synced &middot; <%= destination.synced %></span>
+                    <span><span class="keylist__swatch slice--unsynced"></span>Not synced &middot; <%= destination.unsynced %></span>
+                  </span>
+                <% } else { %>
+                  <p class="muted dest__none">No products offered to this store yet.</p>
                 <% } %>
               </li>
             <% }); %>
           </ul>
-
-          <ul class="legend legend--inline">
-            <li class="legend__item">
-              <span class="legend__swatch slice--synced"></span><span>Synced</span>
-            </li>
-            <li class="legend__item">
-              <span class="legend__swatch slice--unsynced"></span><span>Not synced</span>
-            </li>
-          </ul>
         <% } %>
+
+        <a class="dest-add" href="/stores" data-navigate="/stores">+ Connect another store</a>
       </section>
     </div>
 
+    <div class="dash-grid dash-grid--wide">
+      <%# 5. Sales. %>
+      <%- include("../partials/dashSales", { dash: dash, side: "source" }) %>
+      <%# 7. Recent activity. %>
+      <%- include("../partials/dashActivity", { dash: dash, side: "source" }) %>
+    </div>
+
+    <%# 6. Top sellers, ranked. %>
     <section class="panel">
       <div class="panel__header">
         <h2 class="panel__title">Top selling products</h2>
@@ -165,39 +228,54 @@
         Your products ranked by units sold across connected destination stores.
       </p>
 
+      <% var topUnits = Math.max.apply(null, stats.topSellers.map(function (p) { return p.units; }).concat([1])); %>
       <table class="table">
         <thead>
           <tr>
+            <th class="table__rank">#</th>
             <th>Product</th>
+            <th>Units sold</th>
             <th>Stores sold in</th>
             <th>Orders</th>
-            <th>Units sold</th>
             <th>Source revenue</th>
           </tr>
         </thead>
         <tbody>
           <% if (!stats.topSellers.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="5">
+              <td class="table__empty" colspan="6">
                 <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
                 <strong>No records found</strong>
                 <span>None of your synced products have sold yet.</span>
               </td>
             </tr>
           <% } else { %>
-            <% stats.topSellers.forEach(function (product) { %>
+            <% stats.topSellers.forEach(function (product, i) { %>
               <tr>
+                <td class="table__rank"><span class="rank <%= i === 0 ? "rank--1" : "" %>"><%= i + 1 %></span></td>
                 <td>
-                  <a class="table__title record-link"
-                     href="<%= shopifyAdminUrl(shop, 'products', product.source_shopify_product_id) %>"
-                     target="_blank" rel="noopener noreferrer">
-                    <%= product.title %>
-                  </a>
+                  <span class="media">
+                    <% if (dash.image(product.image_url)) { %>
+                      <img class="media__thumb" src="<%= dash.image(product.image_url) %>" alt="" loading="lazy" width="40" height="40">
+                    <% } else { %>
+                      <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+                    <% } %>
+                    <a class="table__title record-link"
+                       href="<%= shopifyAdminUrl(shop, 'products', product.source_shopify_product_id) %>"
+                       target="_blank" rel="noopener noreferrer">
+                      <%= product.title %>
+                    </a>
+                  </span>
+                </td>
+                <td>
+                  <span class="units">
+                    <span class="progress" aria-hidden="true"><span style="width: <%= (product.units / topUnits * 100).toFixed(1) %>%"></span></span>
+                    <strong><%= product.units %></strong>
+                  </span>
                 </td>
                 <td><%= product.stores %></td>
                 <td><%= product.orders %></td>
-                <td><%= product.units %></td>
-                <td><%= product.currency || store.currency || "" %> <%= Number(product.revenue).toFixed(2) %></td>
+                <td><strong><%= product.currency || store.currency || "" %> <%= Number(product.revenue).toFixed(2) %></strong></td>
               </tr>
             <% }); %>
           <% } %>
