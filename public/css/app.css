@@ -292,6 +292,7 @@ body {
 
 .btn {
   display: inline-flex;
+  text-decoration: none;
   align-items: center;
   justify-content: center;
   min-height: 2rem;
@@ -3275,7 +3276,7 @@ s-modal:not(:defined)[open] s-button {
 
 .callout__body strong { font-size: 0.95rem; color: var(--text); }
 .callout__extra { font-weight: 600; }
-.callout .btn { flex: none; background: #fff; }
+.callout .btn { flex: none;  }
 
 @media (max-width: 640px) {
   .callout { flex-wrap: wrap; }
@@ -3522,3 +3523,8 @@ s-modal:not(:defined)[open] s-button {
 
 .feed__body { min-width: 0; line-height: 1.4; }
 .feed__body time { display: block; font-size: 0.74rem; color: var(--muted); }
+
+.btn,
+.btn:hover,
+.btn:focus,
+.btn:visited { text-decoration: none; }
