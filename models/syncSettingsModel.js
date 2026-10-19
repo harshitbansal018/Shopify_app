@@ -30,6 +30,9 @@ const VARIANT_FIELDS = [
   "variant_price",
   "variant_cost",
   "variant_taxable",
+  "variant_requires_shipping",
+  "variant_inventory_tracking",
+  "variant_weight",
   "variant_continue_selling",
 ];
 

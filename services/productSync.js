@@ -27,6 +27,27 @@ function numericId(gid) {
   return match ? match[1] : null;
 }
 
+/** REST uses short lower-case units; GraphQL uses WeightUnit enum values. */
+function weightUnit(value) {
+  const units = {
+    g: "GRAMS",
+    gram: "GRAMS",
+    grams: "GRAMS",
+    kg: "KILOGRAMS",
+    kilogram: "KILOGRAMS",
+    kilograms: "KILOGRAMS",
+    oz: "OUNCES",
+    ounce: "OUNCES",
+    ounces: "OUNCES",
+    lb: "POUNDS",
+    pound: "POUNDS",
+    pounds: "POUNDS",
+  };
+
+  const key = String(value || "").trim().toLowerCase();
+  return units[key] || (key ? key.toUpperCase() : null);
+}
+
 /**
  * Flatten one GraphQL product into the shape the models expect, which is the
  * REST-ish shape (`id`, `product_type`, `variants[]`, `option1..3`).
@@ -52,6 +73,15 @@ function flatten(node) {
     inventory_quantity: variant.inventoryQuantity,
     inventory_item_id: numericId(variant.inventoryItem?.id),
     inventory_tracked: variant.inventoryItem?.tracked,
+    requires_shipping: variant.inventoryItem?.requiresShipping,
+    weight_value: variant.inventoryItem?.measurement?.weight?.value,
+    weight_unit: variant.inventoryItem?.measurement?.weight?.unit,
+    metafields: (variant.metafields?.nodes || []).map((metafield) => ({
+      namespace: metafield.namespace,
+      key: metafield.key,
+      type: metafield.type,
+      value: metafield.value,
+    })),
     // Money comes back as { amount }; the column and the push want a number.
     cost: variant.inventoryItem?.unitCost?.amount ?? null,
     selectedOptions: variant.selectedOptions || [],
@@ -132,7 +162,11 @@ const PRODUCTS_BY_ID_QUERY = `
           nodes {
             id title sku barcode price compareAtPrice position
             taxable inventoryPolicy inventoryQuantity
-            inventoryItem { id tracked unitCost { amount } }
+            inventoryItem {
+              id tracked requiresShipping unitCost { amount }
+              measurement { weight { value unit } }
+            }
+            metafields(first: 25) { nodes { namespace key type value } }
             selectedOptions { name value }
           }
         }
@@ -252,6 +286,17 @@ function fromWebhook(payload) {
       inventory_item_id: variant.inventory_item_id
         ? String(variant.inventory_item_id)
         : null,
+      requires_shipping: variant.requires_shipping,
+      inventory_tracked:
+        variant.inventory_management === undefined
+          ? undefined
+          : Boolean(variant.inventory_management),
+      weight_value:
+        variant.weight === undefined || variant.weight === null
+          ? undefined
+          : Number(variant.weight),
+      weight_unit: weightUnit(variant.weight_unit),
+      metafields: variant.metafields,
       // Cost is NOT in a products/update payload. Left undefined so the
       // upsert's COALESCE keeps whatever a full fetch recorded, rather than
       // wiping it on every edit.
@@ -265,21 +310,35 @@ function fromWebhook(payload) {
 /**
  * A product changed at the source. Refresh the cache and queue the push.
  *
- * Deliberately makes NO Shopify call: the webhook payload already carries the
- * whole product, and calling out from inside a webhook is what turns a slow
- * API into Shopify retrying and eventually unsubscribing the topic.
+ * When the shop is supplied, performs a canonical Shopify read after the
+ * controller has acknowledged the webhook. The REST-shaped payload is kept as
+ * a fallback for internal callers and isolated tests.
  *
  * Returns null when this store does not cache the product, which is the normal
  * case -- a source store fires this for every product it has, not only the ones
  * shared through the app.
  */
-async function applySourceUpdate(storeId, payload) {
+async function applySourceUpdate(storeId, payload, { shop = null } = {}) {
   const product = fromWebhook(payload);
 
   const known = await sourceProductModel.findByShopifyId(storeId, product.id);
 
   // Not staged in the app: nothing to update and nothing to push.
   if (!known) return null;
+
+  /* The REST-shaped webhook is intentionally smaller than the canonical
+   * GraphQL product: category, metafields and inventory-item details can be
+   * absent, and product webhooks cap their variants. The response was already
+   * acknowledged by the controller, so read the complete current snapshot
+   * before queueing when a shop is available. The payload path remains for
+   * tests and as a fallback for callers that cannot perform an API read. */
+  if (shop) {
+    return refreshSourceProduct(
+      { id: storeId, shop_domain: shop },
+      product.id,
+      known
+    );
+  }
 
   /* A products/update payload does not carry collection membership -- Shopify
    * simply does not put it in there -- and upsert replaces product_data
@@ -297,6 +356,87 @@ async function applySourceUpdate(storeId, payload) {
   const requeued = await productMappingModel.requeueForSourceProduct(known.id);
 
   return { sourceProductId: known.id, requeued };
+}
+
+/**
+ * Fully reload one staged product and force its destination mappings back on
+ * the queue. Some child-resource changes (metafields, inventory and
+ * collections) don't advance Product.updatedAt, so timestamp comparison alone
+ * is not enough.
+ */
+async function refreshSourceProduct(store, shopifyProductId, knownProduct = null) {
+  const known =
+    knownProduct ||
+    (await sourceProductModel.findByShopifyId(store.id, shopifyProductId));
+
+  if (!known) return null;
+
+  const refreshed = await importProducts(store.shop_domain, store.id, [shopifyProductId]);
+  const forced = await productMappingModel.requeueForSourceProduct(known.id);
+
+  return {
+    sourceProductId: known.id,
+    imported: refreshed.imported || 0,
+    requeued: Math.max(refreshed.requeued || 0, forced || 0),
+  };
+}
+
+/**
+ * Inventory webhooks identify an inventory item, not its product. Resolve it
+ * through the local variant cache, then perform a full product read because an
+ * inventory-level payload contains only one location while inventoryQuantity
+ * is the source variant's total sellable stock across its locations.
+ */
+async function refreshForInventoryItem(store, inventoryItemId) {
+  const known = await sourceVariantModel.findByInventoryItem(
+    store.id,
+    inventoryItemId
+  );
+
+  if (!known) return null;
+
+  return refreshSourceProduct(store, known.shopify_product_id, {
+    id: known.source_product_id,
+  });
+}
+
+/**
+ * Re-read every staged product after a collection changes. The collection
+ * webhook identifies the collection, not the complete before/after product
+ * membership, so refreshing only products present in its payload would miss
+ * removals. Work in small batches to keep GraphQL query cost bounded.
+ */
+async function refreshAllStagedProducts(store) {
+  let imported = 0;
+  let requeued = 0;
+  let batch = [];
+
+  async function flush() {
+    if (!batch.length) return;
+
+    const current = batch;
+    batch = [];
+    const refreshed = await importProducts(
+      store.shop_domain,
+      store.id,
+      current.map((product) => product.shopify_product_id)
+    );
+
+    imported += refreshed.imported || 0;
+
+    // Collection membership does not reliably change Product.updatedAt.
+    for (const product of current) {
+      requeued += await productMappingModel.requeueForSourceProduct(product.id);
+    }
+  }
+
+  for await (const product of sourceProductModel.iterateForStore(store.id, 50)) {
+    batch.push(product);
+    if (batch.length === 50) await flush();
+  }
+
+  await flush();
+  return { imported, requeued };
 }
 
 /**
@@ -475,6 +615,30 @@ function splitMetafields(metafields) {
   return { metafields: kept, seo };
 }
 
+/** Variant metafields have no SEO-reserved pair, but still need malformed and
+ * duplicate entries removed before ProductSet receives them. */
+function cleanVariantMetafields(metafields) {
+  const kept = [];
+  const seen = new Set();
+
+  for (const metafield of metafields || []) {
+    if (!metafield || !metafield.namespace || !metafield.key) continue;
+
+    const id = `${metafield.namespace}/${metafield.key}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    kept.push({
+      namespace: metafield.namespace,
+      key: metafield.key,
+      type: metafield.type,
+      value: metafield.value,
+    });
+  }
+
+  return kept;
+}
+
 /** Apply the connection's markup. Stored as a percent, so 15 means +15%. */
 function withMarkup(price, markupPercent) {
   // Checked before Number(), because Number(null) and Number("") are both 0 --
@@ -537,18 +701,19 @@ function buildProductInput(
   };
 
   if (on("description")) input.descriptionHtml = data.descriptionHtml || "";
-  if (on("vendor") && product.vendor) input.vendor = product.vendor;
-  if (on("product_type") && product.product_type) {
-    input.productType = product.product_type;
-  }
+  if (on("vendor")) input.vendor = product.vendor || "";
+  if (on("product_type")) input.productType = product.product_type || "";
   if (on("tags") && Array.isArray(data.tags)) input.tags = data.tags;
   if (on("status")) input.status = (product.status || "ACTIVE").toUpperCase();
   // The taxonomy is global, so the same id means the same category over there.
-  if (on("category") && data.category) input.category = data.category;
-  if (on("metafields") && Array.isArray(data.metafields) && data.metafields.length) {
+  if (on("category")) input.category = data.category || null;
+  if (on("metafields") && Array.isArray(data.metafields)) {
     const { metafields, seo } = splitMetafields(data.metafields);
 
-    if (metafields.length) input.metafields = metafields;
+    // ProductSet treats metafields as a list field. Sending [] is how a
+    // deletion at the source clears the destination rather than leaving stale
+    // custom data behind.
+    input.metafields = metafields;
     // The SEO pair goes to the field Shopify actually keeps it in. Sending it
     // as a metafield is what made a re-push collide with itself.
     if (seo) input.seo = seo;
@@ -570,18 +735,18 @@ function buildProductInput(
           .filter(Boolean),
       };
 
-      if (on("variant_sku") && variant.sku) out.sku = variant.sku;
-      if (on("variant_barcode") && variant.barcode) out.barcode = variant.barcode;
+      if (on("variant_sku")) out.sku = variant.sku || null;
+      if (on("variant_barcode")) out.barcode = variant.barcode || null;
 
       if (on("variant_price")) {
         out.price = withMarkup(variant.price, settings.price_markup_percent);
 
-        if (variant.compare_at_price) {
-          out.compareAtPrice = withMarkup(
-            variant.compare_at_price,
-            settings.price_markup_percent
-          );
-        }
+        // null is deliberate: it clears a destination compare-at price when
+        // the source removes its sale price.
+        out.compareAtPrice = withMarkup(
+          variant.compare_at_price,
+          settings.price_markup_percent
+        );
       }
 
       // Tri-state at the source: null means it never told us, which is not
@@ -595,13 +760,53 @@ function buildProductInput(
         out.inventoryPolicy = String(variant.inventory_policy).toUpperCase();
       }
 
+      // Cost and the physical/digital shipping flag live on the inventory item
+      // in Shopify's GraphQL model. Build this object cumulatively so enabling
+      // one field never drops the other from the same update.
       if (on("variant_cost") && variant.cost !== null && variant.cost !== undefined) {
-        out.inventoryItem = { cost: Number(variant.cost) };
+        out.inventoryItem = { ...(out.inventoryItem || {}), cost: Number(variant.cost) };
+      }
+
+      if (on("variant_requires_shipping") &&
+          variant.requires_shipping !== null &&
+          variant.requires_shipping !== undefined) {
+        out.inventoryItem = {
+          ...(out.inventoryItem || {}),
+          requiresShipping: Boolean(variant.requires_shipping),
+        };
+      }
+
+      if (on("variant_inventory_tracking") &&
+          variant.inventory_tracked !== null &&
+          variant.inventory_tracked !== undefined) {
+        out.inventoryItem = {
+          ...(out.inventoryItem || {}),
+          tracked: Boolean(variant.inventory_tracked),
+        };
+      }
+
+      if (on("variant_weight") &&
+          variant.weight_value !== null &&
+          variant.weight_value !== undefined &&
+          variant.weight_unit) {
+        out.inventoryItem = {
+          ...(out.inventoryItem || {}),
+          measurement: {
+            weight: {
+              value: Number(variant.weight_value),
+              unit: weightUnit(variant.weight_unit),
+            },
+          },
+        };
+      }
+
+      if (on("metafields") && Array.isArray(variant.metafields)) {
+        out.metafields = cleanVariantMetafields(variant.metafields);
       }
 
       // Stock needs somewhere to put it. Without a location on the destination
       // there is nothing to set, so it is skipped rather than guessed at.
-      if (on("inventory") && locationId &&
+      if (on("inventory") && locationId && variant.inventory_tracked !== 0 &&
           variant.inventory_quantity !== null &&
           variant.inventory_quantity !== undefined) {
         out.inventoryQuantities = [
@@ -649,10 +854,8 @@ function buildProductInput(
 
   // Images are copied by URL -- Shopify downloads them onto the destination,
   // so nothing has to be uploaded from here.
-  const images = on("images") && Array.isArray(data.images) ? data.images : [];
-
-  if (images.length) {
-    input.files = images.map((image) => ({
+  if (on("images") && Array.isArray(data.images)) {
+    input.files = data.images.map((image) => ({
       originalSource: image.url,
       contentType: "IMAGE",
       alt: image.alt || undefined,
@@ -1332,6 +1535,9 @@ module.exports = {
   importProducts,
   fromWebhook,
   applySourceUpdate,
+  refreshSourceProduct,
+  refreshForInventoryItem,
+  refreshAllStagedProducts,
   applySourceDelete,
   applyDestinationUpdate,
   applyDestinationDelete,
@@ -1344,6 +1550,7 @@ module.exports = {
   pushOne,
   buildProductInput,
   splitMetafields,
+  cleanVariantMetafields,
   selectVariants,
   withMarkup,
   optionKey,
@@ -1351,5 +1558,6 @@ module.exports = {
   publishToOnlineStore,
   onlineStorePublicationId,
   numericId,
+  weightUnit,
   flatten,
 };

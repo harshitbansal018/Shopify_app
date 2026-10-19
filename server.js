@@ -145,6 +145,13 @@ const PORT = process.env.PORT || 3000;
   // mail server never holds up an order or a product push.
   require("./services/notifications").startOutbox();
 
+  // Existing installations do not revisit OAuth when a new webhook topic is
+  // added. Reconcile them on boot so inventory updates start flowing without
+  // asking every merchant to reinstall the app.
+  require("./services/webhooks").reconcileWebhooks().catch((err) =>
+    console.warn("Webhook reconciliation failed:", err.message)
+  );
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });

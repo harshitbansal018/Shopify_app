@@ -273,6 +273,11 @@ const CREATE_SOURCE_VARIANT_MAPPINGS = `
     -- Unit cost. DECIMAL like every other money column here.
     cost             DECIMAL(12,2) DEFAULT NULL,
     taxable          TINYINT(1) DEFAULT NULL,
+    requires_shipping TINYINT(1) DEFAULT NULL,
+    inventory_tracked TINYINT(1) DEFAULT NULL,
+    weight_value      DECIMAL(12,4) DEFAULT NULL,
+    weight_unit       VARCHAR(16) DEFAULT NULL,
+    metafields        JSON DEFAULT NULL,
     -- CONTINUE or DENY: whether the shop keeps selling at zero stock.
     inventory_policy VARCHAR(16) DEFAULT NULL,
 
@@ -685,11 +690,31 @@ async function addVariantDetailColumns() {
     ["barcode", "VARCHAR(255) DEFAULT NULL"],
     ["cost", "DECIMAL(12,2) DEFAULT NULL"],
     ["taxable", "TINYINT(1) DEFAULT NULL"],
+    ["requires_shipping", "TINYINT(1) DEFAULT NULL"],
+    ["inventory_tracked", "TINYINT(1) DEFAULT NULL"],
+    ["weight_value", "DECIMAL(12,4) DEFAULT NULL"],
+    ["weight_unit", "VARCHAR(16) DEFAULT NULL"],
+    ["metafields", "JSON DEFAULT NULL"],
     ["inventory_policy", "VARCHAR(16) DEFAULT NULL"],
   ]) {
     await safeAlter(
       `source_variant_mappings.${column}`,
       `ALTER TABLE source_variant_mappings ADD COLUMN ${column} ${type}`
+    );
+  }
+}
+
+/** Copy a variant's physical/digital shipping requirement when syncing. */
+async function addVariantInventorySettings() {
+  for (const [column, after] of [
+    ["sync_variant_requires_shipping", "sync_variant_taxable"],
+    ["sync_variant_inventory_tracking", "sync_variant_requires_shipping"],
+    ["sync_variant_weight", "sync_variant_inventory_tracking"],
+  ]) {
+    await safeAlter(
+      `sync_settings.${column}`,
+      `ALTER TABLE sync_settings
+         ADD COLUMN ${column} TINYINT(1) NOT NULL DEFAULT 1 AFTER ${after}`
     );
   }
 }
@@ -760,6 +785,9 @@ const CREATE_SYNC_SETTINGS = `
     sync_variant_price            TINYINT(1) NOT NULL DEFAULT 1,
     sync_variant_cost             TINYINT(1) NOT NULL DEFAULT 1,
     sync_variant_taxable          TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_requires_shipping TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_inventory_tracking TINYINT(1) NOT NULL DEFAULT 1,
+    sync_variant_weight           TINYINT(1) NOT NULL DEFAULT 1,
     sync_variant_continue_selling TINYINT(1) NOT NULL DEFAULT 1,
     sync_inventory                TINYINT(1) NOT NULL DEFAULT 1,
 
@@ -1131,6 +1159,7 @@ async function runMigrations() {
   await seedPlans();
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
+  await addVariantInventorySettings();
   await addSyncSettingsReviewed();
   await addSyncSettingsCollections();
   await query(CREATE_COLLECTION_MAPPINGS);

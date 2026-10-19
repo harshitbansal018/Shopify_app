@@ -40,6 +40,20 @@ const TOPICS = [
   { topic: "PRODUCTS_UPDATE", path: "/webhooks/products/update" },
   { topic: "PRODUCTS_DELETE", path: "/webhooks/products/delete" },
 
+  // Product updates do not cover the whole inventory model. Cost, physical
+  // shipping, tracking and weight belong to the inventory item, while stock
+  // changes belong to inventory levels. Both re-fetch the staged product and
+  // queue it so the destination receives the complete current variant state.
+  { topic: "INVENTORY_ITEMS_UPDATE", path: "/webhooks/inventory-items/update" },
+  { topic: "INVENTORY_LEVELS_UPDATE", path: "/webhooks/inventory-levels/update" },
+  { topic: "INVENTORY_LEVELS_CONNECT", path: "/webhooks/inventory-levels/connect" },
+  { topic: "INVENTORY_LEVELS_DISCONNECT", path: "/webhooks/inventory-levels/disconnect" },
+
+  // Collection webhooks are needed because products/update does not include
+  // collection membership. A collection edit can add or remove many staged
+  // products at once, so its handler refreshes their canonical snapshots.
+  { topic: "COLLECTIONS_UPDATE", path: "/webhooks/collections/update" },
+
   // Sales. A destination order is what raises the matching order at whichever
   // source stores supplied the goods; a source order is only cached.
   //
@@ -53,7 +67,7 @@ const TOPICS = [
   { topic: "ORDERS_UPDATED", path: "/webhooks/orders/updated" },
 ];
 
-async function registerWebhooks(shop, accessToken) {
+async function registerWebhooks(shop, accessToken = null) {
   const host = String(process.env.HOST || "").trim().replace(/\/+$/, "");
 
   if (!host) {
@@ -63,7 +77,7 @@ async function registerWebhooks(shop, accessToken) {
 
   for (const { topic, path } of TOPICS) {
     try {
-      const data = await shopifyRequest(shop, accessToken, API_VERSION, {
+      const request = {
         query: WEBHOOK_CREATE_MUTATION,
         variables: {
           topic,
@@ -72,7 +86,11 @@ async function registerWebhooks(shop, accessToken) {
             format: "JSON",
           },
         },
-      });
+      };
+
+      const data = accessToken
+        ? await shopifyRequest(shop, accessToken, API_VERSION, request)
+        : await shopifyRequest.forShop(shop, request, { apiVersion: API_VERSION });
 
       const errors = data.webhookSubscriptionCreate?.userErrors || [];
       const alreadyExists = errors.some((error) =>
@@ -89,4 +107,24 @@ async function registerWebhooks(shop, accessToken) {
   }
 }
 
-module.exports = { registerWebhooks, TOPICS };
+/**
+ * Install newly-added topics for stores that were connected before the latest
+ * deployment. Creation is idempotent; existing subscriptions are left alone.
+ */
+async function reconcileWebhooks() {
+  const stores = await require("../models/storeModel").listAll();
+  const active = stores.filter(
+    (store) => store.is_active && store.access_token && store.shop_domain
+  );
+
+  const results = await Promise.allSettled(
+    active.map((store) => registerWebhooks(store.shop_domain))
+  );
+  const failed = results.filter((result) => result.status === "rejected");
+
+  if (failed.length) {
+    console.warn(`Webhook reconciliation failed for ${failed.length} store(s)`);
+  }
+}
+
+module.exports = { registerWebhooks, reconcileWebhooks, TOPICS };

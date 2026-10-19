@@ -6,7 +6,10 @@ const crypto = require("crypto");
  * Requires express.raw() to have populated req.body as a Buffer.
  */
 function verifyWebhook(req, res, next) {
-  const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
+  // Standard webhooks use X-Shopify-* headers. Shopify Events use the same
+  // signed raw-body protocol but omit the X- prefix.
+  const hmacHeader =
+    req.get("X-Shopify-Hmac-Sha256") || req.get("Shopify-Hmac-Sha256");
 
   if (!hmacHeader) {
     console.warn("Webhook rejected: missing HMAC header");
@@ -40,8 +43,9 @@ function verifyWebhook(req, res, next) {
     return res.status(400).send("Invalid JSON body");
   }
 
-  req.webhookTopic = req.get("X-Shopify-Topic");
-  req.webhookShop = req.get("X-Shopify-Shop-Domain");
+  req.webhookTopic = req.get("X-Shopify-Topic") || req.get("Shopify-Topic");
+  req.webhookShop =
+    req.get("X-Shopify-Shop-Domain") || req.get("Shopify-Shop-Domain");
 
   next();
 }
