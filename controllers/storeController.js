@@ -43,6 +43,9 @@ const FIELD_LABELS = {
   variant_price: "Price / Compare-at price",
   variant_cost: "Cost per item",
   variant_taxable: "Charge tax on variant",
+  variant_requires_shipping: "Physical product / requires shipping",
+  variant_inventory_tracking: "Track inventory",
+  variant_weight: "Weight",
   variant_continue_selling: "Continue selling when out of stock",
   collections: "Collections",
 };

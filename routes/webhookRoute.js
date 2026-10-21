@@ -29,6 +29,50 @@ router.post(
   webhookController.productsDelete
 );
 
+router.post(
+  "/inventory-items/update",
+  rawBody,
+  verifyWebhook,
+  webhookController.inventoryItemUpdate
+);
+
+router.post(
+  "/inventory-levels/update",
+  rawBody,
+  verifyWebhook,
+  webhookController.inventoryLevelUpdate
+);
+
+router.post(
+  "/inventory-levels/connect",
+  rawBody,
+  verifyWebhook,
+  webhookController.inventoryLevelConnect
+);
+
+router.post(
+  "/inventory-levels/disconnect",
+  rawBody,
+  verifyWebhook,
+  webhookController.inventoryLevelDisconnect
+);
+
+router.post(
+  "/collections/update",
+  rawBody,
+  verifyWebhook,
+  webhookController.collectionsUpdate
+);
+
+// Shopify Product Events are configured in shopify.app.toml rather than via
+// webhookSubscriptionCreate. They use Shopify-* headers without the X prefix.
+router.post(
+  "/events/product",
+  rawBody,
+  verifyWebhook,
+  webhookController.productEvent
+);
+
 /* Sales. Both cache the order; only orders/create queues it for the source. */
 router.post(
   "/orders/create",

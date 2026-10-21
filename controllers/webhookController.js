@@ -47,11 +47,9 @@ exports.appUninstalled = async (req, res) => {
 /**
  * A product changed at a source store.
  *
- * Nothing here calls Shopify. The payload already carries the whole product,
- * and an outbound call from inside a webhook is what makes Shopify time the
- * request out, retry it, and eventually unsubscribe the topic altogether.
- * Refreshing the cache and queueing is all that happens; the push itself is
- * the background job's problem.
+ * The response is sent before the canonical Shopify read begins. The webhook
+ * payload can omit metafields, category, inventory-item details, and variants,
+ * so using it as the source of truth would silently retain stale data.
  */
 exports.productsUpdate = async (req, res) => {
   res.status(200).send("OK");
@@ -68,8 +66,7 @@ exports.productsUpdate = async (req, res) => {
 
     // A DESTINATION firing this is usually our own push echoing back, but it
     // is also how a merchant deleting a variant in their own admin reaches us.
-    // Reconciling is safe: it makes no Shopify call and queues no push, so it
-    // cannot loop.
+    // Reconciling is safe: it queues no push, so it cannot loop.
     if (store.store_type === "destination") {
       const echo = await productSync.applyDestinationUpdate(store.id, payload);
 
@@ -84,7 +81,7 @@ exports.productsUpdate = async (req, res) => {
 
     if (store.store_type !== "source") return;
 
-    const result = await productSync.applySourceUpdate(store.id, payload);
+    const result = await productSync.applySourceUpdate(store.id, payload, { shop });
 
     if (!result) return; // not a product this app stages
 
@@ -141,6 +138,111 @@ exports.productsDelete = async (req, res) => {
     );
   } catch (err) {
     console.error("products/delete processing failed:", err.message);
+  }
+};
+
+/* ===================== inventory updates ===================== */
+
+/**
+ * Inventory-item and inventory-level changes are not reliably represented by
+ * products/update. Refresh the owning staged product so quantity, tracking,
+ * cost, weight and shipping requirements move together as one snapshot.
+ */
+async function refreshInventoryProduct(req, res, kind) {
+  res.status(200).send("OK");
+
+  const shop = normalizeShopDomain(req.webhookShop);
+  const payload = req.webhookPayload || {};
+  const inventoryItemId = payload.inventory_item_id || payload.id;
+
+  if (!shop || !inventoryItemId) return;
+
+  try {
+    const store = await storeModel.findByDomain(shop);
+
+    // Destination events are normally echoes of our own push. Ignoring them
+    // prevents a source <-> destination inventory loop.
+    if (!store || store.store_type !== "source") return;
+
+    const result = await productSync.refreshForInventoryItem(
+      store,
+      inventoryItemId
+    );
+
+    if (!result) return; // inventory item is not from a staged product
+
+    console.log(
+      `${kind} ${shop} #${inventoryItemId}: ` +
+        `${result.requeued} mapping(s) queued`
+    );
+  } catch (err) {
+    console.error(`${kind} processing failed:`, err.message);
+  }
+}
+
+exports.inventoryItemUpdate = (req, res) =>
+  refreshInventoryProduct(req, res, "inventory_items/update");
+
+exports.inventoryLevelUpdate = (req, res) =>
+  refreshInventoryProduct(req, res, "inventory_levels/update");
+
+exports.inventoryLevelConnect = (req, res) =>
+  refreshInventoryProduct(req, res, "inventory_levels/connect");
+
+exports.inventoryLevelDisconnect = (req, res) =>
+  refreshInventoryProduct(req, res, "inventory_levels/disconnect");
+
+/* ===================== collections/update ===================== */
+
+exports.collectionsUpdate = async (req, res) => {
+  res.status(200).send("OK");
+
+  const shop = normalizeShopDomain(req.webhookShop);
+  const collectionId = req.webhookPayload?.id;
+
+  if (!shop || !collectionId) return;
+
+  try {
+    const store = await storeModel.findByDomain(shop);
+    if (!store || store.store_type !== "source") return;
+
+    const result = await productSync.refreshAllStagedProducts(store);
+
+    console.log(
+      `collections/update ${shop} #${collectionId}: ` +
+        `${result.imported} product(s) refreshed, ` +
+        `${result.requeued} mapping(s) queued`
+    );
+  } catch (err) {
+    console.error("collections/update processing failed:", err.message);
+  }
+};
+
+/* ===================== Shopify Product Events ===================== */
+
+exports.productEvent = async (req, res) => {
+  res.status(200).send("OK");
+
+  const shop = normalizeShopDomain(req.webhookShop);
+  const payload = req.webhookPayload || {};
+  const productId =
+    payload.query_variables?.productId || payload.data?.product?.id;
+
+  if (!shop || !productId) return;
+
+  try {
+    const store = await storeModel.findByDomain(shop);
+    if (!store || store.store_type !== "source") return;
+
+    const result = await productSync.refreshSourceProduct(store, productId);
+    if (!result) return;
+
+    console.log(
+      `Product Event ${shop} #${productId}: ` +
+        `${result.requeued} mapping(s) queued`
+    );
+  } catch (err) {
+    console.error("Product Event processing failed:", err.message);
   }
 };
 

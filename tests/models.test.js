@@ -1301,7 +1301,24 @@ async function cleanup() {
       images: [{ src: "https://cdn.example/new.jpg", alt: "New" }],
       options: [{ name: "Size", position: 1, values: ["S", "M", "L"] }],
       variants: [
-        { id: 61001, sku: "ST-S", price: "12.00", option1: "S" },
+        {
+          id: 61001,
+          sku: "ST-S",
+          price: "12.00",
+          requires_shipping: false,
+          inventory_management: "shopify",
+          weight: 0.75,
+          weight_unit: "kg",
+          metafields: [
+            {
+              namespace: "custom",
+              key: "bin",
+              type: "single_line_text_field",
+              value: "A1",
+            },
+          ],
+          option1: "S",
+        },
         { id: 61002, sku: "ST-M", price: "12.50", option1: "M" },
         { id: 61003, sku: "ST-L", price: "12.90", option1: "L" },
       ],
@@ -1314,11 +1331,22 @@ async function cleanup() {
       (await productMappingModel.findById(offered.id)).sync_status === "pending");
 
     const refreshed = await sourceProductModel.findById(cached.id);
+    const refreshedVariants = await sourceVariantModel.listForProduct(cached.id);
     check("the cached title is updated",
       refreshed.title === "Screen Test Shirt RENAMED", refreshed.title);
     check("the new price reached the variant cache",
-      Number((await sourceVariantModel.listForProduct(cached.id))[0].price) === 12,
+      Number(refreshedVariants[0].price) === 12,
       "a price change would never reach the destination");
+    check("turning shipping off reached the variant cache",
+      Number(refreshedVariants[0].requires_shipping) === 0,
+      "a false shipping flag must not be treated as missing");
+    check("inventory tracking reached the variant cache",
+      Number(refreshedVariants[0].inventory_tracked) === 1);
+    check("weight and its unit reached the variant cache",
+      Number(refreshedVariants[0].weight_value) === 0.75 &&
+        refreshedVariants[0].weight_unit === "KILOGRAMS");
+    check("variant metafields reached the variant cache",
+      refreshedVariants[0].metafields[0].key === "bin");
     check("the new image is cached",
       refreshed.product_data.images[0].url === "https://cdn.example/new.jpg");
 

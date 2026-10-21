@@ -9,11 +9,13 @@
 require("dotenv").config({ quiet: true });
 
 const path = require("path");
+const fs = require("fs");
 
 const SERVER = path.join(__dirname, "..");
 
 const shopify = require(path.join(SERVER, "services/shopify"));
 const productSync = require(path.join(SERVER, "services/productSync"));
+const { TOPICS } = require(path.join(SERVER, "services/webhooks"));
 
 let passed = 0;
 let failed = 0;
@@ -57,6 +59,35 @@ console.log("\nRetry classification");
   check("a normal error body is not a throttle",
     !isThrottledBody({ errors: [{ message: "Field does not exist" }] }));
   check("a clean body is not a throttle", !isThrottledBody({ data: {} }));
+}
+
+console.log("\nChange subscriptions");
+{
+  const topics = new Set(TOPICS.map(({ topic }) => topic));
+
+  for (const topic of [
+    "INVENTORY_LEVELS_CONNECT",
+    "INVENTORY_LEVELS_DISCONNECT",
+    "COLLECTIONS_UPDATE",
+  ]) {
+    check(`${topic} is registered`, topics.has(topic));
+  }
+
+  const appConfig = fs.readFileSync(
+    path.join(SERVER, "shopify.app.toml"),
+    "utf8"
+  );
+
+  check(
+    "Product Events include nested product and variant changes",
+    /topic\s*=\s*["']Product["'][\s\S]*triggers\s*=\s*\[["']product\.\*["']\]/.test(
+      appConfig
+    )
+  );
+  check(
+    "Product Events deliver to the implemented endpoint",
+    /uri\s*=\s*["']\/webhooks\/events\/product["']/.test(appConfig)
+  );
 }
 
 console.log("\nBackoff");
@@ -127,8 +158,8 @@ console.log("\nProductSetInput");
   };
 
   const variants = [
-    { sku: "SHIRT-S", price: "20.00", compare_at_price: null, option1: "S", option2: "Blue" },
-    { sku: "SHIRT-M", price: "22.00", compare_at_price: "30.00", option1: "M", option2: "Blue" },
+    { sku: "SHIRT-S", price: "20.00", compare_at_price: null, requires_shipping: false, inventory_tracked: false, weight_value: 0.25, weight_unit: "kg", metafields: [{ namespace: "custom", key: "swatch", type: "color", value: "#0000ff" }], option1: "S", option2: "Blue" },
+    { sku: "SHIRT-M", price: "22.00", compare_at_price: "30.00", requires_shipping: true, inventory_tracked: true, weight_value: 12, weight_unit: "OUNCES", metafields: [], option1: "M", option2: "Blue" },
   ];
 
   const input = productSync.buildProductInput(product, variants, {
@@ -150,8 +181,39 @@ console.log("\nProductSetInput");
     String(input.variants[1].compareAtPrice)
   );
   check(
-    "a variant with no compareAtPrice omits it",
-    input.variants[0].compareAtPrice === undefined
+    "a removed compareAtPrice is sent as null so the destination clears it",
+    input.variants[0].compareAtPrice === null
+  );
+  check(
+    "requires shipping false is sent instead of being mistaken for missing",
+    input.variants[0].inventoryItem.requiresShipping === false
+  );
+  check(
+    "requires shipping true is sent",
+    input.variants[1].inventoryItem.requiresShipping === true
+  );
+  check("inventory tracking false is sent",
+    input.variants[0].inventoryItem.tracked === false);
+  check("inventory tracking true is sent",
+    input.variants[1].inventoryItem.tracked === true);
+  check("variant weight and REST units are sent in GraphQL form",
+    input.variants[0].inventoryItem.measurement.weight.value === 0.25 &&
+      input.variants[0].inventoryItem.measurement.weight.unit === "KILOGRAMS");
+  check("variant metafields are sent",
+    input.variants[0].metafields[0].key === "swatch");
+  check("removed variant metafields clear the destination",
+    Array.isArray(input.variants[1].metafields) &&
+      input.variants[1].metafields.length === 0);
+
+  const shippingOff = productSync.buildProductInput(
+    product,
+    variants,
+    { variant_requires_shipping: false },
+    "777"
+  );
+  check(
+    "the shipping sync setting leaves the destination value alone when off",
+    shippingOff.variants[0].inventoryItem.requiresShipping === undefined
   );
   check(
     "option values are paired to their option NAME",
@@ -183,6 +245,25 @@ console.log("\nProductSetInput");
   );
   check("a product with no options omits productOptions",
     plain.productOptions === undefined);
+
+  const cleared = productSync.buildProductInput(
+    {
+      title: "Cleared fields",
+      vendor: null,
+      product_type: null,
+      status: "active",
+      product_data: { category: null },
+    },
+    [{ sku: null, barcode: null, price: "5.00", compare_at_price: null }],
+    {},
+    "777"
+  );
+  check("clearing vendor and product type reaches the destination",
+    cleared.vendor === "" && cleared.productType === "");
+  check("clearing category reaches the destination",
+    cleared.category === null);
+  check("clearing SKU and barcode reaches the destination",
+    cleared.variants[0].sku === null && cleared.variants[0].barcode === null);
 }
 
 console.log("\nMetafields");
@@ -258,7 +339,7 @@ console.log("\nMetafields");
   const repushed = productSync.buildProductInput(product, variants, {}, "777");
 
   check("a re-push sends no reserved metafields",
-    created.metafields === undefined && repushed.metafields === undefined,
+    created.metafields.length === 0 && repushed.metafields.length === 0,
     "this is the push that used to be rejected");
   check("the SEO values travel on input.seo instead",
     repushed.seo.title === "Buy Shirts" &&
@@ -349,15 +430,23 @@ console.log("\nOptions follow the selected variants");
   check("image alt text survives", onlyOne.files[0].alt === "Front");
 
   const noImages = productSync.buildProductInput(
-    { title: "X", status: "active", product_data: {} },
+    { title: "X", status: "active", product_data: { images: [] } },
     [{ id: 1, price: "1.00" }],
     {},
     null
   );
 
-  check("a product with no images omits files",
-    noImages.files === undefined,
-    "an empty files array would delete the destination's images");
+  check("removing every source image clears destination images",
+    Array.isArray(noImages.files) && noImages.files.length === 0);
+
+  const imagesOff = productSync.buildProductInput(
+    { title: "X", status: "active", product_data: { images: [] } },
+    [{ id: 1, price: "1.00" }],
+    { images: false },
+    "777"
+  );
+  check("turning image sync off leaves destination images alone",
+    imagesOff.files === undefined);
 }
 
 console.log("\nFlattening media");
@@ -437,6 +526,10 @@ console.log("\nWebhook payload -> cache shape");
         position: 1,
         inventory_quantity: 4,
         inventory_item_id: 7001,
+        requires_shipping: false,
+        inventory_management: "shopify",
+        weight: 0.5,
+        weight_unit: "kg",
         option1: "S",
       },
     ],
@@ -463,6 +556,13 @@ console.log("\nWebhook payload -> cache shape");
   check("variant option columns survive", mapped.variants[0].option1 === "S");
   check("the inventory item id becomes a string",
     mapped.variants[0].inventory_item_id === "7001");
+  check("the webhook keeps requires_shipping=false",
+    mapped.variants[0].requires_shipping === false);
+  check("the webhook maps inventory tracking",
+    mapped.variants[0].inventory_tracked === true);
+  check("the webhook maps weight and unit",
+    mapped.variants[0].weight_value === 0.5 &&
+      mapped.variants[0].weight_unit === "KILOGRAMS");
 
   // The webhook shape must build the same input the GraphQL shape does.
   const input = productSync.buildProductInput(
@@ -528,7 +628,17 @@ console.log("\nGraphQL id handling");
           id: "gid://shopify/ProductVariant/9",
           sku: "A",
           price: "5.00",
-          inventoryItem: { id: "gid://shopify/InventoryItem/77" },
+          inventoryItem: {
+            id: "gid://shopify/InventoryItem/77",
+            requiresShipping: false,
+            tracked: true,
+            measurement: { weight: { value: 250, unit: "GRAMS" } },
+          },
+          metafields: {
+            nodes: [
+              { namespace: "custom", key: "bin", type: "single_line_text_field", value: "A1" },
+            ],
+          },
           selectedOptions: [{ name: "Size", value: "S" }],
         },
       ],
@@ -539,6 +649,15 @@ console.log("\nGraphQL id handling");
   check("nested gids are flattened", flat.variants[0].id === "9");
   check("the inventory item id is kept",
     flat.variants[0].inventory_item_id === "77");
+  check("GraphQL requiresShipping is flattened",
+    flat.variants[0].requires_shipping === false);
+  check("GraphQL inventory tracking is flattened",
+    flat.variants[0].inventory_tracked === true);
+  check("GraphQL weight is flattened",
+    flat.variants[0].weight_value === 250 &&
+      flat.variants[0].weight_unit === "GRAMS");
+  check("GraphQL variant metafields are flattened",
+    flat.variants[0].metafields[0].key === "bin");
   check("option values are flattened", flat.options[0].values[0] === "S");
   check("a variant with no position gets one", flat.variants[0].position === 1);
 }

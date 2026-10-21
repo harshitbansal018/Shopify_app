@@ -8,7 +8,12 @@
 // compared field by field to decide whether a sync actually needs to write
 // anything.
 const { query, pool } = require("../config/db");
-const { toShopifyId } = require("./helpers");
+const { parseJson, toJsonColumn, toShopifyId } = require("./helpers");
+
+function hydrate(row) {
+  if (!row) return null;
+  return { ...row, metafields: parseJson(row.metafields, []) };
+}
 
 /**
  * Map a raw Shopify variant onto our columns.
@@ -23,6 +28,11 @@ function fromShopify(sourceProductId, variant, index = 0) {
     variant.price && typeof variant.price === "object"
       ? variant.price.amount
       : variant.price;
+  const requiresShipping =
+    variant.requires_shipping ?? variant.inventoryItem?.requiresShipping;
+  const inventoryTracked =
+    variant.inventory_tracked ?? variant.inventoryItem?.tracked;
+  const weight = variant.inventoryItem?.measurement?.weight;
 
   return {
     source_product_id: sourceProductId,
@@ -48,6 +58,36 @@ function fromShopify(sourceProductId, variant, index = 0) {
         : variant.taxable
         ? 1
         : 0,
+    // REST webhooks expose requires_shipping directly; GraphQL reads expose
+    // it on inventoryItem.requiresShipping. Keep null distinct from false so
+    // an older/incomplete payload cannot turn a physical item digital.
+    requires_shipping:
+      requiresShipping === undefined || requiresShipping === null
+        ? null
+        : requiresShipping
+          ? 1
+          : 0,
+    inventory_tracked:
+      inventoryTracked === undefined || inventoryTracked === null
+        ? null
+        : inventoryTracked
+          ? 1
+          : 0,
+    weight_value:
+      (variant.weight_value ?? variant.weight ?? weight?.value) === undefined ||
+      (variant.weight_value ?? variant.weight ?? weight?.value) === null
+        ? null
+        : Number(variant.weight_value ?? variant.weight ?? weight?.value),
+    weight_unit:
+      variant.weight_unit || weight?.unit
+        ? String(variant.weight_unit || weight.unit).toUpperCase().slice(0, 16)
+        : null,
+    metafields:
+      variant.metafields === undefined
+        ? null
+        : Array.isArray(variant.metafields)
+          ? variant.metafields
+          : [],
     inventory_policy: variant.inventory_policy
       ? String(variant.inventory_policy).toUpperCase().slice(0, 16)
       : null,
@@ -71,7 +111,8 @@ function fromShopify(sourceProductId, variant, index = 0) {
 const UPSERT_SQL = `
   INSERT INTO source_variant_mappings
     (source_product_id, shopify_variant_id, shopify_inventory_item_id,
-     sku, barcode, title, price, compare_at_price, cost, taxable,
+     sku, barcode, title, price, compare_at_price, cost, taxable, requires_shipping,
+     inventory_tracked, weight_value, weight_unit, metafields,
      inventory_policy, option1, option2, option3, inventory_quantity, position)
   VALUES ?
   ON DUPLICATE KEY UPDATE
@@ -85,6 +126,11 @@ const UPSERT_SQL = `
     -- does not know it must not erase what a full fetch recorded.
     cost = COALESCE(VALUES(cost), cost),
     taxable = COALESCE(VALUES(taxable), taxable),
+    requires_shipping = COALESCE(VALUES(requires_shipping), requires_shipping),
+    inventory_tracked = COALESCE(VALUES(inventory_tracked), inventory_tracked),
+    weight_value = COALESCE(VALUES(weight_value), weight_value),
+    weight_unit = COALESCE(VALUES(weight_unit), weight_unit),
+    metafields = COALESCE(VALUES(metafields), metafields),
     inventory_policy = COALESCE(VALUES(inventory_policy), inventory_policy),
     option1 = VALUES(option1),
     option2 = VALUES(option2),
@@ -105,6 +151,11 @@ function toRow(record) {
     record.compare_at_price,
     record.cost,
     record.taxable,
+    record.requires_shipping,
+    record.inventory_tracked,
+    record.weight_value,
+    record.weight_unit,
+    record.metafields === null ? null : toJsonColumn(record.metafields),
     record.inventory_policy,
     record.option1,
     record.option2,
@@ -143,12 +194,13 @@ async function syncForProduct(sourceProductId, variants) {
 }
 
 async function listForProduct(sourceProductId) {
-  return query(
+  const rows = await query(
     `SELECT * FROM source_variant_mappings
       WHERE source_product_id = ?
       ORDER BY position, id`,
     [sourceProductId]
   );
+  return rows.map(hydrate);
 }
 
 /**
@@ -173,7 +225,7 @@ async function mapForProducts(sourceProductIds) {
 
   rows.forEach((row) => {
     if (!grouped.has(row.source_product_id)) grouped.set(row.source_product_id, []);
-    grouped.get(row.source_product_id).push(row);
+    grouped.get(row.source_product_id).push(hydrate(row));
   });
 
   return grouped;
@@ -186,7 +238,7 @@ async function findByShopifyId(sourceProductId, shopifyVariantId) {
       LIMIT 1`,
     [sourceProductId, toShopifyId(shopifyVariantId)]
   );
-  return rows[0] || null;
+  return hydrate(rows[0]);
 }
 
 async function findById(id) {
@@ -194,7 +246,21 @@ async function findById(id) {
     "SELECT * FROM source_variant_mappings WHERE id = ? LIMIT 1",
     [id]
   );
-  return rows[0] || null;
+  return hydrate(rows[0]);
+}
+
+/** Resolve an inventory webhook back to its staged source product. */
+async function findByInventoryItem(storeId, shopifyInventoryItemId) {
+  const rows = await query(
+    `SELECT svm.*, sp.shopify_product_id
+       FROM source_variant_mappings svm
+       JOIN source_products sp ON sp.id = svm.source_product_id
+      WHERE sp.store_id = ? AND svm.shopify_inventory_item_id = ?
+      LIMIT 1`,
+    [storeId, toShopifyId(shopifyInventoryItemId)]
+  );
+
+  return hydrate(rows[0]);
 }
 
 /** Shopify variant id -> row, for O(1) lookup while building a sync payload. */
@@ -240,6 +306,7 @@ module.exports = {
   mapForProducts,
   findByShopifyId,
   findById,
+  findByInventoryItem,
   mapByShopifyId,
   removeMissing,
   countForProduct,

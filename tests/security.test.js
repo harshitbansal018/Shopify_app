@@ -166,6 +166,26 @@ function check(name, condition, detail) {
     check("valid HMAC deactivates the store", sawStatusUpdate,
       JSON.stringify(state.queries.map((q) => q[0])));
 
+    // Shopify Events sign the same raw body but their headers omit the X-
+    // prefix. An empty event exercises verification without starting a DB job.
+    const eventBody = JSON.stringify({});
+    const eventHmac = crypto
+      .createHmac("sha256", process.env.SHOPIFY_API_SECRET)
+      .update(Buffer.from(eventBody, "utf8"))
+      .digest("base64");
+
+    res = await fetch(`${base}/webhooks/events/product`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Shopify-Hmac-Sha256": eventHmac,
+        "Shopify-Shop-Domain": "good-shop.myshopify.com",
+        "Shopify-Topic": "Product",
+      },
+      body: eventBody,
+    });
+    check("valid Product Event HMAC -> 200", res.status === 200, `got ${res.status}`);
+
     res = await fetch(`${base}/webhooks/shop/redact`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

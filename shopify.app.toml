@@ -1,0 +1,28 @@
+client_id = "36bec7c8753a319a22a420a3ed73ce9f"
+name = "Product Sync"
+application_url = "https://mkt7781g-3002.inc1.devtunnels.ms"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[access_scopes]
+scopes = "read_products,write_products,read_inventory,write_inventory,read_orders,write_orders,read_publications,write_publications,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+
+[auth]
+redirect_urls = [
+  "https://mkt7781g-3002.inc1.devtunnels.ms/api/auth/callback"
+]
+
+# Events are the reliable field-level signal for product and variant changes,
+# including product/variant metafields. The handler performs its own canonical
+# product query, so the event payload only needs query_variables.productId.
+[events]
+api_version = "2026-10"
+
+[[events.subscription]]
+handle = "product-sync-updates"
+topic = "Product"
+actions = ["update"]
+triggers = ["product.*"]
+uri = "/webhooks/events/product"
