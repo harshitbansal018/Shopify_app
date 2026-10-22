@@ -48,6 +48,32 @@ function weightUnit(value) {
   return units[key] || (key ? key.toUpperCase() : null);
 }
 
+/** Keep the definition metadata beside a cached metafield value. ProductSet
+ * does not accept this object, but the destination needs it before the value
+ * is written if the field should appear as a proper definition in Admin. */
+function flattenMetafield(metafield) {
+  const definition = metafield.definition
+    ? {
+        name: metafield.definition.name,
+        description: metafield.definition.description || null,
+        validations: (metafield.definition.validations || []).map(
+          (validation) => ({
+            name: validation.name,
+            value: validation.value,
+          })
+        ),
+      }
+    : null;
+
+  return {
+    namespace: metafield.namespace,
+    key: metafield.key,
+    type: metafield.type,
+    value: metafield.value,
+    definition,
+  };
+}
+
 /**
  * Flatten one GraphQL product into the shape the models expect, which is the
  * REST-ish shape (`id`, `product_type`, `variants[]`, `option1..3`).
@@ -76,12 +102,7 @@ function flatten(node) {
     requires_shipping: variant.inventoryItem?.requiresShipping,
     weight_value: variant.inventoryItem?.measurement?.weight?.value,
     weight_unit: variant.inventoryItem?.measurement?.weight?.unit,
-    metafields: (variant.metafields?.nodes || []).map((metafield) => ({
-      namespace: metafield.namespace,
-      key: metafield.key,
-      type: metafield.type,
-      value: metafield.value,
-    })),
+    metafields: (variant.metafields?.nodes || []).map(flattenMetafield),
     // Money comes back as { amount }; the column and the push want a number.
     cost: variant.inventoryItem?.unitCost?.amount ?? null,
     selectedOptions: variant.selectedOptions || [],
@@ -109,12 +130,7 @@ function flatten(node) {
     // Taxonomy category id, copied straight across -- the taxonomy is global,
     // so the same id means the same category in the destination shop.
     category: node.category?.id || null,
-    metafields: (node.metafields?.nodes || []).map((metafield) => ({
-      namespace: metafield.namespace,
-      key: metafield.key,
-      type: metafield.type,
-      value: metafield.value,
-    })),
+    metafields: (node.metafields?.nodes || []).map(flattenMetafield),
     collections: (node.collections?.nodes || []).map((collection) => ({
       id: numericId(collection.id),
       title: collection.title,
@@ -147,7 +163,15 @@ const PRODUCTS_BY_ID_QUERY = `
         # a smart collection's RULES are never copied, because the buyer's
         # margin has already changed every price they could be about.
         collections(first: 20) { nodes { id title handle descriptionHtml } }
-        metafields(first: 25) { nodes { namespace key type value } }
+        metafields(first: 25) {
+          nodes {
+            namespace key type value
+            definition {
+              name description
+              validations { name value }
+            }
+          }
+        }
         featuredMedia { preview { image { url } } }
         media(first: 10) {
           nodes {
@@ -166,7 +190,15 @@ const PRODUCTS_BY_ID_QUERY = `
               id tracked requiresShipping unitCost { amount }
               measurement { weight { value unit } }
             }
-            metafields(first: 25) { nodes { namespace key type value } }
+            metafields(first: 25) {
+              nodes {
+                namespace key type value
+                definition {
+                  name description
+                  validations { name value }
+                }
+              }
+            }
             selectedOptions { name value }
           }
         }
@@ -554,6 +586,256 @@ const PRODUCT_SET_MUTATION = `
   }
 `;
 
+const METAFIELD_DEFINITIONS_QUERY = `
+  query MetafieldDefinitionsForSync {
+    products: metafieldDefinitions(first: 250, ownerType: PRODUCT) {
+      nodes {
+        namespace key name description pinnedPosition
+        type { name }
+        validations { name value }
+      }
+    }
+    variants: metafieldDefinitions(first: 250, ownerType: PRODUCTVARIANT) {
+      nodes {
+        namespace key name description pinnedPosition
+        type { name }
+        validations { name value }
+      }
+    }
+  }
+`;
+
+const METAFIELD_DEFINITION_CREATE = `
+  mutation CreateMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+    metafieldDefinitionCreate(definition: $definition) {
+      createdDefinition { namespace key name }
+      userErrors { field message code }
+    }
+  }
+`;
+
+const METAFIELD_DEFINITION_UPDATE = `
+  mutation UpdateMetafieldDefinition(
+    $definition: MetafieldDefinitionUpdateInput!
+  ) {
+    metafieldDefinitionUpdate(definition: $definition) {
+      updatedDefinition { namespace key name }
+      userErrors { field message code }
+    }
+  }
+`;
+
+function definitionKey(ownerType, namespace, key) {
+  return `${ownerType}:${namespace}/${key}`;
+}
+
+function readableDefinitionName(key) {
+  const words = String(key || "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+
+  return words
+    ? words.charAt(0).toUpperCase() + words.slice(1)
+    : "Synced metafield";
+}
+
+/**
+ * Definitions needed by the values in one product push. A source metafield
+ * can be unstructured (definition=null); it still becomes a proper, pinned
+ * merchant-owned definition at the destination using its key as the label.
+ * Shopify/app reserved namespaces are excluded because another app's schema
+ * cannot be recreated or managed by this app.
+ */
+function definitionsForMetafields(productMetafields, variants) {
+  const definitions = new Map();
+
+  const add = (ownerType, metafield) => {
+    if (!metafield || !metafield.namespace || !metafield.key || !metafield.type) {
+      return;
+    }
+
+    const namespace = String(metafield.namespace);
+
+    if (
+      namespace === "global" ||
+      namespace === "shopify" ||
+      namespace === "$app" ||
+      namespace.startsWith("app--")
+    ) {
+      return;
+    }
+
+    const source = metafield.definition || {};
+    const validations = Array.isArray(source.validations)
+      ? source.validations
+          .filter((validation) => validation && validation.name)
+          .map((validation) => ({
+            name: validation.name,
+            value: validation.value,
+          }))
+      : [];
+
+    const definition = {
+      ownerType,
+      namespace,
+      key: String(metafield.key),
+      type: String(metafield.type),
+      name: source.name || readableDefinitionName(metafield.key),
+      description: source.description || null,
+      validations,
+      // Pinning makes the copied field visible on the destination product
+      // page without requiring the merchant to open "View all".
+      pin: true,
+      hasSourceDefinition: Boolean(metafield.definition),
+    };
+
+    definitions.set(
+      definitionKey(ownerType, definition.namespace, definition.key),
+      definition
+    );
+  };
+
+  (productMetafields || []).forEach((metafield) => add("PRODUCT", metafield));
+
+  for (const variant of variants || []) {
+    (variant.metafields || []).forEach((metafield) =>
+      add("PRODUCTVARIANT", metafield)
+    );
+  }
+
+  return [...definitions.values()];
+}
+
+function sameValidations(left, right) {
+  const normalize = (items) =>
+    (items || [])
+      .map((item) => ({ name: item.name, value: item.value }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+/**
+ * Ensure every readable source metafield has a compatible, pinned definition
+ * in the destination before productSet writes its value.
+ *
+ * Type conflicts are fatal: Shopify cannot change a definition's identifying
+ * type, and silently writing through a conflicting schema would either reject
+ * the whole product or misrepresent its data. Cosmetic update failures are
+ * warnings; an existing compatible definition can still accept the value.
+ */
+async function syncMetafieldDefinitions(destinationShop, productMetafields, variants) {
+  const wanted = definitionsForMetafields(productMetafields, variants);
+
+  if (!wanted.length) return { created: 0, updated: 0, warnings: [] };
+
+  const data = await shopify.forShop(destinationShop, {
+    query: METAFIELD_DEFINITIONS_QUERY,
+  });
+  const existing = new Map();
+
+  for (const [ownerType, nodes] of [
+    ["PRODUCT", data.products?.nodes || []],
+    ["PRODUCTVARIANT", data.variants?.nodes || []],
+  ]) {
+    for (const definition of nodes) {
+      existing.set(
+        definitionKey(ownerType, definition.namespace, definition.key),
+        definition
+      );
+    }
+  }
+
+  const outcome = { created: 0, updated: 0, warnings: [] };
+
+  for (const source of wanted) {
+    const id = definitionKey(source.ownerType, source.namespace, source.key);
+    const destination = existing.get(id);
+
+    if (destination) {
+      const destinationType = destination.type?.name || destination.type;
+
+      if (String(destinationType) !== source.type) {
+        throw new Error(
+          `Metafield definition ${source.namespace}.${source.key} has type ` +
+            `${destinationType} in the destination but ${source.type} at the source`
+        );
+      }
+
+      // An unstructured source value has no authoritative display metadata,
+      // but an existing definition can still be pinned so it appears in the
+      // destination Admin. Otherwise mirror the readable source metadata too.
+      const needsMetadataUpdate =
+        source.hasSourceDefinition &&
+        (destination.name !== source.name ||
+          (destination.description || null) !== source.description ||
+          !sameValidations(destination.validations, source.validations));
+      const needsUpdate = destination.pinnedPosition == null || needsMetadataUpdate;
+
+      if (!needsUpdate) continue;
+
+      const definition = {
+        ownerType: source.ownerType,
+        namespace: source.namespace,
+        key: source.key,
+        pin: true,
+      };
+
+      if (needsMetadataUpdate) {
+        definition.name = source.name;
+        definition.description = source.description;
+        definition.validations = source.validations;
+      }
+
+      const update = await shopify.forShop(destinationShop, {
+        query: METAFIELD_DEFINITION_UPDATE,
+        variables: {
+          definition,
+        },
+      });
+      const errors = update.metafieldDefinitionUpdate?.userErrors || [];
+
+      if (errors.length) {
+        outcome.warnings.push(
+          `${source.namespace}.${source.key}: ${errors.map((e) => e.message).join("; ")}`
+        );
+      } else {
+        outcome.updated += 1;
+      }
+
+      continue;
+    }
+
+    const create = await shopify.forShop(destinationShop, {
+      query: METAFIELD_DEFINITION_CREATE,
+      variables: {
+        definition: {
+          ownerType: source.ownerType,
+          namespace: source.namespace,
+          key: source.key,
+          type: source.type,
+          name: source.name,
+          description: source.description,
+          validations: source.validations,
+          pin: true,
+        },
+      },
+    });
+    const errors = create.metafieldDefinitionCreate?.userErrors || [];
+
+    if (errors.length) {
+      throw new Error(
+        `Could not create metafield definition ${source.namespace}.${source.key}: ` +
+          errors.map((error) => error.message).join("; ")
+      );
+    }
+
+    outcome.created += 1;
+  }
+
+  return outcome;
+}
+
 /*
  * Shopify keeps a product's SEO title and description in `global/title_tag`
  * and `global/description_tag`, and ALSO exposes them as the product's `seo`
@@ -609,7 +891,14 @@ function splitMetafields(metafields) {
       return;
     }
 
-    kept.push(metafield);
+    // `definition` is cached beside the source value for the separate schema
+    // sync, but it is not a field accepted by ProductSet's MetafieldInput.
+    kept.push({
+      namespace: metafield.namespace,
+      key: metafield.key,
+      type: metafield.type,
+      value: metafield.value,
+    });
   });
 
   return { metafields: kept, seo };
@@ -962,6 +1251,24 @@ async function pushOne(connection, mapping) {
     mapping.destination_shopify_product_id,
     { locationId, collections }
   );
+
+  // Values alone create unstructured metafields, which do not appear as a
+  // normal named field in the destination Admin. Mirror the readable source
+  // definitions first so the value and its schema arrive together.
+  if (settings.metafields) {
+    const definitionSync = await syncMetafieldDefinitions(
+      connection.destination.shop_domain,
+      (product.product_data || {}).metafields,
+      variants
+    );
+
+    for (const warning of definitionSync.warnings) {
+      console.warn(
+        `Metafield definition metadata was not updated on ` +
+          `${connection.destination.shop_domain}: ${warning}`
+      );
+    }
+  }
 
   const data = await shopify.forShop(connection.destination.shop_domain, {
     query: PRODUCT_SET_MUTATION,
@@ -1551,6 +1858,8 @@ module.exports = {
   buildProductInput,
   splitMetafields,
   cleanVariantMetafields,
+  definitionsForMetafields,
+  syncMetafieldDefinitions,
   selectVariants,
   withMarkup,
   optionKey,

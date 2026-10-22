@@ -295,6 +295,16 @@ console.log("\nMetafields");
     mixed.metafields.length === 1 && mixed.metafields[0].key === "care");
   check("and the SEO one is still split off", mixed.seo.title === "Buy Shirts");
 
+  const withDefinition = splitMetafields([{
+    namespace: "custom",
+    key: "care",
+    type: "multi_line_text_field",
+    value: "Wash",
+    definition: { name: "Care instructions" },
+  }]);
+  check("cached definition metadata is not sent to ProductSet",
+    withDefinition.metafields[0].definition === undefined);
+
   const none = splitMetafields([
     { namespace: "custom", key: "care", value: "Machine wash" },
   ]);
@@ -636,7 +646,17 @@ console.log("\nGraphQL id handling");
           },
           metafields: {
             nodes: [
-              { namespace: "custom", key: "bin", type: "single_line_text_field", value: "A1" },
+              {
+                namespace: "custom",
+                key: "bin",
+                type: "single_line_text_field",
+                value: "A1",
+                definition: {
+                  name: "Warehouse bin",
+                  description: "Picking location",
+                  validations: [{ name: "max", value: "20" }],
+                },
+              },
             ],
           },
           selectedOptions: [{ name: "Size", value: "S" }],
@@ -658,6 +678,9 @@ console.log("\nGraphQL id handling");
       flat.variants[0].weight_unit === "GRAMS");
   check("GraphQL variant metafields are flattened",
     flat.variants[0].metafields[0].key === "bin");
+  check("metafield definition metadata is cached",
+    flat.variants[0].metafields[0].definition.name === "Warehouse bin" &&
+      flat.variants[0].metafields[0].definition.validations[0].name === "max");
   check("option values are flattened", flat.options[0].values[0] === "S");
   check("a variant with no position gets one", flat.variants[0].position === 1);
 }
@@ -688,7 +711,125 @@ console.log("\nPublishing to the online store");
   }
 
   (async () => {
+    console.log("\nMetafield definitions");
+
+    const sourceMetafields = [
+      {
+        namespace: "custom",
+        key: "care",
+        type: "multi_line_text_field",
+        value: "Hand wash",
+        definition: {
+          name: "Care instructions",
+          description: "How to care for the product",
+          validations: [],
+        },
+      },
+      // SEO has its own ProductSet field and must not become a definition.
+      { namespace: "global", key: "title_tag", type: "string", value: "Buy" },
+    ];
+    const sourceVariants = [
+      {
+        metafields: [
+          {
+            namespace: "custom",
+            key: "bin",
+            type: "single_line_text_field",
+            value: "A1",
+          },
+        ],
+      },
+    ];
+    const wantedDefinitions = productSync.definitionsForMetafields(
+      sourceMetafields,
+      sourceVariants
+    );
+
+    check("product and variant definitions are collected",
+      wantedDefinitions.length === 2);
+    check("SEO does not become a custom definition",
+      !wantedDefinitions.some((definition) => definition.namespace === "global"));
+    check("source definition names are retained",
+      wantedDefinitions.find((definition) => definition.key === "care").name ===
+        "Care instructions");
+    check("unstructured fields get a readable fallback name",
+      wantedDefinitions.find((definition) => definition.key === "bin").name ===
+        "Bin");
+
+    calls.length = 0;
+    fakeShopify((shop, body) => {
+      if (body.query.includes("query MetafieldDefinitionsForSync")) {
+        return { products: { nodes: [] }, variants: { nodes: [] } };
+      }
+      if (body.query.includes("CreateMetafieldDefinition")) {
+        return {
+          metafieldDefinitionCreate: {
+            createdDefinition: body.variables.definition,
+            userErrors: [],
+          },
+        };
+      }
+      throw new Error("Unexpected definition test query");
+    });
+
+    const definitionResult = await productSync.syncMetafieldDefinitions(
+      "definitions.myshopify.com",
+      sourceMetafields,
+      sourceVariants
+    );
+    const creates = calls.filter((call) =>
+      call.body.query.includes("CreateMetafieldDefinition")
+    );
+
+    check("missing destination definitions are created",
+      definitionResult.created === 2 && creates.length === 2);
+    check("new definitions are pinned",
+      creates.every((call) => call.body.variables.definition.pin === true));
+    check("variant definitions use PRODUCTVARIANT",
+      creates.some((call) =>
+        call.body.variables.definition.ownerType === "PRODUCTVARIANT" &&
+        call.body.variables.definition.key === "bin"));
+
+    calls.length = 0;
+    fakeShopify((shop, body) => {
+      if (body.query.includes("query MetafieldDefinitionsForSync")) {
+        return {
+          products: {
+            nodes: [{
+              namespace: "custom",
+              key: "care",
+              name: "Old label",
+              description: null,
+              type: { name: "multi_line_text_field" },
+              validations: [],
+            }],
+          },
+          variants: { nodes: [] },
+        };
+      }
+      if (body.query.includes("UpdateMetafieldDefinition")) {
+        return {
+          metafieldDefinitionUpdate: {
+            updatedDefinition: body.variables.definition,
+            userErrors: [],
+          },
+        };
+      }
+      throw new Error("Unexpected definition update query");
+    });
+
+    const updated = await productSync.syncMetafieldDefinitions(
+      "definitions.myshopify.com",
+      sourceMetafields,
+      []
+    );
+
+    check("compatible definition metadata is updated", updated.updated === 1);
+    check("an existing definition is not recreated",
+      !calls.some((call) => call.body.query.includes("CreateMetafieldDefinition")));
+
     /* ---- the happy path ---- */
+    calls.length = 0;
     fakeShopify((shop, body) => {
       if (body.query.includes("publications(first")) {
         return {
