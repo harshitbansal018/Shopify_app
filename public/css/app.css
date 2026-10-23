@@ -2531,6 +2531,22 @@ s-modal:not(:defined)[open] s-button {
   border-color: var(--ok-line);
 }
 
+.return-flow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.return-flow strong,
+.return-flow span {
+  display: block;
+}
+
+.return-flow span {
+  margin-top: 0.2rem;
+}
+
 /* ---------------- panel copy ---------------- */
 
 .panel__copy {

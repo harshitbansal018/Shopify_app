@@ -155,6 +155,26 @@ function liveCode(store) {
   return { code: pairing.formatCode(store.pairing_code), expiresAt };
 }
 
+/** Only let this flow return to the app's product list, never an outside URL. */
+function safeProductsReturn(value) {
+  if (typeof value !== "string") return null;
+
+  try {
+    const base = new URL("https://product-sync.invalid");
+    const target = new URL(value, base);
+
+    if (target.origin !== base.origin || target.pathname !== "/products") {
+      return null;
+    }
+
+    return `${target.pathname}${target.search}`;
+  } catch (_) {
+    return null;
+  }
+}
+
+exports.safeProductsReturn = safeProductsReturn;
+
 /**
  * What removing each supplier would actually cost this store.
  *
@@ -213,10 +233,32 @@ exports.getStores = async (req, res) => {
       // Only a source hands a code out; a destination redeems one.
       pairingCode: isSource ? liveCode(req.store) : null,
       codeTtlMinutes: pairing.CODE_TTL_MINUTES,
+      returnTo: isSource
+        ? safeProductsReturn(req.query && req.query.returnTo)
+        : null,
     });
   } catch (err) {
     console.error("Stores screen failed:", err.message);
     res.status(500).send("Error loading stores");
+  }
+};
+
+/** Source-side polling for the Products -> Stores -> Products handoff. */
+exports.getStoreConnectionStatus = async (req, res) => {
+  if (req.store.store_type !== "source") {
+    return res.status(403).json({
+      error: "Only a source store waits for a destination connection.",
+    });
+  }
+
+  try {
+    const connections = await connectionModel.listForSource(req.storeId);
+    const active = connections.filter((connection) => connection.status === "active");
+
+    return res.json({ ok: true, connected: active.length > 0, active: active.length });
+  } catch (err) {
+    console.error("Checking store connection status failed:", err.message);
+    return res.status(500).json({ error: "Could not check the connection." });
   }
 };
 

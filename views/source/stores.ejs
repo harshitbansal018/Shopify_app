@@ -13,6 +13,13 @@
 
   <main class="shell">
 
+    <%
+      var productsReturn = typeof returnTo === "string" ? returnTo : null;
+      var destinationReady = connections.some(function (connection) {
+        return connection.status === "active";
+      });
+    %>
+
     <header class="shell__header">
       <div>
         <h1>Stores</h1>
@@ -22,6 +29,22 @@
         </p> -->
       </div>
     </header>
+
+    <% if (productsReturn) { %>
+      <section class="notice <%= destinationReady ? "notice--success" : "notice--warn" %> return-flow"
+               id="return-flow">
+        <div>
+          <strong id="return-title"><%= destinationReady
+            ? "Destination connected"
+            : "Waiting for a destination store to connect" %></strong>
+          <span id="return-copy"><%= destinationReady
+            ? "Returning to the products you were sharing."
+            : "Keep this page open after sharing the code. You will return to Products automatically when the destination connects." %></span>
+        </div>
+        <button class="btn btn--primary btn--small" type="button" id="return-button"
+                <%= destinationReady ? "" : "hidden" %>>Continue to products</button>
+      </section>
+    <% } %>
 
     <%# A source hands its code out; the destination types it in. %>
     <section class="pair">
@@ -143,6 +166,9 @@
       var codeCopy = document.getElementById("code-copy");
       var codeLeft = document.getElementById("code-left");
       var codeBar = document.getElementById("code-bar");
+      var returnTo = <%- json(productsReturn) %>;
+      var destinationReady = <%- json(destinationReady) %>;
+      var returnButton = document.getElementById("return-button");
       var ttlMs = <%- json(codeTtlMinutes) %> * 60 * 1000;
       var expiresAt = <%- json(pairingCode && pairingCode.expiresAt ? new Date(pairingCode.expiresAt).getTime() : null) %>;
 
@@ -167,6 +193,47 @@
 
       tick();
       setInterval(tick, 1000);
+
+      /* ---------------- return to the interrupted product flow ---------------- */
+
+      if (returnButton) {
+        returnButton.addEventListener("click", function () {
+          window.appNavigate(returnTo);
+        });
+      }
+
+      if (returnTo && destinationReady) {
+        window.appNavigate(returnTo);
+      } else if (returnTo) {
+        var checkingConnection = false;
+
+        var connectionTimer = setInterval(async function () {
+          if (checkingConnection) return;
+          checkingConnection = true;
+
+          try {
+            var response = await window.appFetch("/stores/status", {
+              background: true
+            });
+            var status = await response.json().catch(function () { return {}; });
+
+            if (response.ok && status.connected) {
+              clearInterval(connectionTimer);
+              window.appToast("Destination connected");
+              window.appNavigate(returnTo);
+            }
+          } catch (_) {
+            // A temporary polling failure needs no banner: the next quiet
+            // check retries, while explicit buttons still report errors.
+          } finally {
+            checkingConnection = false;
+          }
+        }, 4000);
+
+        window.addEventListener("pagehide", function () {
+          clearInterval(connectionTimer);
+        });
+      }
 
       /* ---------------- copy ---------------- */
       codeCopy.addEventListener("click", async function () {

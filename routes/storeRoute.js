@@ -7,6 +7,7 @@ const {
   getStoreType,
   postStoreType,
   getStores,
+  getStoreConnectionStatus,
   postPairingCode,
   postConnect,
   postDeleteStore,
@@ -32,6 +33,7 @@ router.post("/settings", postSettings);
 router.post("/settings/notifications", postNotifications);
 
 router.get("/stores", getStores);
+router.get("/stores/status", getStoreConnectionStatus);
 router.post("/stores/code", postPairingCode); // destination: show a code
 router.post("/stores/connect", postConnect); // source: enter a code
 
