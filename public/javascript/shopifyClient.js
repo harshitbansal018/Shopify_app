@@ -185,12 +185,109 @@
 
   /** Show a message using the admin toast when available. */
   function appToast(message, isError) {
+    // A toast can disappear before it is read and lives outside the iframe's
+    // scroll position. Keep errors on the page as well, then take the merchant
+    // to them through the same focused banner used by form failures.
+    if (isError && document.body) showGlobalError(message);
+
     if (window.shopify && window.shopify.toast) {
       window.shopify.toast.show(message, { isError: Boolean(isError) });
       return;
     }
     window.alert(message);
   }
+
+  /* ---------------- errors ----------------
+   *
+   * Error banners often live at the top of a long page while the control that
+   * failed is near the bottom. Whenever one is shown, take the merchant to it
+   * and focus it. The MutationObserver makes this apply to every existing
+   * screen, including banners whose text is assembled with DOM nodes.
+   */
+
+  let pendingErrorFocus = null;
+
+  function focusError(error) {
+    if (!error || error.hidden || !error.textContent.trim()) return;
+
+    error.setAttribute("role", "alert");
+    error.setAttribute("aria-live", "assertive");
+    if (!error.hasAttribute("tabindex")) error.setAttribute("tabindex", "-1");
+
+    cancelAnimationFrame(pendingErrorFocus);
+    pendingErrorFocus = requestAnimationFrame(() => {
+      try {
+        error.scrollIntoView({ behavior: "smooth", block: "center" });
+        error.focus({ preventScroll: true });
+      } catch (_) {
+        error.scrollIntoView();
+        error.focus();
+      }
+    });
+  }
+
+  /** Show an error banner. Screens may use this directly for new errors. */
+  function appError(error, message) {
+    const element =
+      typeof error === "string" ? document.getElementById(error) : error;
+
+    if (!element) return appToast(message, true);
+
+    element.textContent = message;
+    element.hidden = false;
+    focusError(element);
+  }
+
+  function showGlobalError(message) {
+    let error = document.getElementById("app-global-error");
+
+    if (!error) {
+      error = document.createElement("p");
+      error.id = "app-global-error";
+      error.className = "notice notice--error";
+
+      const host = document.querySelector("main") || document.body;
+      host.insertBefore(error, host.firstChild);
+    }
+
+    appError(error, message);
+  }
+
+  function errorNoticeFrom(node) {
+    if (!node || node.nodeType !== 1) return null;
+    if (node.matches(".notice--error")) return node;
+    return node.closest(".notice--error");
+  }
+
+  function watchErrors() {
+    document.querySelectorAll(".notice--error").forEach((error) => {
+      error.setAttribute("role", "alert");
+      error.setAttribute("aria-live", "assertive");
+      if (!error.hasAttribute("tabindex")) error.setAttribute("tabindex", "-1");
+    });
+
+    // A server-rendered error is already visible when the page arrives.
+    focusError(document.querySelector(".notice--error:not([hidden])"));
+
+    new MutationObserver((changes) => {
+      changes.forEach((change) => {
+        const error = errorNoticeFrom(change.target);
+        if (error) focusError(error);
+
+        Array.prototype.forEach.call(change.addedNodes || [], (node) => {
+          const addedError = errorNoticeFrom(node);
+          if (addedError) focusError(addedError);
+        });
+      });
+    }).observe(document.body, {
+      attributes: true,
+      attributeFilter: ["hidden"],
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  window.addEventListener("DOMContentLoaded", watchErrors);
 
   /* ---------------- the admin's own dialogs ----------------
    *
@@ -336,6 +433,7 @@
   window.appBusy = appBusy;
   window.appNavigate = appNavigate;
   window.appToast = appToast;
+  window.appError = appError;
 
   /*
    * Anything carrying data-navigate goes there when clicked.
