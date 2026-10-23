@@ -32,6 +32,10 @@
 <%# No logo or app name here: the admin already puts both in its own header
     above this app, so a second one is the same thing said twice. %>
 
+<%# Unfinished setup follows the merchant across app screens until all role-
+    specific steps are complete. The setup page itself omits this banner. %>
+<%- include("setupBanner") %>
+
 <%# Plan warnings on every screen. Renders nothing unless a destination store
     has something to be told. %>
 <%- include("planBanner") %>
