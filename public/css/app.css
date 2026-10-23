@@ -349,6 +349,18 @@ body {
   border-color: #dba5a0;
 }
 
+.btn--success {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+}
+
+.btn--success:hover:not(:disabled) {
+  color: #0b6338;
+  background: #dff3e7;
+  border-color: #93d0ac;
+}
+
 .btn--small {
   min-height: 1.75rem;
   padding: 0.3rem 0.58rem;

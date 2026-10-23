@@ -1088,15 +1088,14 @@ const STORE_ROW = {
       !unsynced.includes('id="unsync-button"'),
       "nothing there is synced, so there is nothing to unsync");
     check("the sync status is shown",
-      /status-toggle[\s\S]{0,260}>\s*synced\s*</.test(synced));
+      /class="pill pill--synced">\s*synced\s*<\/span>/.test(synced));
     check("stock is shown", synced.includes("12 in stock"));
 
-    /* ---- the status pill is the switch ---- */
-    check("an unsynced status syncs on click",
-      /class="[^"]*status-toggle"[^>]*data-mapping="6"[^>]*data-action="sync"/.test(unsynced),
-      "one product is one decision; ticking then hunting for a button is two");
-    check("a synced status unsyncs on click",
-      /class="[^"]*status-toggle"[^>]*data-mapping="5"[^>]*data-action="unsync"/.test(synced));
+    /* ---- single-product controls live beside View ---- */
+    check("an unsynced row has a Sync action",
+      /class="[^"]*product-sync-action[^"]*btn--success[^"]*"[^>]*data-mapping="6"[^>]*data-action="sync"[\s\S]{0,180}>\s*Sync\s*<\/button>/.test(unsynced));
+    check("a synced row has an Unsync action",
+      /class="[^"]*product-sync-action[^"]*btn--danger[^"]*"[^>]*data-mapping="5"[^>]*data-action="unsync"[\s\S]{0,180}>\s*Unsync\s*<\/button>/.test(synced));
     check("unsyncing posts to decline, which clears accepted_at",
       synced.includes('"/products/decline"') &&
         synced.includes('"/products/accept"'),
@@ -1113,7 +1112,7 @@ const STORE_ROW = {
     // The class, not the word: the page script names it too, so a bare
     // includes() would find it whether or not a row rendered one.
     check("a deleted product has no switch",
-      !/class="[^"]*status-toggle"/.test(gone) && gone.includes(">deleted<"),
+      !/class="[^"]*product-sync-action"/.test(gone) && gone.includes(">deleted<"),
       "there is nothing at the source left to send");
     check("and cannot be ticked for a bulk action either",
       /class="awaiting-check"[^>]*disabled/.test(gone),
@@ -1126,6 +1125,10 @@ const STORE_ROW = {
     check("every row has a View button",
       (unsynced.match(/class="btn btn--small view-product"/g) || []).length === 1 &&
         (synced.match(/class="btn btn--small view-product"/g) || []).length === 1);
+    check("View and Sync or Unsync stay under their own columns in both tabs",
+      /class="btn btn--small view-product"[\s\S]{0,180}<\/button>\s*<\/td>\s*<td class="table__actions">[\s\S]{0,220}product-sync-action/.test(unsynced) &&
+        /class="btn btn--small view-product"[\s\S]{0,180}<\/button>\s*<\/td>\s*<td class="table__actions">[\s\S]{0,220}product-sync-action/.test(synced),
+      "a missing table cell shifts both buttons under Variants and leaves Actions empty");
     check("View opens the MAPPING, not a source product id",
       /view-product"[\s\S]{0,60}data-product="6"/.test(unsynced) &&
         /view-product"[\s\S]{0,60}data-product="5"/.test(synced),

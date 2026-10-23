@@ -254,35 +254,16 @@
                 </td>
                 <td><%= product.offered_variant_count %></td>
                 <td>
-                  <%# Clicking the status is what changes it: syncing one
-                      product is a single decision, and ticking a box then
-                      reaching for a button makes two steps of it.
-
-                      'deleted' is the exception -- the product is gone at the
-                      source, so there is nothing to sync back. %>
+                  <%# Status is display-only. The matching single-product
+                      control lives in the final Actions column. %>
                   <% if (product.sync_status === "deleted") { %>
                     <span class="pill pill--failed">deleted</span>
                   <% } else if (tab === "unsynced") { %>
-                    <button
-                      class="pill pill--pending pill--action status-toggle"
-                      type="button"
-                      data-mapping="<%= product.mapping_id %>"
-                      data-action="sync"
-                      <%= productSelectionLimit === 0 ? "disabled" : "" %>
-                      title="<%= productSelectionLimit === 0
-                        ? "Your product plan limit has been reached"
-                        : "Sync into this store" %>">
-                      unsynced
-                    </button>
+                    <span class="pill pill--pending">unsynced</span>
                   <% } else { %>
-                    <button
-                      class="pill pill--<%= product.sync_status %> pill--action status-toggle"
-                      type="button"
-                      data-mapping="<%= product.mapping_id %>"
-                      data-action="unsync"
-                      title="Stop syncing &mdash; moves back to Unsynced">
+                    <span class="pill pill--<%= product.sync_status %>">
                       <%= product.sync_status %>
-                    </button>
+                    </span>
                     <% if (product.sync_status === "failed" && product.error_message) { %>
                       <span class="muted"><%= product.error_message %></span>
                     <% } %>
@@ -295,6 +276,23 @@
                     data-product="<%= product.mapping_id %>">
                     View
                   </button>
+                </td>
+                <td class="table__actions">
+                  <% if (product.sync_status !== "deleted") { %>
+                    <button
+                      class="btn btn--small product-sync-action<%= tab === "synced" ? " btn--danger" : " btn--success" %>"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="<%= tab === "unsynced" ? "sync" : "unsync" %>"
+                      <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
+                      title="<%= tab === "unsynced"
+                        ? (productSelectionLimit === 0
+                          ? "Your product plan limit has been reached"
+                          : "Sync into this store")
+                        : "Stop syncing and move back to Unsynced" %>">
+                      <%= tab === "unsynced" ? "Sync" : "Unsync" %>
+                    </button>
+                  <% } %>
                 </td>
               </tr>
             <% }); %>
@@ -465,9 +463,9 @@
         });
       }
 
-      /* ---------------- the status pill, as a switch ---------------- */
+      /* ---------------- one product from the Actions column ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".status-toggle"))
+      Array.prototype.slice.call(document.querySelectorAll(".product-sync-action"))
         .forEach(function (pill) {
           pill.addEventListener("click", async function () {
             var unsync = pill.dataset.action === "unsync";
