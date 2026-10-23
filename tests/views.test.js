@@ -1022,6 +1022,29 @@ const STORE_ROW = {
         !/pageError\.innerHTML/.test(synced),
       "the message carries names a merchant typed");
 
+    const atProductLimit = await render("destination/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      tab: "synced",
+      counts: { synced: 1, unsynced: 1 },
+      pager: pagerFor(1, { params: { tab: "synced" } }),
+      search: "",
+      storeFilter: null,
+      products: [ACCEPTED],
+      connections: [CONN],
+      planStatus: {
+        plan: { name: "Free" },
+        limits: { products: 10 },
+        usage: { products: 10 },
+      },
+    });
+    check("a full product allowance is a highlighted status card",
+      atProductLimit.includes("plan-capacity plan-capacity--full") &&
+        atProductLimit.includes("Free plan limit reached") &&
+        atProductLimit.includes("10 / 10"));
+    check("the full allowance has a prominent upgrade action",
+      /class="btn btn--primary btn--small plan-capacity__action"[\s\S]*?>Upgrade plan<\/a>/.test(atProductLimit));
+
     check("Sync now sends what was ticked, not everything",
       /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
       "a button that acts on everything when nothing is chosen gets pressed by accident");

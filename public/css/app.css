@@ -1778,6 +1778,91 @@ s-modal:not(:defined)[open] s-button {
   color: var(--danger);
 }
 
+/* Product allowance beside the catalogue. This is intentionally a proper
+   status card rather than a sentence: at the limit it blocks the merchant's
+   next action and needs to be noticeable before they select products. */
+.plan-capacity {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: -0.15rem 0 1rem;
+  padding: 0.8rem 0.9rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--brand);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.plan-capacity--full {
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+  border-left-color: var(--danger);
+}
+
+.plan-capacity__usage {
+  display: grid;
+  flex: 0 0 auto;
+  min-width: 6.5rem;
+  padding-right: 0.9rem;
+  border-right: 1px solid var(--line-soft);
+}
+
+.plan-capacity--full .plan-capacity__usage {
+  border-right-color: var(--danger-line);
+}
+
+.plan-capacity__usage strong {
+  color: var(--brand);
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.plan-capacity--full .plan-capacity__usage strong {
+  color: var(--danger);
+}
+
+.plan-capacity__usage span,
+.plan-capacity__copy {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.plan-capacity__message {
+  display: grid;
+  flex: 1 1 16rem;
+  line-height: 1.35;
+}
+
+.plan-capacity__title {
+  font-size: 0.9rem;
+}
+
+.plan-capacity__action {
+  flex: 0 0 auto;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .plan-capacity {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .plan-capacity__usage {
+    min-width: 0;
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .plan-capacity__action {
+    width: 100%;
+    text-align: center;
+  }
+}
+
 /* The usage panel on the Plans screen. */
 .usage {
   margin-bottom: 1.15rem;

@@ -98,15 +98,28 @@
         sees it coming instead of meeting it as an error. %>
     <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
       <% var room = planStatus.limits.products - planStatus.usage.products; %>
-      <p class="plan-meter<%= room <= 0 ? " plan-meter--full" : "" %>">
-        <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
-        products on your <%= planStatus.plan.name %> plan
-        <% if (room > 0) { %>
-          &middot; room for <%= room %> more
-        <% } else { %>
-          &middot; <a class="link" href="/plans" data-navigate="/plans">upgrade</a> or unsync products to add more
+      <section class="plan-capacity<%= room <= 0 ? " plan-capacity--full" : "" %>" role="status">
+        <div class="plan-capacity__usage">
+          <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
+          <span>products used</span>
+        </div>
+        <div class="plan-capacity__message">
+          <strong class="plan-capacity__title">
+            <%= planStatus.plan.name %> plan<%= room <= 0 ? " limit reached" : " usage" %>
+          </strong>
+          <span class="plan-capacity__copy">
+            <% if (room > 0) { %>
+              You can sync <%= room %> more product<%= room === 1 ? "" : "s" %>.
+            <% } else { %>
+              Unsync products or upgrade your plan to add more.
+            <% } %>
+          </span>
+        </div>
+        <% if (room <= 0) { %>
+          <a class="btn btn--primary btn--small plan-capacity__action"
+             href="/plans" data-navigate="/plans">Upgrade plan</a>
         <% } %>
-      </p>
+      </section>
     <% } %>
 
     <%# Only when there is something to act on: buttons over an empty list
