@@ -321,9 +321,9 @@ body {
   cursor: default;
 }
 
-/* Every unavailable native action uses the same circle-slash cue. Loading is
-   deliberately excluded: a working button should show its spinner, not look
-   permanently blocked. */
+/* Every unavailable native action reveals the same red circle-slash on hover.
+   It stays hidden otherwise, and loading is deliberately excluded: a working
+   button should show its spinner, not look permanently blocked. */
 button:disabled:not(.is-loading):not([data-no-block-icon]) {
   cursor: not-allowed;
 }
@@ -337,6 +337,13 @@ button:disabled:not(.is-loading):not([data-no-block-icon])::before {
   font-size: 1em;
   font-weight: 700;
   line-height: 1;
+  color: var(--danger);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+button:disabled:not(.is-loading):not([data-no-block-icon]):hover::before {
+  opacity: 1;
 }
 
 /* A plan-limited action remains visible. The wrapper provides a hover/focus
