@@ -2425,13 +2425,13 @@ const STORE_ROW = {
       ready.includes("is ready") && !ready.includes("setup-steps") &&
         /data-navigate="\/dashboard"/.test(ready));
 
-    /* ---- and what is left of it, on the dashboard ---- */
+    /* ---- and what is left of it, throughout the app ---- */
 
     const banner = await render("partials/setupBanner", {
       setup: { done: 1, total: 3, complete: false, next: { title: "Connect with source store" } },
     });
 
-    check("the dashboard banner counts what is left",
+    check("the setup banner counts what is left",
       banner.includes("1 of 3") && banner.includes("Connect with source store"));
     check("and links back to finish it",
       /data-navigate="\/setup"/.test(banner));
@@ -2442,6 +2442,12 @@ const STORE_ROW = {
       (await render("partials/setupBanner", {})).trim() === "");
 
     await expectRenders("nav renders", "partials/nav", {}, ["s-app-nav"]);
+
+    const navWithSetup = await render("partials/nav", {
+      setup: { done: 1, total: 3, complete: false, next: { title: "Connect with source store" } },
+    });
+    check("the shared nav carries unfinished setup onto every screen",
+      navWithSetup.includes("Setup is not finished") && navWithSetup.includes("1 of 3"));
 
     // The admin draws the app's name and icon above every screen, so drawing
     // them again at the top of the page said the same thing twice.

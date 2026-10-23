@@ -2802,7 +2802,7 @@ s-modal:not(:defined)[open] s-button {
   line-height: 1.6;
 }
 
-/* ---- what is left, on the dashboard of a store that skipped ---- */
+/* ---- unfinished setup reminder shared by authenticated screens ---- */
 
 .setup-banner {
   display: flex;

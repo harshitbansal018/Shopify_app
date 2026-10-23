@@ -78,6 +78,11 @@ app.use(noStore);
    at render time here rather than fetched by each controller. */
 app.use(require("./middleware/planStatus"));
 
+/* ---------------- SETUP STATUS ----------------
+   Every store screen carries unfinished setup progress through the shared
+   navigation. The setup page itself is excluded by the middleware. */
+app.use(require("./middleware/setupStatus"));
+
 /* ---------------- ROUTES ----------------
    Add feature routes here, e.g.:
      app.use("/widgets", require("./routes/widgetRoute"));

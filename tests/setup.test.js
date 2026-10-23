@@ -24,6 +24,7 @@ const sourceProductModel = require(path.join(SERVER, "models/sourceProductModel"
 const productMappingModel = require(path.join(SERVER, "models/productMappingModel"));
 const syncSettingsModel = require(path.join(SERVER, "models/syncSettingsModel"));
 const setupController = require(path.join(SERVER, "controllers/setupController"));
+const setupStatus = require(path.join(SERVER, "middleware/setupStatus"));
 
 const RUN = `su${Date.now().toString(36)}`;
 
@@ -48,6 +49,20 @@ async function cleanup() {
 function stateOf(status, key) {
   const step = status.steps.find((s) => s.key === key);
   return step ? step.state : "missing";
+}
+
+function renderThroughSetupStatus(store, view, locals = {}) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("setup status render timed out")), 2000);
+    const res = {
+      render(renderedView, renderedLocals) {
+        clearTimeout(timer);
+        resolve({ view: renderedView, locals: renderedLocals });
+      },
+    };
+
+    setupStatus({ store }, res, () => res.render(view, locals));
+  });
 }
 
 (async () => {
@@ -270,6 +285,28 @@ function stateOf(status, key) {
       check("and marking it twice does not move the date",
         new Date(again.onboarded_at).getTime() === new Date(first.onboarded_at).getTime(),
         "when a store got going is written once");
+    }
+
+    /* ---------------- the global reminder ---------------- */
+
+    console.log("\nThe reminder reaches every app menu");
+    {
+      const store = { ...source, store_type: "source" };
+      const products = await renderThroughSetupStatus(store, "source/products", {
+        title: "Products",
+      });
+
+      check("an ordinary screen receives unfinished setup progress",
+        products.locals.setup && !products.locals.setup.complete);
+      check("and keeps the screen's own locals", products.locals.title === "Products");
+
+      const setup = await renderThroughSetupStatus(store, "setup", { title: "Setup" });
+      check("the setup screen does not repeat the reminder",
+        !("setup" in setup.locals));
+
+      const preRole = await renderThroughSetupStatus({}, "storeType", { title: "Choose" });
+      check("the role picker does not show a setup reminder",
+        !("setup" in preRole.locals));
     }
   } catch (err) {
     check("suite ran", false, err.message);
