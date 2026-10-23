@@ -150,6 +150,10 @@ console.log("\nProductSetInput");
     product_data: {
       descriptionHtml: "<p>Soft</p>",
       tags: ["summer"],
+      seo: {
+        title: "Blue shirts for summer",
+        description: "Shop soft blue shirts.",
+      },
       options: [
         { name: "Size", position: 1, values: ["S", "M"] },
         { name: "Colour", position: 2, values: ["Blue"] },
@@ -221,13 +225,10 @@ console.log("\nProductSetInput");
       input.variants[0].optionValues[0].name === "S"
   );
 
-  // The handle must NOT be copied: it is unique per store, and "blue-shirt"
-  // very likely already exists on the destination.
-  check(
-    "the handle is NOT copied",
-    input.handle === undefined,
-    "a handle collision would fail the whole product"
-  );
+  check("the SEO title is copied", input.seo.title === "Blue shirts for summer");
+  check("the SEO description is copied",
+    input.seo.description === "Shop soft blue shirts.");
+  check("the search listing URL handle is copied", input.handle === "blue-shirt");
 
   // Creating vs updating is decided by the presence of an id.
   check("creating sends no id", input.id === undefined);
@@ -362,7 +363,30 @@ console.log("\nMetafields");
     "777"
   );
   check("switching metafields off also switches off SEO",
-    off.seo === undefined && off.metafields === undefined);
+    off.seo === undefined && off.handle === undefined &&
+      off.metafields === undefined);
+
+  const canonical = productSync.buildProductInput(
+    {
+      title: "Canonical SEO",
+      handle: "canonical-seo",
+      status: "active",
+      product_data: {
+        seo: { title: "Direct title", description: "Direct description" },
+        metafields: [
+          { namespace: "global", key: "title_tag", value: "Legacy title" },
+        ],
+      },
+    },
+    variants,
+    {},
+    "777"
+  );
+  check("the dedicated SEO object wins over reserved metafields",
+    canonical.seo.title === "Direct title" &&
+      canonical.seo.description === "Direct description");
+  check("SEO syncing also carries the product handle",
+    canonical.handle === "canonical-seo");
 }
 
 console.log("\nVariant selection");
@@ -629,7 +653,9 @@ console.log("\nGraphQL id handling");
   const flat = flatten({
     id: "gid://shopify/Product/1",
     title: "T",
+    handle: "seo-product",
     productType: "Tees",
+    seo: { title: "SEO title", description: "SEO description" },
     updatedAt: "2026-08-27T10:00:00Z",
     options: [{ name: "Size", position: 1, optionValues: [{ name: "S" }] }],
     variants: {
@@ -666,6 +692,8 @@ console.log("\nGraphQL id handling");
   });
 
   check("GraphQL productType maps to product_type", flat.product_type === "Tees");
+  check("GraphQL SEO is flattened",
+    flat.seo.title === "SEO title" && flat.seo.description === "SEO description");
   check("nested gids are flattened", flat.variants[0].id === "9");
   check("the inventory item id is kept",
     flat.variants[0].inventory_item_id === "77");

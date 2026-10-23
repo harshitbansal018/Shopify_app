@@ -125,6 +125,12 @@ function flatten(node) {
     status: node.status,
     descriptionHtml: node.descriptionHtml,
     tags: node.tags,
+    seo: node.seo
+      ? {
+          title: node.seo.title ?? null,
+          description: node.seo.description ?? null,
+        }
+      : null,
     updated_at: node.updatedAt,
     total_inventory: node.totalInventory,
     // Taxonomy category id, copied straight across -- the taxonomy is global,
@@ -157,6 +163,7 @@ const PRODUCTS_BY_ID_QUERY = `
     nodes(ids: $ids) {
       ... on Product {
         id title handle vendor productType status descriptionHtml tags
+        seo { title description }
         updatedAt totalInventory
         category { id }
         # The groups this product sits in at the source. Membership only --
@@ -1005,7 +1012,27 @@ function buildProductInput(
     input.metafields = metafields;
     // The SEO pair goes to the field Shopify actually keeps it in. Sending it
     // as a metafield is what made a re-push collide with itself.
+    // Old cached rows may only have the two reserved SEO metafields. Keep
+    // supporting those until the next canonical source refresh stores the
+    // dedicated Product.seo object below.
     if (seo) input.seo = seo;
+  }
+
+  if (on("metafields")) {
+    // Shopify exposes the Search engine listing as first-class product data,
+    // not as ordinary merchant metafields. Prefer this canonical object over
+    // the legacy global/title_tag and global/description_tag representation.
+    if (data.seo && typeof data.seo === "object") {
+      input.seo = {
+        title: data.seo.title ?? null,
+        description: data.seo.description ?? null,
+      };
+    }
+
+    // The final part of the listing is the /products/<handle> URL. A handle
+    // must be unique in the destination; when it is already taken Shopify
+    // returns a productSet userError and the mapping is shown as failed.
+    if (product.handle) input.handle = product.handle;
   }
 
   // Variants off means the destination's own variants are left completely
@@ -1160,9 +1187,6 @@ function buildProductInput(
    * null means "could not work it out this round": leave the field off
    * entirely and the destination keeps what it has. */
   if (Array.isArray(collections)) input.collections = collections;
-
-  // The handle is NOT copied: it must be unique per store, and a collision
-  // fails the whole mutation. Shopify derives one from the title instead.
 
   if (destinationProductId) {
     input.id = `gid://shopify/Product/${destinationProductId}`;
