@@ -321,6 +321,35 @@ body {
   cursor: default;
 }
 
+/* Every unavailable native action uses the same circle-slash cue. Loading is
+   deliberately excluded: a working button should show its spinner, not look
+   permanently blocked. */
+button:disabled:not(.is-loading):not([data-no-block-icon]) {
+  cursor: not-allowed;
+}
+
+button:disabled:not(.is-loading):not([data-no-block-icon])::before {
+  content: "\2298";
+  display: inline-block;
+  flex: none;
+  margin-right: 0.3rem;
+  font-family: Arial, sans-serif;
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* A plan-limited action remains visible. The wrapper provides a hover/focus
+   explanation because disabled buttons themselves cannot receive focus. */
+.blocked-action {
+  display: inline-flex;
+  cursor: not-allowed;
+}
+
+.blocked-action .btn:disabled {
+  cursor: not-allowed;
+}
+
 .btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

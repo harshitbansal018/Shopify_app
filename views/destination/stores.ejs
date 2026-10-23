@@ -25,9 +25,27 @@
         <%# A destination redeems a code; it never hands one out. The form is
             behind a button because connecting is a one-off act, and a form
             sitting open on every visit reads as work still to do. %>
-        <button class="btn btn--primary" type="button" id="add-store-button">
-          + Add store
-        </button>
+        <% var addStoreBlocked = typeof addStoreRoom !== "undefined" && addStoreRoom && !addStoreRoom.ok; %>
+        <% if (addStoreBlocked) { %>
+          <span
+            class="blocked-action"
+            tabindex="0"
+            title="<%= addStoreRoom.message %>"
+            aria-label="Add store unavailable. <%= addStoreRoom.message %>">
+            <button
+              class="btn btn--primary btn--blocked"
+              type="button"
+              id="add-store-button"
+              disabled
+              aria-hidden="true">
+              Add store
+            </button>
+          </span>
+        <% } else { %>
+          <button class="btn btn--primary" type="button" id="add-store-button">
+            + Add store
+          </button>
+        <% } %>
       </div>
     </header>
 
