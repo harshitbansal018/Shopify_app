@@ -19,6 +19,7 @@ const notificationSettingsModel = require("../models/notificationSettingsModel")
 const payoutModel = require("../models/payoutModel");
 const productSync = require("../services/productSync");
 const pairing = require("../services/pairing");
+const planLimits = require("../services/planLimits");
 
 /**
  * What each toggle is called on screen.
@@ -222,6 +223,18 @@ exports.getStores = async (req, res) => {
       ? await connectionModel.listForSource(req.storeId)
       : await connectionModel.listForDestination(req.storeId);
 
+    // Match the connect endpoint's hard plan check on the page itself. If the
+    // status cannot be read, leave the control available and let the endpoint
+    // remain the final authority rather than taking the Stores screen down.
+    let addStoreRoom = null;
+    if (!isSource) {
+      try {
+        addStoreRoom = await planLimits.sourceRoom(req.store);
+      } catch (err) {
+        console.error("Showing the source store limit failed:", err.message);
+      }
+    }
+
     // Each role has its own screen under views/<role>/.
     res.render(`${req.store.store_type}/stores`, {
       shop: req.shop,
@@ -233,6 +246,7 @@ exports.getStores = async (req, res) => {
       // Only a source hands a code out; a destination redeems one.
       pairingCode: isSource ? liveCode(req.store) : null,
       codeTtlMinutes: pairing.CODE_TTL_MINUTES,
+      addStoreRoom,
       returnTo: isSource
         ? safeProductsReturn(req.query && req.query.returnTo)
         : null,

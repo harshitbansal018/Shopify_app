@@ -516,6 +516,27 @@ const STORE_ROW = {
       "there is a button to add a store",
       destinationHtml.includes('id="add-store-button"')
     );
+
+    const storeLimitReached = await render("destination/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      connections: [{ ...CONNECTION, removal: REMOVAL }],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+      addStoreRoom: {
+        ok: false,
+        used: 1,
+        limit: 1,
+        message: "Your Free plan allows 1 source store.",
+      },
+    });
+
+    check("Add store is disabled when the source-store limit is reached",
+      /id="add-store-button"[^>]*disabled/.test(storeLimitReached));
+    check("the blocked action shows an icon and explains itself on hover",
+      storeLimitReached.includes('class="blocked-action"') &&
+        storeLimitReached.includes('title="Your Free plan allows 1 source store."') &&
+        storeLimitReached.includes("btn--blocked"));
     check(
       "the code form lives in the admin's own dialog, not on the page",
       /<s-modal[\s\S]*id="connect-code"[\s\S]*<\/s-modal>/.test(destinationHtml),
@@ -1474,6 +1495,8 @@ const STORE_ROW = {
     check("and says what it would do, with a way to the plans",
       locked.includes("arrive filed rather than loose") &&
         /data-navigate="\/plans"/.test(locked));
+    check("the plans action looks like a link before it is hovered",
+      /<a[^>]*class="link settings__upgrade-link"[^>]*href="\/plans"/.test(locked));
     check("while an allowed plan leaves it usable",
       /<input[^>]*name="collections"(?![^>]*disabled)[^>]*>/.test(allOn));
 
@@ -2893,6 +2916,9 @@ const STORE_ROW = {
     check("the spinner is drawn in CSS, keeping the button's width",
       /\.is-loading \{[\s\S]{0,200}color: transparent/.test(css) &&
         /\.is-loading::after \{[\s\S]{0,400}animation: spin/.test(css));
+    check("every disabled native button gets the shared blocked icon, except while loading",
+      /button:disabled:not\(\.is-loading\):not\(\[data-no-block-icon\]\)::before/.test(css) &&
+        /content: "\\2298"/.test(css));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
