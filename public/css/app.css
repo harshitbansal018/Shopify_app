@@ -2507,6 +2507,11 @@ s-modal:not(:defined)[open] s-button {
   border-color: var(--danger-line);
 }
 
+.notice--error:focus {
+  outline: 3px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  outline-offset: 3px;
+}
+
 .notice--success {
   color: var(--ok);
   background: var(--ok-bg);

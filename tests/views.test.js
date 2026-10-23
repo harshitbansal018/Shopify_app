@@ -1395,6 +1395,9 @@ const STORE_ROW = {
       allOn.includes('panel.removeAttribute("data-dirty")') &&
         allOn.includes('notifyPanel.removeAttribute("data-dirty")'),
       "saving the emails must not make an unsaved sync change look saved");
+    check("both Save buttons confirm with the same short popup",
+      (allOn.match(/window\.appToast\("Saved settings"\)/g) || []).length === 2,
+      "the popup should say only Saved settings");
 
     const someOff = await settingsPage(syncSettingsModel.defaults(9), {
       notifications: { ...notifyModel.defaults(9), order_created: false },
@@ -2779,6 +2782,15 @@ const STORE_ROW = {
       client.includes("window.appConfirm = appConfirm") &&
         client.includes("window.appOpen = appOpen") &&
         client.includes("window.appClose = appClose"));
+    check("every error banner scrolls into view and receives focus",
+      client.includes("window.appError = appError") &&
+        client.includes('new MutationObserver((changes) =>') &&
+        client.includes('error.scrollIntoView({ behavior: "smooth", block: "center" })') &&
+        client.includes('error.focus({ preventScroll: true })'));
+    check("error toasts also leave a focused error on the page",
+      client.includes("if (isError && document.body) showGlobalError(message)") &&
+        client.includes('error.id = "app-global-error"') &&
+        client.includes("appError(error, message)"));
     check("appConfirm builds the admin's modal",
       client.includes('document.createElement("s-modal")') &&
         client.includes('setAttribute("slot", "primary-action")') &&

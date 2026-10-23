@@ -386,9 +386,7 @@
 
                 if (!response.ok) throw new Error(data.error || "Request failed");
 
-                window.appToast(
-                  "Saved. " + data.queued + " product(s) queued for the next sync."
-                );
+                window.appToast("Saved settings");
 
                 // Saved, so this panel no longer holds unsaved work.
                 panel.removeAttribute("data-dirty");
@@ -440,7 +438,7 @@
 
               if (!response.ok) throw new Error(data.error || "Request failed");
 
-              window.appToast("Email settings saved.");
+              window.appToast("Saved settings");
               notifyPanel.removeAttribute("data-dirty");
             } catch (err) {
               fail(err.message);
