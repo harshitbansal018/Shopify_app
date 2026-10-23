@@ -66,11 +66,17 @@ const MATCH_KEYS = ["sku", "barcode", "title"];
 function hydrate(row) {
   if (!row) return null;
 
+  const storedMarkup = Number(row.price_markup_percent);
+
   const settings = {
     id: row.id,
     connection_id: row.connection_id,
     match_by: row.match_by,
-    price_markup_percent: Number(row.price_markup_percent || 0),
+    // A destination may add no margin, but it may never discount the source
+    // price. Clamp legacy negative rows too, not only newly-saved settings.
+    price_markup_percent: Number.isFinite(storedMarkup)
+      ? Math.max(Math.min(storedMarkup, 1000), 0)
+      : 0,
   };
 
   TOGGLES.forEach((field) => {
@@ -150,7 +156,8 @@ async function mapForConnections(connectionIds) {
  * row on first save rather than silently failing to update nothing.
  *
  * Everything is normalised here rather than trusted: the input comes from a
- * browser, and an unknown match_by or a 900% markup should not reach a column.
+ * browser, and an unknown match_by, negative margin or 900% markup should not
+ * reach a column.
  */
 async function save(connectionId, input = {}) {
   const markup = Number(input.price_markup_percent);
@@ -158,7 +165,7 @@ async function save(connectionId, input = {}) {
   const values = {
     match_by: MATCH_KEYS.includes(input.match_by) ? input.match_by : "sku",
     price_markup_percent: Number.isFinite(markup)
-      ? Math.max(Math.min(markup, 1000), -100)
+      ? Math.max(Math.min(markup, 1000), 0)
       : 0,
   };
 

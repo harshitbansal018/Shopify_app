@@ -132,7 +132,7 @@ console.log("\nPrice markup");
 
   check("no markup leaves the price alone", withMarkup("10.00", 0) === 10);
   check("15% is applied", withMarkup("10.00", 15) === 11.5);
-  check("a negative markup discounts", withMarkup("10.00", -10) === 9);
+  check("a negative markup cannot discount", withMarkup("10.00", -10) === 10);
   check("rounding stays at 2dp", withMarkup("9.99", 7) === 10.69,
     String(withMarkup("9.99", 7)));
   check("a missing price stays null", withMarkup(null, 15) === null);

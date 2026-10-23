@@ -497,6 +497,15 @@ exports.postSettings = async (req, res) => {
     }
 
     const wanted = req.body.settings || {};
+    const margin = wanted.price_markup_percent === undefined
+      ? 0
+      : Number(wanted.price_markup_percent);
+
+    if (!Number.isFinite(margin) || margin < 0) {
+      return res.status(400).json({
+        error: "Price margin must be 0% or greater.",
+      });
+    }
 
     /* A disabled checkbox is only a disabled checkbox: the request behind it
      * can say anything. Collection sync is the one switch here that depends

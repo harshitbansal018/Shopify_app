@@ -33,7 +33,7 @@ function normalizeSettings(input) {
 
   return {
     price_markup_percent: Number.isFinite(markup)
-      ? Math.max(Math.min(markup, 1000), -100)
+      ? Math.max(Math.min(markup, 1000), 0)
       : 0,
     sync_images: raw.sync_images !== false,
     sync_inventory: raw.sync_inventory !== false,
