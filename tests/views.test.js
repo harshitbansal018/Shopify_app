@@ -1474,6 +1474,8 @@ const STORE_ROW = {
     check("and says what it would do, with a way to the plans",
       locked.includes("arrive filed rather than loose") &&
         /data-navigate="\/plans"/.test(locked));
+    check("the plans action looks like a link before it is hovered",
+      /<a[^>]*class="link settings__upgrade-link"[^>]*href="\/plans"/.test(locked));
     check("while an allowed plan leaves it usable",
       /<input[^>]*name="collections"(?![^>]*disabled)[^>]*>/.test(allOn));
 

@@ -2089,6 +2089,20 @@ s-modal:not(:defined)[open] s-button {
   max-width: 62ch;
 }
 
+/* This is a navigation action, so it must read as clickable before hover. */
+.settings__upgrade-link {
+  margin-left: 0.2rem;
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.settings__upgrade-link:hover {
+  text-decoration-thickness: 2px;
+}
+
 .settings__foot {
   display: flex;
   align-items: center;
