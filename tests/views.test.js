@@ -1509,6 +1509,11 @@ const STORE_ROW = {
       /value="12"\s+selected/.test(two) && !/value="9"\s+selected/.test(two));
     check("a paused store says so in the list",
       two.includes("Second Supplier (paused)"));
+    check("a paused store's settings cannot be changed",
+      (two.match(/<fieldset class="settings__controls" disabled>/g) || []).length === 2 &&
+        two.includes("Settings are disabled while this source store is paused") &&
+        two.includes('data-navigate="/stores"'),
+      "both product and email settings must stay disabled until the store resumes");
 
     check("only ONE store's settings are on the page",
       (two.match(/class="panel settings"/g) || []).length === 1,

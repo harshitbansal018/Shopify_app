@@ -2055,6 +2055,19 @@ s-modal:not(:defined)[open] s-button {
   font-size: 0.85rem;
 }
 
+.settings__locked-notice {
+  margin-bottom: 1rem;
+}
+
+/* A fieldset provides real browser-level disabling for every current and
+   future setting without changing the panel's visual layout. */
+.settings__controls {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .settings__group {
   padding: 1.25rem 1.35rem;
 }

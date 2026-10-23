@@ -458,8 +458,16 @@ exports.postNotifications = async (req, res) => {
     // writing: a guessed number must not switch off another store's emails.
     const mine = await connectionModel.listForDestination(req.storeId);
 
-    if (!mine.some((connection) => connection.id === connectionId)) {
+    const connection = mine.find((item) => item.id === connectionId);
+
+    if (!connection) {
       return res.status(404).json({ error: "Connection not found." });
+    }
+
+    if (connection.status !== "active") {
+      return res.status(409).json({
+        error: "This source store is paused. Resume it before changing settings.",
+      });
     }
 
     const saved = await notificationSettingsModel.save(
@@ -492,8 +500,16 @@ exports.postSettings = async (req, res) => {
     // connection.
     const mine = await connectionModel.listForDestination(req.storeId);
 
-    if (!mine.some((connection) => connection.id === connectionId)) {
+    const connection = mine.find((item) => item.id === connectionId);
+
+    if (!connection) {
       return res.status(404).json({ error: "Connection not found." });
+    }
+
+    if (connection.status !== "active") {
+      return res.status(409).json({
+        error: "This source store is paused. Resume it before changing settings.",
+      });
     }
 
     const wanted = req.body.settings || {};

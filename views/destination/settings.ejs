@@ -68,7 +68,19 @@
         var connection = current;
         var sync = connection.sync;
         var id = connection.id;
+        var settingsLocked = connection.status !== "active";
       %>
+
+        <% if (settingsLocked) { %>
+          <p class="notice notice--warn settings__locked-notice">
+            Settings are disabled while this source store is <%= connection.status %>.
+            <% if (connection.status === "paused") { %>
+              Resume it from
+              <a class="link" href="/stores" data-navigate="/stores">Stores</a>
+              before changing its settings.
+            <% } %>
+          </p>
+        <% } %>
 
         <section class="panel settings" data-connection="<%= id %>">
 
@@ -88,6 +100,8 @@
               <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
             <% } %>
           </header>
+
+          <fieldset class="settings__controls" <%= settingsLocked ? "disabled" : "" %>>
 
           <%# No identifier picker: the destination product was created by this
               app, so its SKUs are the ones we sent and always match. The
@@ -210,6 +224,8 @@
             </button>
           </footer>
 
+          </fieldset>
+
         </section>
 
         <%# Email notifications for the same store, on a panel of their own with
@@ -225,6 +241,8 @@
               </h2>
             </div>
           </header>
+
+          <fieldset class="settings__controls" <%= settingsLocked ? "disabled" : "" %>>
 
           <div class="settings__group">
             <p class="settings__hint">
@@ -272,6 +290,8 @@
               Save
             </button>
           </footer>
+
+          </fieldset>
 
         </section>
 

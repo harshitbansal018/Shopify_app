@@ -380,6 +380,31 @@ async function sale(destination, connection, { test = false } = {}) {
       await query("UPDATE store_connections SET status = 'paused' WHERE id = ?", [link2.id]);
       check("a paused store frees the slot", (await planLimits.sourceRoom(store)).ok === true);
 
+      const pausedSettings = fakeRes();
+      await storeController.postSettings(
+        {
+          store,
+          storeId: store.id,
+          shop: store.shop_domain,
+          body: { connection_id: link2.id, settings: { price_markup_percent: 10 } },
+        },
+        pausedSettings
+      );
+      check("a paused store cannot save sync settings",
+        pausedSettings.code === 409 && /paused/.test(pausedSettings.body.error));
+
+      const pausedEmails = fakeRes();
+      await storeController.postNotifications(
+        {
+          store,
+          storeId: store.id,
+          body: { connection_id: link2.id, notifications: {} },
+        },
+        pausedEmails
+      );
+      check("a paused store cannot save email settings",
+        pausedEmails.code === 409 && /paused/.test(pausedEmails.body.error));
+
       await setLimit("max_sources", 1);
 
       const refused = await planLimits.resumeSource(store, link2.id);
