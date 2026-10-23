@@ -1507,6 +1507,13 @@ async function cleanup() {
     check("an absurd markup is capped", cleaned.price_markup_percent === 1000,
       String(cleaned.price_markup_percent));
 
+    const negative = await syncSettingsModel.save(link.id, {
+      price_markup_percent: -25,
+    });
+    check("a negative margin is clamped to zero",
+      negative.price_markup_percent === 0,
+      String(negative.price_markup_percent));
+
     const many = await syncSettingsModel.mapForConnections([link.id, 999999]);
     check("a batch read returns settings for every id asked for",
       many.size === 2 && many.get(999999).title === true,

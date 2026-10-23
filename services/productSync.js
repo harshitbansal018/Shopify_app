@@ -945,7 +945,9 @@ function withMarkup(price, markupPercent) {
 
   if (!Number.isFinite(base)) return null;
 
-  const markup = Number(markupPercent) || 0;
+  // Margin can increase a price or leave it unchanged, never discount it.
+  // This also protects pushes made from a legacy negative database value.
+  const markup = Math.max(Number(markupPercent) || 0, 0);
   return Number((base * (1 + markup / 100)).toFixed(2));
 }
 

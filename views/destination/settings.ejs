@@ -187,7 +187,7 @@
                     type="number"
                     name="price_markup_percent"
                     step="0.01"
-                    min="-100"
+                    min="0"
                     max="1000"
                     value="<%= sync.price_markup_percent %>">
                   <span class="input-suffix__unit">%</span>
@@ -356,6 +356,15 @@
               settings.price_markup_percent = Number(
                 panel.querySelector('input[name="price_markup_percent"]').value
               );
+
+              if (!Number.isFinite(settings.price_markup_percent) ||
+                  settings.price_markup_percent < 0) {
+                fail("Price margin must be 0% or greater.");
+                panel.querySelector('input[name="price_markup_percent"]').focus();
+                button.disabled = false;
+                button.textContent = "Save";
+                return;
+              }
 
               // The screen has no master variants switch any more, so say so
               // rather than leaning on the model's "a missing key means on"

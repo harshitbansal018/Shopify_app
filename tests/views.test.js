@@ -1385,6 +1385,9 @@ const STORE_ROW = {
       "productSet cannot create a product without one");
 
     check("the price margin is shown", allOn.includes('name="price_markup_percent"'));
+    check("the price margin input rejects negative values",
+      /name="price_markup_percent"[\s\S]*?min="0"/.test(allOn) &&
+        allOn.includes("Price margin must be 0% or greater."));
     check("saving is explained",
       allOn.includes("queues every product on this connection"));
     check("and so is what unticking means",
