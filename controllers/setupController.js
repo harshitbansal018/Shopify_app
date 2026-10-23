@@ -26,7 +26,7 @@ const sourceProductModel = require("../models/sourceProductModel");
 const productMappingModel = require("../models/productMappingModel");
 const { query } = require("../config/db");
 const { renderStoreType } = require("./storeController");
-const { CODE_TTL_MINUTES } = require("../services/pairing");
+const { CODE_TTL_MINUTES, normalizeCode } = require("../services/pairing");
 
 /**
  * What each role has to do, in the order it is shown.
@@ -128,7 +128,7 @@ async function pairing(storeId) {
     : null;
 
   return {
-    code: row.pairing_code,
+    code: normalizeCode(row.pairing_code),
     expiresAt,
     // An expired code is still worth showing, as the reason nothing has
     // happened. The screen says so and offers a fresh one.

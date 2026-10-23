@@ -33,7 +33,7 @@ class PairingError extends Error {
   }
 }
 
-/** Formatted as XXXX-XXXX so it is readable when spoken or retyped. */
+/** Eight unambiguous letters/numbers; punctuation is not part of the code. */
 function generateCode() {
   const bytes = crypto.randomBytes(CODE_LENGTH);
   let code = "";
@@ -42,7 +42,7 @@ function generateCode() {
     code += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
   }
 
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
+  return code;
 }
 
 function normalizeCode(input) {
@@ -53,9 +53,7 @@ function normalizeCode(input) {
 }
 
 function formatCode(normalized) {
-  return normalized.length === CODE_LENGTH
-    ? `${normalized.slice(0, 4)}-${normalized.slice(4)}`
-    : normalized;
+  return normalizeCode(normalized);
 }
 
 /**
