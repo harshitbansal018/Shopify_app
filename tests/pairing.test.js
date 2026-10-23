@@ -79,7 +79,7 @@ async function makeStore(name) {
   console.log("\nPairing code");
   {
     const issued = await pairing.issueCode(mine2.id);
-    check("code is issued", /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(issued.code), issued.code);
+    check("code is issued as eight letters/numbers", /^[A-Z0-9]{8}$/.test(issued.code), issued.code);
     check("code has an expiry", issued.expiresAt > new Date());
     check("code avoids ambiguous characters", !/[O01IL]/.test(issued.code), issued.code);
 
@@ -92,8 +92,10 @@ async function makeStore(name) {
     check("a store cannot redeem its own code",
       self && /OTHER store/.test(self.message), self && self.message);
 
-    // Typed sloppily: lower case, spaces, no dash.
-    const result = await pairing.redeemCode(mine1.id, `  ${issued.code.replace("-", "").toLowerCase()} `);
+    // Typed in the old display format: lower case, spaces and a dash. Keep
+    // accepting it even though newly shown codes contain no punctuation.
+    const oldFormat = `${issued.code.slice(0, 4)}-${issued.code.slice(4)}`;
+    const result = await pairing.redeemCode(mine1.id, `  ${oldFormat.toLowerCase()} `);
     check("redeeming is forgiving about formatting", result.alreadyLinked === false);
 
     mine1 = await storeModel.findById(mine1.id);

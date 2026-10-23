@@ -129,7 +129,7 @@ function stateOf(status, key) {
       check("still 1 of 3", status.done === 1,
         "generating a code is not an achievement on its own");
       check("the code is shown so it can be read out",
-        step.code && step.code.code === "ABCD-1234");
+        step.code && step.code.code === "ABCD1234");
       check("with the moment it dies", step.code.expiresAt instanceof Date);
       check("and it is not expired yet", step.code.expired === false);
     }

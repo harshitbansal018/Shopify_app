@@ -375,11 +375,11 @@ const STORE_ROW = {
       filter: "all",
       counts: { all: 1, shared: 0, unshared: 1 },
       connections: [CONNECTION],
-      pairingCode: { code: "ABCD-2345", expiresAt: new Date("2026-01-01T10:30:00Z") },
+      pairingCode: { code: "ABCD2345", expiresAt: new Date("2026-01-01T10:30:00Z") },
       codeTtlMinutes: 15,
     });
 
-    check("source shows its code", withCode.includes("ABCD-2345"));
+    check("source shows its code without punctuation", withCode.includes("ABCD2345"));
     check(
       "source has no code input",
       !withCode.includes('id="connect-code"'),
@@ -2382,7 +2382,7 @@ const STORE_ROW = {
     const waiting = await render(
       "setup",
       setupLocals("source", ["done", "waiting", "locked"], {
-        code: "ABCD-1234",
+        code: "ABCD1234",
         expiresAt: new Date(Date.now() + 600000),
         expired: false,
         ttlMinutes: 15,
@@ -2395,7 +2395,7 @@ const STORE_ROW = {
       /setup-step--waiting/.test(waiting) && !/setup-step--done[\s\S]{0,200}ABCD/.test(waiting),
       "a code in somebody's hand is not a connection");
     check("the code is on the screen with its countdown",
-      waiting.includes("ABCD-1234") && /id="setup-code-timer"[^>]*data-expires=/.test(waiting),
+      waiting.includes("ABCD1234") && /id="setup-code-timer"[^>]*data-expires=/.test(waiting),
       "so it can be read out without going back to Stores");
     check("a locked step explains itself rather than just greying out",
       /setup-step--locked/.test(waiting) && waiting.includes("Do the one above first"));
@@ -2406,7 +2406,7 @@ const STORE_ROW = {
     const expired = await render(
       "setup",
       setupLocals("source", ["done", "ready", "locked"], {
-        code: "ABCD-1234",
+        code: "ABCD1234",
         expiresAt: new Date(Date.now() - 60000),
         expired: true,
         ttlMinutes: 15,
@@ -2414,7 +2414,7 @@ const STORE_ROW = {
     );
 
     check("an expired code says so instead of showing a dead number",
-      expired.includes("That code has expired") && !expired.includes("ABCD-1234"),
+      expired.includes("That code has expired") && !expired.includes("ABCD1234"),
       "the merchant would go on reading it out");
     check("and offers a fresh one",
       expired.includes("Generate a new code"));
