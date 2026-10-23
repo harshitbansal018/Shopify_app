@@ -258,26 +258,23 @@ function filterForImportedSelection({ shared = 0, unshared = 0 } = {}) {
 
 exports.filterForImportedSelection = filterForImportedSelection;
 
-/** A short popup that also explains why the merchant landed on that filter. */
+/** A short popup describing what the picker changed. */
 function noticeForImportedSelection({ shared = 0, unshared = 0 } = {}) {
   if (shared > 0 && unshared > 0) {
     const total = shared + unshared;
-    return (
-      `${total} products processed: ${shared} shared and ${unshared} not shared. ` +
-      "Showing All products."
-    );
+    return `${total} products processed: ${shared} shared and ${unshared} not shared.`;
   }
 
   if (shared > 0) {
     return shared === 1
-      ? "Shared product updated. Showing Shared products."
-      : `${shared} shared products updated. Showing Shared products.`;
+      ? "Shared product updated."
+      : `${shared} shared products updated.`;
   }
 
   if (unshared > 0) {
     return unshared === 1
-      ? "Product added. Showing Not shared products."
-      : `${unshared} products added. Showing Not shared products.`;
+      ? "Product added."
+      : `${unshared} products added.`;
   }
 
   return "No products were added.";

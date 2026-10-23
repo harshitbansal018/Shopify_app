@@ -802,17 +802,17 @@ const STORE_ROW = {
       productController.filterForImportedSelection({ shared: 1, unshared: 1 }) === "all");
     check("the import popup explains a shared-only result",
       productController.noticeForImportedSelection({ shared: 2, unshared: 0 }) ===
-        "2 shared products updated. Showing Shared products." &&
+        "2 shared products updated." &&
       productController.noticeForImportedSelection({ shared: 1, unshared: 0 }) ===
-        "Shared product updated. Showing Shared products.");
+        "Shared product updated.");
     check("the import popup explains an unshared-only result",
       productController.noticeForImportedSelection({ shared: 0, unshared: 2 }) ===
-        "2 products added. Showing Not shared products." &&
+        "2 products added." &&
       productController.noticeForImportedSelection({ shared: 0, unshared: 1 }) ===
-        "Product added. Showing Not shared products.");
+        "Product added.");
     check("the import popup explains a mixed result",
       productController.noticeForImportedSelection({ shared: 1, unshared: 2 }) ===
-        "3 products processed: 1 shared and 2 not shared. Showing All products.");
+        "3 products processed: 1 shared and 2 not shared.");
     check("the picker follows the filter returned by the import",
       all.includes('shared: "/products?filter=shared"') &&
         all.includes('unshared: "/products?filter=unshared"') &&
