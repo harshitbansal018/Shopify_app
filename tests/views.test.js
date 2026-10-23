@@ -793,11 +793,33 @@ const STORE_ROW = {
         .includes('appNavigate("/products?filter=shared")'),
       "landing back in the full catalogue loses their place");
 
-    // A freshly added product is unshared, and the next thing to do with it
-    // -- tick it and Allow -- happens on that filter.
-    check("adding products lands on Unshared",
-      /Added " \+ data\.imported[\s\S]{0,400}appNavigate\("\/products\?filter=unshared"\)/.test(all),
-      "the merchant would otherwise hunt for what they just added");
+    const productController = require(path.join(SERVER, "controllers/productController"));
+    check("adding only shared products selects the Shared filter",
+      productController.filterForImportedSelection({ shared: 2, unshared: 0 }) === "shared");
+    check("adding only unshared products selects the Not shared filter",
+      productController.filterForImportedSelection({ shared: 0, unshared: 2 }) === "unshared");
+    check("adding a mixture selects All",
+      productController.filterForImportedSelection({ shared: 1, unshared: 1 }) === "all");
+    check("the import popup explains a shared-only result",
+      productController.noticeForImportedSelection({ shared: 2, unshared: 0 }) ===
+        "2 shared products updated. Showing Shared products." &&
+      productController.noticeForImportedSelection({ shared: 1, unshared: 0 }) ===
+        "Shared product updated. Showing Shared products.");
+    check("the import popup explains an unshared-only result",
+      productController.noticeForImportedSelection({ shared: 0, unshared: 2 }) ===
+        "2 products added. Showing Not shared products." &&
+      productController.noticeForImportedSelection({ shared: 0, unshared: 1 }) ===
+        "Product added. Showing Not shared products.");
+    check("the import popup explains a mixed result",
+      productController.noticeForImportedSelection({ shared: 1, unshared: 2 }) ===
+        "3 products processed: 1 shared and 2 not shared. Showing All products.");
+    check("the picker follows the filter returned by the import",
+      all.includes('shared: "/products?filter=shared"') &&
+        all.includes('unshared: "/products?filter=unshared"') &&
+        all.includes('all: "/products"') &&
+        all.includes("importDestinations[data.filter]"));
+    check("the picker shows the server's matching popup message",
+      all.includes('window.appToast(data.message || "Products added.")'));
 
     // An empty FILTER is not an empty catalogue, and the copy has to say which.
     const emptyShared = await sourceList("shared", []);

@@ -517,13 +517,16 @@
             })
           }, addButton);
 
-          window.appToast("Added " + data.imported + " product(s)");
-          // Land on Unshared: that is where a freshly added product sits, and
-          // the next thing to do with it -- tick it and Allow -- happens there.
-          // The picker reopens with everything pre-ticked, so a confirm that
-          // added nothing new still goes there; the list simply shows what is
-          // still waiting to be shared.
-          window.appNavigate("/products?filter=unshared");
+          window.appToast(data.message || "Products added.");
+          // Show exactly what the picker just affected: Shared when every
+          // selected product was already shared, Not shared when none were,
+          // and All when the selection contained both kinds.
+          var importDestinations = {
+            shared: "/products?filter=shared",
+            unshared: "/products?filter=unshared",
+            all: "/products"
+          };
+          window.appNavigate(importDestinations[data.filter] || "/products");
         } catch (err) {
           addButton.disabled = false;
           addButton.textContent = "+ Add products";
