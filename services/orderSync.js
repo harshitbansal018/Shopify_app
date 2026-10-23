@@ -20,8 +20,9 @@
 //                        nobody will send is worse than writing to a store we
 //                        do not own.
 //
-// Both go through a queue rather than being sent inline, for the usual reason:
-// a webhook or a screen must not wait on Shopify.
+// Both are recorded in a durable queue first. A merchant action flushes that
+// queue immediately so the destination changes while they are waiting; the
+// background round retries anything Shopify temporarily refuses.
 //
 // Everything in between is order_mappings, which is the shared record.
 const { withTransaction } = require("../config/db");
@@ -38,6 +39,19 @@ const ORDER_SYNC_INTERVAL_MS = Number(
 
 let orderSyncTimer = null;
 let orderSyncRunning = false;
+let orderSyncIdleWaiters = [];
+
+/** Resolve callers that were waiting for the active round to finish. */
+function announceOrderSyncIdle() {
+  const waiters = orderSyncIdleWaiters;
+  orderSyncIdleWaiters = [];
+  waiters.forEach((resolve) => resolve());
+}
+
+function waitForOrderSyncIdle() {
+  if (!orderSyncRunning) return Promise.resolve();
+  return new Promise((resolve) => orderSyncIdleWaiters.push(resolve));
+}
 
 /** Shopify returns gids; our columns hold the numeric id. */
 function numericId(gid) {
@@ -687,6 +701,7 @@ async function runOrderSync() {
     console.warn("Cancellation round failed:", err.message);
   } finally {
     orderSyncRunning = false;
+    announceOrderSyncIdle();
   }
 
   if (totals.fulfilled || totals.cancelled || totals.failed) {
@@ -697,6 +712,19 @@ async function runOrderSync() {
   }
 
   return totals;
+}
+
+/**
+ * Run a fresh round for a merchant action and wait for it to finish.
+ *
+ * If the timer is already sending orders, wait for that round first. The
+ * fresh round after it is important: the merchant may have queued this order
+ * after the active round read its pending rows. Serialising the two also keeps
+ * one shipment from becoming two destination fulfillments.
+ */
+async function flushOrderSync() {
+  while (orderSyncRunning) await waitForOrderSyncIdle();
+  return runOrderSync();
 }
 
 /** Start the background round. Safe to call twice; the second call is a no-op. */
@@ -771,6 +799,7 @@ module.exports = {
   cancelOne,
   pushCancellations,
   runOrderSync,
+  flushOrderSync,
   startOrderSync,
   stopOrderSync,
 };

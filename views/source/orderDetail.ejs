@@ -434,7 +434,11 @@
 
           if (!data) return;
 
-          window.appToast("Marked fulfilled");
+          window.appToast(
+            data.destinationUpdated
+              ? "Marked fulfilled in the destination store"
+              : "Marked fulfilled; destination update will retry automatically"
+          );
           window.appNavigate("/orders?tab=done");
         });
       }
@@ -467,7 +471,11 @@
 
           if (!data) return;
 
-          window.appToast("Marked partially fulfilled");
+          window.appToast(
+            data.destinationUpdated
+              ? "Updated in the destination store"
+              : "Shipment saved; destination update will retry automatically"
+          );
           // Still open: there is more to send, so come back here.
           window.appNavigate("/orders/<%= order.id %>");
         });
@@ -509,7 +517,11 @@
 
           if (!data) return;
 
-          window.appToast("The buyer's order is being cancelled");
+          window.appToast(
+            data.destinationUpdated
+              ? "The buyer's order cancellation was sent"
+              : "Cancellation saved; destination update will retry automatically"
+          );
           window.appNavigate("/orders?tab=done");
         });
       }

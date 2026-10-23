@@ -1022,6 +1022,55 @@ const STORE_ROW = {
         !/pageError\.innerHTML/.test(synced),
       "the message carries names a merchant typed");
 
+    const atProductLimit = await render("destination/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      tab: "synced",
+      counts: { synced: 1, unsynced: 1 },
+      pager: pagerFor(1, { params: { tab: "synced" } }),
+      search: "",
+      storeFilter: null,
+      products: [ACCEPTED],
+      connections: [CONN],
+      planStatus: {
+        plan: { name: "Free" },
+        limits: { products: 10 },
+        usage: { products: 10 },
+      },
+    });
+    check("a full product allowance is a highlighted status card",
+      atProductLimit.includes("plan-capacity plan-capacity--full") &&
+        atProductLimit.includes("Free plan limit reached") &&
+        atProductLimit.includes("10 / 10"));
+    check("the full allowance has a prominent upgrade action",
+      /class="btn btn--primary btn--small plan-capacity__action"[\s\S]*?>Upgrade plan<\/a>/.test(atProductLimit));
+
+    const noProductSlots = await render("destination/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      tab: "unsynced",
+      counts: { synced: 10, unsynced: 1 },
+      pager: pagerFor(1, { params: { tab: "unsynced" } }),
+      search: "",
+      storeFilter: null,
+      products: [OFFERED],
+      connections: [CONN],
+      planStatus: {
+        plan: { name: "Free" },
+        limits: { products: 10 },
+        usage: { products: 10 },
+      },
+    });
+    check("no more products can be selected when the plan is full",
+      /class="awaiting-check"[\s\S]{0,140}disabled/.test(noProductSlots) &&
+        /data-action="sync"[\s\S]{0,100}disabled/.test(noProductSlots));
+    check("selection is capped at the remaining plan allowance",
+      unsynced.includes("count >= selectionLimit") &&
+        unsynced.includes("index < selectionLimit"));
+    check("the floating action bar does not repeat the plan-limit message",
+      !unsynced.includes("selection-limit-note") &&
+        !unsynced.includes("Plan selection limit reached"));
+
     check("Sync now sends what was ticked, not everything",
       /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
       "a button that acts on everything when nothing is chosen gets pressed by accident");
@@ -1039,15 +1088,14 @@ const STORE_ROW = {
       !unsynced.includes('id="unsync-button"'),
       "nothing there is synced, so there is nothing to unsync");
     check("the sync status is shown",
-      /status-toggle[\s\S]{0,260}>\s*synced\s*</.test(synced));
+      /class="pill pill--synced">\s*synced\s*<\/span>/.test(synced));
     check("stock is shown", synced.includes("12 in stock"));
 
-    /* ---- the status pill is the switch ---- */
-    check("an unsynced status syncs on click",
-      /class="[^"]*status-toggle"[^>]*data-mapping="6"[^>]*data-action="sync"/.test(unsynced),
-      "one product is one decision; ticking then hunting for a button is two");
-    check("a synced status unsyncs on click",
-      /class="[^"]*status-toggle"[^>]*data-mapping="5"[^>]*data-action="unsync"/.test(synced));
+    /* ---- single-product controls live beside View ---- */
+    check("an unsynced row has a Sync action",
+      /class="[^"]*product-sync-action[^"]*btn--success[^"]*"[^>]*data-mapping="6"[^>]*data-action="sync"[\s\S]{0,180}>\s*Sync\s*<\/button>/.test(unsynced));
+    check("a synced row has an Unsync action",
+      /class="[^"]*product-sync-action[^"]*btn--danger[^"]*"[^>]*data-mapping="5"[^>]*data-action="unsync"[\s\S]{0,180}>\s*Unsync\s*<\/button>/.test(synced));
     check("unsyncing posts to decline, which clears accepted_at",
       synced.includes('"/products/decline"') &&
         synced.includes('"/products/accept"'),
@@ -1064,19 +1112,23 @@ const STORE_ROW = {
     // The class, not the word: the page script names it too, so a bare
     // includes() would find it whether or not a row rendered one.
     check("a deleted product has no switch",
-      !/class="[^"]*status-toggle"/.test(gone) && gone.includes(">deleted<"),
+      !/class="[^"]*product-sync-action"/.test(gone) && gone.includes(">deleted<"),
       "there is nothing at the source left to send");
     check("and cannot be ticked for a bulk action either",
       /class="awaiting-check"[^>]*disabled/.test(gone),
       "select-all would otherwise include a row nothing can act on");
     check("select-all skips the disabled ones",
-      gone.includes('".awaiting-check:not(:disabled)"'),
+      gone.includes('".awaiting-check:not([data-unavailable])"'),
       "the count would say 1 with nothing the button could send");
 
     /* ---- View, on both tabs ---- */
     check("every row has a View button",
       (unsynced.match(/class="btn btn--small view-product"/g) || []).length === 1 &&
         (synced.match(/class="btn btn--small view-product"/g) || []).length === 1);
+    check("View and Sync or Unsync stay under their own columns in both tabs",
+      /class="btn btn--small view-product"[\s\S]{0,180}<\/button>\s*<\/td>\s*<td class="table__actions">[\s\S]{0,220}product-sync-action/.test(unsynced) &&
+        /class="btn btn--small view-product"[\s\S]{0,180}<\/button>\s*<\/td>\s*<td class="table__actions">[\s\S]{0,220}product-sync-action/.test(synced),
+      "a missing table cell shifts both buttons under Variants and leaves Actions empty");
     check("View opens the MAPPING, not a source product id",
       /view-product"[\s\S]{0,60}data-product="6"/.test(unsynced) &&
         /view-product"[\s\S]{0,60}data-product="5"/.test(synced),

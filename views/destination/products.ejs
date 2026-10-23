@@ -93,20 +93,38 @@
       }) %>
     </div>
 
+    <% var productSelectionLimit = null; %>
+    <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
+      <% productSelectionLimit = Math.max(0, planStatus.limits.products - planStatus.usage.products); %>
+    <% } %>
+
     <%# How much of the plan is in use, beside the list that fills it. The limit
         is enforced when products are accepted; this is here so the merchant
         sees it coming instead of meeting it as an error. %>
     <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
-      <% var room = planStatus.limits.products - planStatus.usage.products; %>
-      <p class="plan-meter<%= room <= 0 ? " plan-meter--full" : "" %>">
-        <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
-        products on your <%= planStatus.plan.name %> plan
-        <% if (room > 0) { %>
-          &middot; room for <%= room %> more
-        <% } else { %>
-          &middot; <a class="link" href="/plans" data-navigate="/plans">upgrade</a> or unsync products to add more
+      <% var room = productSelectionLimit; %>
+      <section class="plan-capacity<%= room <= 0 ? " plan-capacity--full" : "" %>" role="status">
+        <div class="plan-capacity__usage">
+          <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
+          <span>products used</span>
+        </div>
+        <div class="plan-capacity__message">
+          <strong class="plan-capacity__title">
+            <%= planStatus.plan.name %> plan<%= room <= 0 ? " limit reached" : " usage" %>
+          </strong>
+          <span class="plan-capacity__copy">
+            <% if (room > 0) { %>
+              You can sync <%= room %> more product<%= room === 1 ? "" : "s" %>.
+            <% } else { %>
+              Unsync products or upgrade your plan to add more.
+            <% } %>
+          </span>
+        </div>
+        <% if (room <= 0) { %>
+          <a class="btn btn--primary btn--small plan-capacity__action"
+             href="/plans" data-navigate="/plans">Upgrade plan</a>
         <% } %>
-      </p>
+      </section>
     <% } %>
 
     <%# Only when there is something to act on: buttons over an empty list
@@ -187,9 +205,13 @@
                     type="checkbox"
                     class="awaiting-check"
                     value="<%= product.mapping_id %>"
-                    <%= product.sync_status === "deleted" ? "disabled" : "" %>
+                    <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
+                    <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
                     title="<%= product.sync_status === "deleted"
-                      ? "Deleted at the source store" : "" %>"
+                      ? "Deleted at the source store"
+                      : (tab === "unsynced" && productSelectionLimit === 0
+                        ? "Your product plan limit has been reached"
+                        : "") %>"
                     aria-label="<%= tab === "unsynced" ? "Sync" : "Unsync" %> <%= product.title %>">
                 </td>
                 <td>
@@ -232,32 +254,16 @@
                 </td>
                 <td><%= product.offered_variant_count %></td>
                 <td>
-                  <%# Clicking the status is what changes it: syncing one
-                      product is a single decision, and ticking a box then
-                      reaching for a button makes two steps of it.
-
-                      'deleted' is the exception -- the product is gone at the
-                      source, so there is nothing to sync back. %>
+                  <%# Status is display-only. The matching single-product
+                      control lives in the final Actions column. %>
                   <% if (product.sync_status === "deleted") { %>
                     <span class="pill pill--failed">deleted</span>
                   <% } else if (tab === "unsynced") { %>
-                    <button
-                      class="pill pill--pending pill--action status-toggle"
-                      type="button"
-                      data-mapping="<%= product.mapping_id %>"
-                      data-action="sync"
-                      title="Sync into this store">
-                      unsynced
-                    </button>
+                    <span class="pill pill--pending">unsynced</span>
                   <% } else { %>
-                    <button
-                      class="pill pill--<%= product.sync_status %> pill--action status-toggle"
-                      type="button"
-                      data-mapping="<%= product.mapping_id %>"
-                      data-action="unsync"
-                      title="Stop syncing &mdash; moves back to Unsynced">
+                    <span class="pill pill--<%= product.sync_status %>">
                       <%= product.sync_status %>
-                    </button>
+                    </span>
                     <% if (product.sync_status === "failed" && product.error_message) { %>
                       <span class="muted"><%= product.error_message %></span>
                     <% } %>
@@ -270,6 +276,23 @@
                     data-product="<%= product.mapping_id %>">
                     View
                   </button>
+                </td>
+                <td class="table__actions">
+                  <% if (product.sync_status !== "deleted") { %>
+                    <button
+                      class="btn btn--small product-sync-action<%= tab === "synced" ? " btn--danger" : " btn--success" %>"
+                      type="button"
+                      data-mapping="<%= product.mapping_id %>"
+                      data-action="<%= tab === "unsynced" ? "sync" : "unsync" %>"
+                      <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
+                      title="<%= tab === "unsynced"
+                        ? (productSelectionLimit === 0
+                          ? "Your product plan limit has been reached"
+                          : "Sync into this store")
+                        : "Stop syncing and move back to Unsynced" %>">
+                      <%= tab === "unsynced" ? "Sync" : "Unsync" %>
+                    </button>
+                  <% } %>
                 </td>
               </tr>
             <% }); %>
@@ -306,6 +329,9 @@
       var unsyncButton = document.getElementById("unsync-button");
       var checkAll = document.getElementById("check-all-awaiting");
       var pageError = document.getElementById("page-error");
+      var selectionLimit = acceptButton
+        ? <%- json(productSelectionLimit) %>
+        : null;
 
       /*
        * Show an error, and where the plan refused one, the way out of it.
@@ -437,9 +463,9 @@
         });
       }
 
-      /* ---------------- the status pill, as a switch ---------------- */
+      /* ---------------- one product from the Actions column ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".status-toggle"))
+      Array.prototype.slice.call(document.querySelectorAll(".product-sync-action"))
         .forEach(function (pill) {
           pill.addEventListener("click", async function () {
             var unsync = pill.dataset.action === "unsync";
@@ -501,11 +527,11 @@
       if (!bulkButtons.length) return;
 
       function checks() {
-        // Not the disabled ones: a product deleted at the source has nothing
-        // left to act on, so select-all must skip it and the count must not
-        // include it.
+        // A deleted source product is permanently unavailable. Plan-disabled
+        // boxes remain in this list so they can be enabled again immediately
+        // when the merchant unticks one of their current choices.
         return Array.prototype.slice.call(
-          document.querySelectorAll(".awaiting-check:not(:disabled)")
+          document.querySelectorAll(".awaiting-check:not([data-unavailable])")
         );
       }
 
@@ -522,6 +548,17 @@
       function refresh() {
         var count = chosen().length;
 
+        if (acceptButton && selectionLimit !== null) {
+          checks().forEach(function (c) {
+            var heldByLimit = !c.checked && count >= selectionLimit;
+            c.disabled = heldByLimit;
+            c.title = heldByLimit
+              ? "You have selected all products available on your plan"
+              : "";
+          });
+
+        }
+
         checks().forEach(function (c) {
           c.closest("tr").classList.toggle("is-selected", c.checked);
         });
@@ -530,9 +567,12 @@
           bulkCount.textContent = count + " selected";
         }
         if (checkAll) {
-          var all = checks().length;
+          var all = selectionLimit === null
+            ? checks().length
+            : Math.min(checks().length, selectionLimit);
           checkAll.checked = count > 0 && count === all;
           checkAll.indeterminate = count > 0 && count < all;
+          checkAll.disabled = all === 0;
         }
 
         bulkButtons.forEach(function (button) { button.disabled = count === 0; });
@@ -564,7 +604,10 @@
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
-          checks().forEach(function (c) { c.checked = checkAll.checked; });
+          checks().forEach(function (c, index) {
+            c.checked = checkAll.checked &&
+              (selectionLimit === null || index < selectionLimit);
+          });
           refresh();
         });
       }
@@ -658,6 +701,9 @@
         window.appToast("Declined " + data.declined + " product(s)");
         window.appNavigate(productsUrl());
       });
+
+      // Apply a zero/full allowance immediately, before the first interaction.
+      refresh();
     })();
   </script>
 

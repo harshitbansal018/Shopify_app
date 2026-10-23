@@ -177,12 +177,11 @@ function sourceOnly(res) {
 /**
  * The source has shipped it.
  *
- * Recorded here AND queued for the buyer's store: the destination's real
- * Shopify order is fulfilled with the same tracking on the next round, so the
- * shopper gets their shipping email and can follow the parcel.
- *
- * Queued rather than sent inline so the merchant is not left waiting on
- * Shopify, and so a throttled call is retried instead of lost.
+ * Recorded here AND sent to the buyer's store: the destination's real Shopify
+ * order is fulfilled with the same tracking before this request returns, so
+ * the destination app and Shopify Admin both reflect the source's decision.
+ * The queue remains the source of truth, so a throttled call is retried rather
+ * than lost.
  */
 exports.postFulfil = async (req, res) => {
   if (req.store.store_type !== "source") return sourceOnly(res);
@@ -223,7 +222,13 @@ exports.postFulfil = async (req, res) => {
       return res.status(409).json({ error: "This order cannot be shipped." });
     }
 
+    // Do not wait for the minute timer after an explicit merchant action.
+    // flushOrderSync serialises with an already-running background round, so
+    // this shipment cannot be sent twice.
+    await orderSync.flushOrderSync();
+
     const after = await orderMappingModel.findById(mapping.id);
+    const pushed = await orderShipmentModel.findById(shipment.id);
 
     // Emails, as this connection's destination has chosen them. Queued, never
     // thrown: the shipment is recorded now, and that has to stand whatever
@@ -235,6 +240,9 @@ exports.postFulfil = async (req, res) => {
       status: after.source_fulfillment_status,
       shipment: shipment.id,
       tracking: shipment.tracking.length,
+      destinationUpdated: pushed.push_status === "sent",
+      destinationError:
+        pushed.push_status === "failed" ? pushed.push_error : null,
     });
   } catch (err) {
     // A bad quantity is the merchant's to fix, and the message says which.
@@ -304,9 +312,10 @@ exports.postUnfulfil = async (req, res) => {
  * Shopify order is cancelled and the shopper refunded. Leaving them charged
  * for goods nobody will send would be worse.
  *
- * Queued rather than called inline, so a slow or throttled Shopify does not
- * hang the request -- and so a repeat click cannot ask twice. orderCancel is
- * irreversible.
+ * The cancellation is queued durably and then pushed before this request
+ * returns. If Shopify is unavailable it stays failed in the queue for an
+ * automatic retry. orderCancel is irreversible, so queueCancellation also
+ * prevents a repeat click from creating a second request.
  */
 exports.postCancel = async (req, res) => {
   if (req.store.store_type !== "source") return sourceOnly(res);
@@ -327,18 +336,32 @@ exports.postCancel = async (req, res) => {
 
     const queued = await orderMappingModel.queueCancellation(mapping.id);
 
+    // Make the destination Shopify Admin reflect this source action now. If
+    // Shopify rejects or throttles it, cancel_status becomes failed and the
+    // normal background round retries it later.
+    await orderSync.flushOrderSync();
+    const after = await orderMappingModel.findById(mapping.id);
+
     // The destination hears about it by email too, if it has order updates on.
     // Queued, never thrown -- the cancellation is already recorded.
     await require("../services/notifications").orderCancelled(mapping.id);
 
     console.log(
       `${req.shop} cannot supply ${mapping.destination_order_name}; ` +
-        (queued
-          ? "the buyer's order is queued for cancellation"
-          : "the buyer's order was already queued")
+        (after.cancel_status === "cancelled"
+          ? "the buyer's cancellation was sent"
+          : queued
+            ? "the buyer's order is queued for cancellation retry"
+            : "the buyer's order was already queued")
     );
 
-    return res.json({ ok: true, queued: Boolean(queued) });
+    return res.json({
+      ok: true,
+      queued: Boolean(queued),
+      destinationUpdated: after.cancel_status === "cancelled",
+      destinationError:
+        after.cancel_status === "failed" ? after.cancel_error : null,
+    });
   } catch (err) {
     console.error("Cancelling an order failed:", err.message);
     return res.status(500).json({ error: "Could not cancel that order." });
