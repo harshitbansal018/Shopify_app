@@ -1395,6 +1395,9 @@ const STORE_ROW = {
       allOn.includes('panel.removeAttribute("data-dirty")') &&
         allOn.includes('notifyPanel.removeAttribute("data-dirty")'),
       "saving the emails must not make an unsaved sync change look saved");
+    check("both Save buttons confirm with the same short popup",
+      (allOn.match(/window\.appToast\("Saved settings"\)/g) || []).length === 2,
+      "the popup should say only Saved settings");
 
     const someOff = await settingsPage(syncSettingsModel.defaults(9), {
       notifications: { ...notifyModel.defaults(9), order_created: false },
