@@ -2916,9 +2916,10 @@ const STORE_ROW = {
     check("the spinner is drawn in CSS, keeping the button's width",
       /\.is-loading \{[\s\S]{0,200}color: transparent/.test(css) &&
         /\.is-loading::after \{[\s\S]{0,400}animation: spin/.test(css));
-    check("every disabled native button gets the shared blocked icon, except while loading",
+    check("every disabled native button reveals a red blocked icon only on hover",
       /button:disabled:not\(\.is-loading\):not\(\[data-no-block-icon\]\)::before/.test(css) &&
-        /content: "\\2298"/.test(css));
+        /content: "\\2298"[\s\S]{0,300}color: var\(--danger\)[\s\S]{0,100}opacity: 0/.test(css) &&
+        /button:disabled[^\{]*:hover::before \{\s*opacity: 1/.test(css));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
