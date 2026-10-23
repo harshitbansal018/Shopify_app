@@ -412,6 +412,41 @@ const STORE_ROW = {
       noCode.includes("No destination store is connected")
     );
 
+    const waitingReturn = await render("source/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      connections: [],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+      returnTo: "/products?filter=unshared",
+    });
+
+    check("the pairing page remembers the interrupted product flow",
+      waitingReturn.includes("Waiting for a destination store to connect") &&
+        waitingReturn.includes('window.appFetch("/stores/status"') &&
+        waitingReturn.includes("window.appNavigate(returnTo)"));
+
+    const readyReturn = await render("source/stores", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      connections: [CONNECTION],
+      pairingCode: null,
+      codeTtlMinutes: 15,
+      returnTo: "/products?filter=unshared",
+    });
+
+    check("an active connection returns the source to Products",
+      readyReturn.includes("Destination connected") &&
+        /id="return-button"[\s\S]*?>Continue to products/.test(readyReturn) &&
+        readyReturn.includes("if (returnTo && destinationReady)"));
+
+    const storeController = require(path.join(SERVER, "controllers/storeController"));
+    check("the return target cannot leave the app",
+      storeController.safeProductsReturn("/products?filter=unshared") ===
+        "/products?filter=unshared" &&
+        storeController.safeProductsReturn("https://evil.example/products") === null &&
+        storeController.safeProductsReturn("/settings") === null);
+
     // DESTINATION: types a code in, never shows one.
     const destinationHtml = await render("destination/stores", {
       ...BASE,
@@ -881,6 +916,13 @@ const STORE_ROW = {
     check(
       "source with no destination is warned",
       noDestination.includes("No destination store is connected")
+    );
+    check(
+      "Allow selected sends an unconnected source to the pairing flow",
+      noDestination.includes("var hasActiveDestinations = false") &&
+        noDestination.includes('window.appNavigate("/stores?returnTo=" + returnTo)') &&
+        noDestination.includes("if (err.redirect) return window.appNavigate(err.redirect)"),
+      "the merchant should land where they can generate a code"
     );
 
     // Destination: two tabs over one table. "Unsynced" is what a source has
@@ -1509,6 +1551,11 @@ const STORE_ROW = {
       /value="12"\s+selected/.test(two) && !/value="9"\s+selected/.test(two));
     check("a paused store says so in the list",
       two.includes("Second Supplier (paused)"));
+    check("a paused store's settings cannot be changed",
+      (two.match(/<fieldset class="settings__controls" disabled>/g) || []).length === 2 &&
+        two.includes("Settings are disabled while this source store is paused") &&
+        two.includes('data-navigate="/stores"'),
+      "both product and email settings must stay disabled until the store resumes");
 
     check("only ONE store's settings are on the page",
       (two.match(/class="panel settings"/g) || []).length === 1,
@@ -2829,7 +2876,8 @@ const STORE_ROW = {
       if (file.endsWith("stores.ejs") && source.includes("appBusy(deleteConfirm, true)")) {
         return false;
       }
-      return source.split("appFetch(").slice(1).some((call) => !/busy:/.test(call.slice(0, 400)));
+      return source.split("appFetch(").slice(1).some((call) =>
+        !/(busy:|background:\s*true)/.test(call.slice(0, 400)));
     });
     check("every request in every screen spins the button that started it",
       quiet.length === 0,

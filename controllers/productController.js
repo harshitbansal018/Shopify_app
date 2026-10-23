@@ -527,6 +527,10 @@ exports.postAllow = async (req, res) => {
       return res.status(409).json({
         error:
           "No destination store is connected yet. Connect one from Stores first.",
+        code: "DESTINATION_REQUIRED",
+        redirect:
+          "/stores?returnTo=" +
+          encodeURIComponent("/products?filter=unshared"),
       });
     }
 

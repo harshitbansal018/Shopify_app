@@ -262,7 +262,11 @@
           busy: button
         });
         var data = await response.json().catch(function () { return {}; });
-        if (!response.ok) throw new Error(data.error || "Request failed");
+        if (!response.ok) {
+          var error = new Error(data.error || "Request failed");
+          error.redirect = data.redirect || null;
+          throw error;
+        }
         return data;
       }
 
@@ -274,6 +278,7 @@
       var bulkDelete = document.getElementById("bulk-delete");
       var bulkClear = document.getElementById("bulk-clear");
       var checkAll = document.getElementById("check-all");
+      var hasActiveDestinations = <%- json(activeConnections.length > 0) %>;
 
       function rowChecks() {
         return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
@@ -339,6 +344,14 @@
       });
 
       allowButton.addEventListener("click", async function () {
+        // Products may be staged before pairing. When there is nowhere to
+        // offer them yet, take the merchant straight to the source Stores
+        // screen, where the pairing code is generated and connections live.
+        if (!hasActiveDestinations) {
+          var returnTo = encodeURIComponent("/products?filter=unshared");
+          return window.appNavigate("/stores?returnTo=" + returnTo);
+        }
+
         pageError.hidden = true;
         allowButton.disabled = true;
 
@@ -349,6 +362,11 @@
           // though: the rows they just shared have moved.
           window.appNavigate(<%- json(pager.href(1)) %>);
         } catch (err) {
+          // The last destination may have paused after this page loaded. The
+          // server repeats the redirect hint so this stale page follows the
+          // same pairing/resume flow instead of leaving an error at the top.
+          if (err.redirect) return window.appNavigate(err.redirect);
+
           allowButton.disabled = false;
           fail(pageError, err.message);
         }

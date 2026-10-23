@@ -22,8 +22,8 @@
    *
    * Pass `busy` -- a button, or a list of them -- and it spins for as long as
    * the request runs, then goes back to how it was. The top loading bar runs
-   * for every request regardless, so even a request with no button (a pill
-   * click, a background save) shows that something is happening.
+   * for every foreground request. A quiet status poll may pass
+   * `background: true` so it does not flash the bar every few seconds.
    *
    *   const response = await appFetch("/orders/5/fulfil", {
    *     method: "POST", body, busy: button
@@ -33,10 +33,12 @@
     const options = Object.assign({}, init);
     const headers = new Headers(options.headers || {});
     const controls = [].concat(options.busy || []).filter(Boolean);
+    const background = options.background === true;
     delete options.busy;
+    delete options.background;
 
     controls.forEach((control) => appBusy(control, true));
-    requestStarted();
+    if (!background) requestStarted();
 
     try {
       try {
@@ -48,7 +50,7 @@
       options.headers = headers;
       return await fetch(input, options);
     } finally {
-      requestFinished();
+      if (!background) requestFinished();
       controls.forEach((control) => appBusy(control, false));
     }
   }
