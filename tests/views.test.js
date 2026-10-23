@@ -1045,6 +1045,32 @@ const STORE_ROW = {
     check("the full allowance has a prominent upgrade action",
       /class="btn btn--primary btn--small plan-capacity__action"[\s\S]*?>Upgrade plan<\/a>/.test(atProductLimit));
 
+    const noProductSlots = await render("destination/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "destination" },
+      tab: "unsynced",
+      counts: { synced: 10, unsynced: 1 },
+      pager: pagerFor(1, { params: { tab: "unsynced" } }),
+      search: "",
+      storeFilter: null,
+      products: [OFFERED],
+      connections: [CONN],
+      planStatus: {
+        plan: { name: "Free" },
+        limits: { products: 10 },
+        usage: { products: 10 },
+      },
+    });
+    check("no more products can be selected when the plan is full",
+      /class="awaiting-check"[\s\S]{0,140}disabled/.test(noProductSlots) &&
+        /data-action="sync"[\s\S]{0,100}disabled/.test(noProductSlots));
+    check("selection is capped at the remaining plan allowance",
+      unsynced.includes("count >= selectionLimit") &&
+        unsynced.includes("index < selectionLimit"));
+    check("the floating action bar does not repeat the plan-limit message",
+      !unsynced.includes("selection-limit-note") &&
+        !unsynced.includes("Plan selection limit reached"));
+
     check("Sync now sends what was ticked, not everything",
       /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
       "a button that acts on everything when nothing is chosen gets pressed by accident");
@@ -1093,7 +1119,7 @@ const STORE_ROW = {
       /class="awaiting-check"[^>]*disabled/.test(gone),
       "select-all would otherwise include a row nothing can act on");
     check("select-all skips the disabled ones",
-      gone.includes('".awaiting-check:not(:disabled)"'),
+      gone.includes('".awaiting-check:not([data-unavailable])"'),
       "the count would say 1 with nothing the button could send");
 
     /* ---- View, on both tabs ---- */

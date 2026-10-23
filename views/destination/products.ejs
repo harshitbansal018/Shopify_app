@@ -93,11 +93,16 @@
       }) %>
     </div>
 
+    <% var productSelectionLimit = null; %>
+    <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
+      <% productSelectionLimit = Math.max(0, planStatus.limits.products - planStatus.usage.products); %>
+    <% } %>
+
     <%# How much of the plan is in use, beside the list that fills it. The limit
         is enforced when products are accepted; this is here so the merchant
         sees it coming instead of meeting it as an error. %>
     <% if (typeof planStatus !== "undefined" && planStatus && planStatus.plan && planStatus.limits.products !== null) { %>
-      <% var room = planStatus.limits.products - planStatus.usage.products; %>
+      <% var room = productSelectionLimit; %>
       <section class="plan-capacity<%= room <= 0 ? " plan-capacity--full" : "" %>" role="status">
         <div class="plan-capacity__usage">
           <strong><%= planStatus.usage.products %> / <%= planStatus.limits.products %></strong>
@@ -200,9 +205,13 @@
                     type="checkbox"
                     class="awaiting-check"
                     value="<%= product.mapping_id %>"
-                    <%= product.sync_status === "deleted" ? "disabled" : "" %>
+                    <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
+                    <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
                     title="<%= product.sync_status === "deleted"
-                      ? "Deleted at the source store" : "" %>"
+                      ? "Deleted at the source store"
+                      : (tab === "unsynced" && productSelectionLimit === 0
+                        ? "Your product plan limit has been reached"
+                        : "") %>"
                     aria-label="<%= tab === "unsynced" ? "Sync" : "Unsync" %> <%= product.title %>">
                 </td>
                 <td>
@@ -259,7 +268,10 @@
                       type="button"
                       data-mapping="<%= product.mapping_id %>"
                       data-action="sync"
-                      title="Sync into this store">
+                      <%= productSelectionLimit === 0 ? "disabled" : "" %>
+                      title="<%= productSelectionLimit === 0
+                        ? "Your product plan limit has been reached"
+                        : "Sync into this store" %>">
                       unsynced
                     </button>
                   <% } else { %>
@@ -319,6 +331,9 @@
       var unsyncButton = document.getElementById("unsync-button");
       var checkAll = document.getElementById("check-all-awaiting");
       var pageError = document.getElementById("page-error");
+      var selectionLimit = acceptButton
+        ? <%- json(productSelectionLimit) %>
+        : null;
 
       /*
        * Show an error, and where the plan refused one, the way out of it.
@@ -514,11 +529,11 @@
       if (!bulkButtons.length) return;
 
       function checks() {
-        // Not the disabled ones: a product deleted at the source has nothing
-        // left to act on, so select-all must skip it and the count must not
-        // include it.
+        // A deleted source product is permanently unavailable. Plan-disabled
+        // boxes remain in this list so they can be enabled again immediately
+        // when the merchant unticks one of their current choices.
         return Array.prototype.slice.call(
-          document.querySelectorAll(".awaiting-check:not(:disabled)")
+          document.querySelectorAll(".awaiting-check:not([data-unavailable])")
         );
       }
 
@@ -535,6 +550,17 @@
       function refresh() {
         var count = chosen().length;
 
+        if (acceptButton && selectionLimit !== null) {
+          checks().forEach(function (c) {
+            var heldByLimit = !c.checked && count >= selectionLimit;
+            c.disabled = heldByLimit;
+            c.title = heldByLimit
+              ? "You have selected all products available on your plan"
+              : "";
+          });
+
+        }
+
         checks().forEach(function (c) {
           c.closest("tr").classList.toggle("is-selected", c.checked);
         });
@@ -543,9 +569,12 @@
           bulkCount.textContent = count + " selected";
         }
         if (checkAll) {
-          var all = checks().length;
+          var all = selectionLimit === null
+            ? checks().length
+            : Math.min(checks().length, selectionLimit);
           checkAll.checked = count > 0 && count === all;
           checkAll.indeterminate = count > 0 && count < all;
+          checkAll.disabled = all === 0;
         }
 
         bulkButtons.forEach(function (button) { button.disabled = count === 0; });
@@ -577,7 +606,10 @@
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
-          checks().forEach(function (c) { c.checked = checkAll.checked; });
+          checks().forEach(function (c, index) {
+            c.checked = checkAll.checked &&
+              (selectionLimit === null || index < selectionLimit);
+          });
           refresh();
         });
       }
@@ -671,6 +703,9 @@
         window.appToast("Declined " + data.declined + " product(s)");
         window.appNavigate(productsUrl());
       });
+
+      // Apply a zero/full allowance immediately, before the first interaction.
+      refresh();
     })();
   </script>
 
