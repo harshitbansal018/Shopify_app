@@ -35,7 +35,7 @@ const FIELD_LABELS = {
   product_type: "Product type",
   vendor: "Vendor",
   tags: "Tags",
-  metafields: "Product metafields",
+  metafields: "Product metafields and search engine listing",
   inventory: "Inventory",
   variants: "Variants",
   variant_sku: "SKU",
