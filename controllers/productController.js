@@ -201,11 +201,19 @@ function sourceOnly(req, res) {
  */
 async function recordSelections(storeId, picks) {
   let narrowed = 0;
+  let shared = 0;
+  let unshared = 0;
 
   for (const pick of picks) {
     const cached = await sourceProductModel.findByShopifyId(storeId, pick.id);
 
     if (!cached) continue;
+
+    // Use the same definition as the source Products filters: a product is
+    // shared when at least one destination mapping exists for it.
+    const mappings = await productMappingModel.listForSourceProduct(cached.id);
+    if (mappings.length) shared += 1;
+    else unshared += 1;
 
     const rows = await sourceVariantModel.listForProduct(cached.id);
     const wanted = new Set((pick.variant_ids || []).map(String));
@@ -237,8 +245,45 @@ async function recordSelections(storeId, picks) {
     );
   }
 
-  return { narrowed };
+  return { narrowed, shared, unshared };
 }
+
+/** Which source Products filter best represents what the picker just added. */
+function filterForImportedSelection({ shared = 0, unshared = 0 } = {}) {
+  if (shared > 0 && unshared > 0) return "all";
+  if (shared > 0) return "shared";
+  if (unshared > 0) return "unshared";
+  return "all";
+}
+
+exports.filterForImportedSelection = filterForImportedSelection;
+
+/** A short popup that also explains why the merchant landed on that filter. */
+function noticeForImportedSelection({ shared = 0, unshared = 0 } = {}) {
+  if (shared > 0 && unshared > 0) {
+    const total = shared + unshared;
+    return (
+      `${total} products processed: ${shared} shared and ${unshared} not shared. ` +
+      "Showing All products."
+    );
+  }
+
+  if (shared > 0) {
+    return shared === 1
+      ? "Shared product updated. Showing Shared products."
+      : `${shared} shared products updated. Showing Shared products.`;
+  }
+
+  if (unshared > 0) {
+    return unshared === 1
+      ? "Product added. Showing Not shared products."
+      : `${unshared} products added. Showing Not shared products.`;
+  }
+
+  return "No products were added.";
+}
+
+exports.noticeForImportedSelection = noticeForImportedSelection;
 
 /**
  * Copy the picked products into source_products.
@@ -266,7 +311,17 @@ exports.postImport = async (req, res) => {
       picks.map((pick) => pick.id)
     );
 
-    const selection = await recordSelections(req.storeId, picks);
+    // A deleted Shopify id can come back as null. Classify only products that
+    // were actually returned and imported, not a stale id from the request.
+    const importedIds = new Set(
+      (result.products || []).map((product) => String(product.id))
+    );
+    const selection = await recordSelections(
+      req.storeId,
+      picks.filter((pick) => importedIds.has(String(pick.id)))
+    );
+    const filter = filterForImportedSelection(selection);
+    const message = noticeForImportedSelection(selection);
 
     console.log(
       `${req.shop} imported ${result.imported} product(s), ` +
@@ -279,6 +334,8 @@ exports.postImport = async (req, res) => {
       imported: result.imported,
       narrowed: selection.narrowed,
       requeued: result.requeued,
+      filter,
+      message,
     });
   } catch (err) {
     return res.status(err.statusCode || 502).json({
