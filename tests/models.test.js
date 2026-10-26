@@ -1183,6 +1183,9 @@ async function cleanup() {
 
       check("one offered product can be found by its mapping",
         one && one.mapping_id === offered.id);
+      check("an offered product carries its connection for source-owned pricing",
+        one && one.connection_id === link.id,
+        "without it the destination product page reads default OFF settings");
       check("and another store cannot see it",
         (await sourceProductModel.findOfferedByMapping(store.id, offered.id)) === null,
         "the destination scope must still hold");
@@ -1440,6 +1443,11 @@ async function cleanup() {
   console.log("\nsync_settings");
   {
     const syncSettingsModel = require(path.join(SERVER, "models/syncSettingsModel"));
+    const shippingPolicyModel = require(path.join(SERVER, "models/shippingPolicyModel"));
+    const sourceConnectionSettingsModel = require(path.join(
+      SERVER,
+      "models/sourceConnectionSettingsModel"
+    ));
 
     const a = await storeModel.upsertStore({
       shop_domain: `${RUN}-setsrc.myshopify.com`,
@@ -1466,6 +1474,16 @@ async function cleanup() {
       syncSettingsModel.TOGGLES.every((field) => before[field] === true),
       syncSettingsModel.TOGGLES.filter((f) => !before[f]).join(", "));
     check("and defaults to matching on SKU", before.match_by === "sku");
+
+    const sourceDefaults = await sourceConnectionSettingsModel.forConnection(link.id);
+    check("source tax sync requires an explicit opt-in",
+      sourceDefaults.sync_taxes === false);
+    const sourceTaxOn = await sourceConnectionSettingsModel.save(link.id, {
+      sync_taxes: true,
+      tax_rate_percent: 18,
+    });
+    check("source tax sync is stored per connection",
+      sourceTaxOn.sync_taxes === true && sourceTaxOn.tax_rate_percent === 18);
 
     const saved = await syncSettingsModel.save(link.id, {
       match_by: "barcode",
@@ -1519,6 +1537,24 @@ async function cleanup() {
       many.size === 2 && many.get(999999).title === true,
       "a connection with no row still has to sync");
 
+    const shipping = await shippingPolicyModel.save(link.id, {
+      mode: "flat",
+      service_name: "Standard",
+      flat_rate: 80,
+      country_codes: ["IN"],
+      delivery_min_days: 4,
+      delivery_max_days: 6,
+    }, { currency: "INR" });
+    check("a source shipping policy is stored per connection",
+      shipping.mode === "flat" && shipping.flat_rate === 80 &&
+        shipping.currency === "INR" && shipping.country_codes[0] === "IN");
+
+    await shippingPolicyModel.markSynced(link.id, "gid://shopify/DeliveryProfile/123");
+    const shippingSynced = await shippingPolicyModel.forConnection(link.id);
+    check("the destination delivery profile id is retained",
+      shippingSynced.sync_status === "synced" &&
+        shippingSynced.shopify_profile_id === "gid://shopify/DeliveryProfile/123");
+
     // Settings belong to the connection: delete it and they go.
     await connectionModel.deleteConnection(link.id);
     const after = await query(
@@ -1526,6 +1562,12 @@ async function cleanup() {
       [link.id]
     );
     check("settings cascade with the connection", Number(after[0].total) === 0);
+    const shippingAfter = await query(
+      "SELECT COUNT(*) AS total FROM shipping_policies WHERE connection_id = ?",
+      [link.id]
+    );
+    check("shipping policy cascades with the connection",
+      Number(shippingAfter[0].total) === 0);
   }
 
   /* A destination removing a supplier, and everything it put in the store.

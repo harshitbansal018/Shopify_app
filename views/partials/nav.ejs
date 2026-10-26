@@ -18,10 +18,10 @@
   <%# Both roles, two screens: the destination sees what it owes and records
       what it has paid, the source sees what it has earned and been paid. %>
   <s-link href="/payouts">Payouts</s-link>
-  <%# Destination only. A source has nothing to configure: it does not choose
-      what it copies, and the orders it is sent are simply shown to it. %>
+  <%# Both roles have settings, with role-specific content. %>
+  <s-link href="/settings">Settings</s-link>
+  <%# Plans belong to the destination, which owns usage and sync limits. %>
   <% if(typeof store!== 'undefined' && store && store.store_type==="destination" ) { %>
-    <s-link href="/settings">Settings</s-link>
     <s-link href="/plans">Plans</s-link>
   <% } %>
   <%# Last, and for both roles: it is the thing you reach for when one of the

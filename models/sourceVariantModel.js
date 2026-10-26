@@ -67,6 +67,7 @@ function fromShopify(sourceProductId, variant, index = 0) {
         : requiresShipping
           ? 1
           : 0,
+    tax_code: variant.tax_code ?? variant.taxCode ?? null,
     inventory_tracked:
       inventoryTracked === undefined || inventoryTracked === null
         ? null
@@ -111,7 +112,7 @@ function fromShopify(sourceProductId, variant, index = 0) {
 const UPSERT_SQL = `
   INSERT INTO source_variant_mappings
     (source_product_id, shopify_variant_id, shopify_inventory_item_id,
-     sku, barcode, title, price, compare_at_price, cost, taxable, requires_shipping,
+     sku, barcode, title, price, compare_at_price, cost, taxable, tax_code, requires_shipping,
      inventory_tracked, weight_value, weight_unit, metafields,
      inventory_policy, option1, option2, option3, inventory_quantity, position)
   VALUES ?
@@ -126,6 +127,7 @@ const UPSERT_SQL = `
     -- does not know it must not erase what a full fetch recorded.
     cost = COALESCE(VALUES(cost), cost),
     taxable = COALESCE(VALUES(taxable), taxable),
+    tax_code = COALESCE(VALUES(tax_code), tax_code),
     requires_shipping = COALESCE(VALUES(requires_shipping), requires_shipping),
     inventory_tracked = COALESCE(VALUES(inventory_tracked), inventory_tracked),
     weight_value = COALESCE(VALUES(weight_value), weight_value),
@@ -151,6 +153,7 @@ function toRow(record) {
     record.compare_at_price,
     record.cost,
     record.taxable,
+    record.tax_code,
     record.requires_shipping,
     record.inventory_tracked,
     record.weight_value,

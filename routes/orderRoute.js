@@ -5,6 +5,7 @@ const { requireSession } = require("../middleware/auth");
 const {
   getOrders,
   getOrder,
+  getInvoice,
   postFulfil,
   postUnfulfil,
   postCancel,
@@ -18,6 +19,7 @@ router.get("/", getOrders);
 
 // Parameterised routes LAST, for the same reason as in productRoute.js: "/:id"
 // would otherwise swallow any fixed path added above it.
+router.get("/:id/invoice", getInvoice);
 router.get("/:id", getOrder);
 
 // Source-only. Each handler re-checks the role and that the sale belongs to

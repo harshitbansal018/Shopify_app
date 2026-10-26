@@ -16,6 +16,7 @@ const {
   postSettings,
   postNotifications,
 } = require("../controllers/storeController");
+const { getShipping, postShipping } = require("../controllers/shippingController");
 
 // Every route here is behind a verified session token, so req.storeId is the
 // only store this request may touch.
@@ -24,13 +25,27 @@ router.use(requireSession);
 // Chosen once at install, then read-only. There is no route that changes it.
 router.get("/store-type", getStoreType);
 router.post("/store-type", postStoreType);
-// Destination-only: everything on this screen is about what THIS store
-// accepts, which a source has no say in. The handlers re-check the role.
-router.get("/settings", getSettings);
-router.post("/settings", postSettings);
+// Both roles have one Settings destination in the nav. A destination controls
+// incoming product fields; a source controls the checkout shipping policy for
+// products it sends. Each underlying handler still checks its own role.
+router.get("/settings", (req, res) =>
+  req.store.store_type === "source" ? getShipping(req, res) : getSettings(req, res)
+);
+router.post("/settings", (req, res) =>
+  req.store.store_type === "source" ? postShipping(req, res) : postSettings(req, res)
+);
 // One connection's email switches. Separate from /settings because saving
 // them must not re-queue every product the way a sync change does.
 router.post("/settings/notifications", postNotifications);
+// Backward compatibility for old bookmarks and already-rendered clients.
+// New UI lives under /settings; the POST remains valid during deployments.
+router.get("/shipping", (req, res) => {
+  const connection = typeof req.query.connection === "string"
+    ? `?connection=${encodeURIComponent(req.query.connection)}`
+    : "";
+  return res.redirect(`/settings${connection}`);
+});
+router.post("/shipping", postShipping);
 
 router.get("/stores", getStores);
 router.get("/stores/status", getStoreConnectionStatus);

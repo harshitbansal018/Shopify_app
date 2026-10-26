@@ -32,6 +32,8 @@ const orderLineItemModel = require("../models/orderLineItemModel");
 const orderMappingModel = require("../models/orderMappingModel");
 const orderShipmentModel = require("../models/orderShipmentModel");
 const customerModel = require("../models/customerModel");
+const shippingPolicyModel = require("../models/shippingPolicyModel");
+const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
 
 const ORDER_SYNC_INTERVAL_MS = Number(
   process.env.ORDER_SYNC_INTERVAL_MS || 60000
@@ -65,6 +67,31 @@ function money(value) {
   if (value === null || value === undefined || value === "") return null;
   const amount = Number(value);
   return Number.isFinite(amount) ? Number(amount.toFixed(2)) : null;
+}
+
+function shippingChargeForPolicy(policy, lines) {
+  if (!policy || policy.mode === "disabled") return 0;
+  const units = (lines || []).reduce(
+    (total, line) => total + (line.requires_shipping
+      ? Number(line.quantity === null || line.quantity === undefined ? 1 : line.quantity)
+      : 0),
+    0
+  );
+  return money((money(policy.flat_rate) || 0) * units) || 0;
+}
+
+/**
+ * Supplier tax is an app-side accounting amount. It is calculated only on the
+ * supplier's product subtotal and never replaces Shopify's checkout tax.
+ */
+function supplierTaxForSettings(settings, productTotal) {
+  if (!settings?.sync_taxes || settings.tax_rate_percent == null) return null;
+  const subtotal = money(productTotal);
+  const rate = Number(settings.tax_rate_percent);
+  if (subtotal === null || !Number.isFinite(rate) || rate < 0 || rate > 100) {
+    return null;
+  }
+  return money(subtotal * rate / 100);
 }
 
 /**
@@ -110,10 +137,40 @@ async function queueForSources(destinationStoreId, order) {
       (sum, line) => sum + (money(line.destination_price) || 0) * line.quantity,
       0
     );
+    const [policy, sourceSettings] = await Promise.all([
+      shippingPolicyModel.forConnection(connectionId, {
+        currency: order.currency || null,
+      }),
+      sourceConnectionSettingsModel.forConnection(connectionId),
+    ]);
+    // This is already included in each synced unit price; it is recorded here
+    // only to explain the supplier's landed amount, not as checkout shipping.
+    const shippingTotal = shippingChargeForPolicy(policy, group);
+    const sourceTaxTotal = supplierTaxForSettings(sourceSettings, sourceTotal);
 
     const mapping = await orderMappingModel.claim(connectionId, order.id, {
-      sourceTotal: money(sourceTotal),
+      sourceTotal: money(sourceTotal + shippingTotal + (sourceTaxTotal || 0)),
       destinationTotal: money(destinationTotal),
+      sourceProductsTotal: money(sourceTotal),
+      sourceShippingTotal: shippingTotal,
+      // This app-side supplier amount is deliberately separate from the tax
+      // Shopify calculates for the retail customer at destination checkout.
+      sourceTaxTotal,
+      customerProductsTotal: money(destinationTotal),
+      // Shopify can discount/merge checkout shipping and tax. Until its order
+      // allocation identifies this profile, do not pretend the nominal source
+      // rate is exactly what the customer paid.
+      customerShippingTotal: null,
+      customerTaxTotal: null,
+      shippingPolicySnapshot: policy.mode === "disabled" ? null : {
+        mode: policy.mode,
+        service_name: policy.service_name,
+        flat_rate: policy.flat_rate,
+        currency: policy.currency,
+        country_codes: policy.country_codes,
+        delivery_min_days: policy.delivery_min_days,
+        delivery_max_days: policy.delivery_max_days,
+      },
       currency: order.currency || null,
       lineCount: group.length,
     });
@@ -796,6 +853,8 @@ module.exports = {
   reopen,
   fulfilmentLinesFor,
   trackingInput,
+  shippingChargeForPolicy,
+  supplierTaxForSettings,
   cancelOne,
   pushCancellations,
   runOrderSync,

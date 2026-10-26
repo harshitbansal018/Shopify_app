@@ -135,6 +135,10 @@ function shopifyOrder(overrides = {}) {
     check("order is stored", Boolean(order && order.id));
     check("order number kept", order.name === "#1001");
     check("shop currency kept", order.currency === "USD");
+    check("actual order date kept for invoices",
+      order.placed_at instanceof Date || String(order.placed_at).startsWith("2026-08-20"));
+    check("delivery instructions kept for invoices",
+      order.delivery_instructions === "Leave at the back door");
 
     check("total is a number, not a string",
       Number(order.total_price) === 112, String(order.total_price));
@@ -252,6 +256,7 @@ function shopifyOrder(overrides = {}) {
     check("customer id erased", after.customer_shopify_id === null);
     check("billing address erased", after.billing_address === null);
     check("shipping address erased", after.shipping_address === null);
+    check("delivery instructions erased", after.delivery_instructions === null);
 
     // The order itself must survive -- a merchant has to keep sales records.
     check("the ORDER survives", after.name === "#1001");

@@ -146,6 +146,82 @@ exports.getOrder = async (req, res) => {
   }
 };
 
+/** A source-only, deliberately non-financial invoice to put in the parcel. */
+exports.getInvoice = async (req, res) => {
+  try {
+    if (req.store.store_type !== "source") {
+      return res.status(403).send("Only source stores can print invoices.");
+    }
+
+    const mapping = await orderMappingModel.findById(Number(req.params.id));
+
+    if (!mapping || mapping.source_store_id !== req.storeId) {
+      return res.status(404).send("Order not found");
+    }
+
+    const lines = (
+      await orderLineItemModel.sourceLinesForOrder(mapping.destination_order_id)
+    ).filter((line) => line.connection_id === mapping.connection_id);
+    const shipments = await orderShipmentModel.listForMapping(mapping.id);
+    const address = mapping.shipping_address || {};
+    const safeTrackingUrl = (value) => {
+      const url = String(value || "").trim();
+      return /^https?:\/\//i.test(url) ? url : null;
+    };
+
+    // This is intentionally an allow-list. No totals, prices, tax, margin,
+    // payment or profit fields can reach the invoice template.
+    res.render("source/invoice", {
+      packingSlip: {
+        mappingId: mapping.id,
+        orderNumber:
+          mapping.destination_order_name ||
+          (mapping.destination_order_number
+            ? `#${mapping.destination_order_number}`
+            : String(mapping.destination_shopify_order_id)),
+        placedAt: mapping.placed_at,
+        customerName:
+          address.name ||
+          [address.first_name, address.last_name].filter(Boolean).join(" ") ||
+          "Customer",
+        address: {
+          company: address.company || null,
+          address1: address.address1 || null,
+          address2: address.address2 || null,
+          city: address.city || null,
+          province: address.province || address.province_code || null,
+          postalCode: address.zip || null,
+          country: address.country || address.country_name || address.country_code || null,
+          phone: address.phone || null,
+        },
+        deliveryInstructions: mapping.delivery_instructions || null,
+        lines: lines.map((line) => {
+          const quantity = Number(line.quantity);
+          return {
+            product: line.source_product_title || line.title || "Product",
+            variant: line.source_variant_title || line.variant_title || null,
+            sku: line.source_sku || line.destination_sku || line.sku || null,
+            quantity,
+          };
+        }),
+        tracking: shipments
+          .filter((shipment) => shipment.push_status !== "cancelled")
+          .flatMap((shipment) =>
+            (shipment.tracking || []).map((parcel) => ({
+              number: parcel.number || null,
+              company: parcel.company || null,
+              url: safeTrackingUrl(parcel.url),
+            }))
+          )
+          .filter((parcel) => parcel.number),
+      },
+    });
+  } catch (err) {
+    console.error("Invoice failed:", err.message);
+    res.status(500).send("Error loading invoice");
+  }
+};
+
 
 /* ------------------------------------------------------------------ */
 /* Source actions                                                      */

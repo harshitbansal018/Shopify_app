@@ -444,6 +444,7 @@ const CREATE_ORDERS = `
     shopify_order_id BIGINT UNSIGNED NOT NULL,
     order_number     INT DEFAULT NULL,
     name             VARCHAR(50) DEFAULT NULL,
+    placed_at        DATETIME DEFAULT NULL,
 
     -- Money is DECIMAL, never FLOAT: 10.00 must not become 9.999999.
     currency VARCHAR(3) DEFAULT NULL,
@@ -475,6 +476,9 @@ const CREATE_ORDERS = `
 
     -- Flattened out of the address blob because reporting and tax need it.
     shipping_country_code VARCHAR(2) DEFAULT NULL,
+
+    -- Customer-facing note used on the supplier's price-free invoice.
+    delivery_instructions TEXT DEFAULT NULL,
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -634,6 +638,18 @@ async function slimOrdersCustomerColumns() {
   );
 }
 
+/** Fields needed to fulfil and print an order without exposing its money. */
+async function addOrderPackingSlipFields() {
+  await safeAlter(
+    "orders.placed_at",
+    "ALTER TABLE orders ADD COLUMN placed_at DATETIME DEFAULT NULL AFTER name"
+  );
+  await safeAlter(
+    "orders.delivery_instructions",
+    "ALTER TABLE orders ADD COLUMN delivery_instructions TEXT DEFAULT NULL AFTER shipping_country_code"
+  );
+}
+
 /**
  * Replace the raw Shopify variant id on a line item with a reference to our
  * mapping_variant_products row.
@@ -690,6 +706,7 @@ async function addVariantDetailColumns() {
     ["barcode", "VARCHAR(255) DEFAULT NULL"],
     ["cost", "DECIMAL(12,2) DEFAULT NULL"],
     ["taxable", "TINYINT(1) DEFAULT NULL"],
+    ["tax_code", "VARCHAR(64) DEFAULT NULL"],
     ["requires_shipping", "TINYINT(1) DEFAULT NULL"],
     ["inventory_tracked", "TINYINT(1) DEFAULT NULL"],
     ["weight_value", "DECIMAL(12,4) DEFAULT NULL"],
@@ -700,6 +717,23 @@ async function addVariantDetailColumns() {
     await safeAlter(
       `source_variant_mappings.${column}`,
       `ALTER TABLE source_variant_mappings ADD COLUMN ${column} ${type}`
+    );
+  }
+}
+
+async function addOrderShippingAccounting() {
+  for (const [column, type] of [
+    ["source_products_total", "DECIMAL(12,2) DEFAULT NULL"],
+    ["source_shipping_total", "DECIMAL(12,2) NOT NULL DEFAULT 0.00"],
+    ["source_tax_total", "DECIMAL(12,2) DEFAULT NULL"],
+    ["customer_products_total", "DECIMAL(12,2) DEFAULT NULL"],
+    ["customer_shipping_total", "DECIMAL(12,2) DEFAULT NULL"],
+    ["customer_tax_total", "DECIMAL(12,2) DEFAULT NULL"],
+    ["shipping_policy_snapshot", "JSON DEFAULT NULL"],
+  ]) {
+    await safeAlter(
+      `order_mappings.${column}`,
+      `ALTER TABLE order_mappings ADD COLUMN ${column} ${type}`
     );
   }
 }
@@ -717,6 +751,15 @@ async function addVariantInventorySettings() {
          ADD COLUMN ${column} TINYINT(1) NOT NULL DEFAULT 1 AFTER ${after}`
     );
   }
+}
+
+/** Informational supplier tax rate, explicitly enabled by the source. */
+async function addSourceTaxRateSetting() {
+  await safeAlter(
+    "source_connection_settings.tax_rate_percent",
+    `ALTER TABLE source_connection_settings
+       ADD COLUMN tax_rate_percent DECIMAL(7,4) DEFAULT NULL AFTER sync_taxes`
+  );
 }
 
 /** The variant choice made in the resource picker at "Add products" time. */
@@ -798,6 +841,44 @@ const CREATE_SYNC_SETTINGS = `
     UNIQUE KEY uniq_settings_connection (connection_id),
 
     CONSTRAINT fk_settings_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+const CREATE_SHIPPING_POLICIES = `
+  CREATE TABLE IF NOT EXISTS shipping_policies (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+    mode ENUM('disabled','included','flat') NOT NULL DEFAULT 'disabled',
+    service_name VARCHAR(100) NOT NULL DEFAULT 'Standard delivery',
+    flat_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL,
+    country_codes JSON NOT NULL,
+    delivery_min_days SMALLINT UNSIGNED DEFAULT NULL,
+    delivery_max_days SMALLINT UNSIGNED DEFAULT NULL,
+    shopify_profile_id VARCHAR(255) DEFAULT NULL,
+    sync_status ENUM('inactive','pending','synced','failed') NOT NULL DEFAULT 'inactive',
+    sync_error VARCHAR(512) DEFAULT NULL,
+    last_synced_at DATETIME DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_shipping_policy_connection (connection_id),
+    CONSTRAINT fk_shipping_policy_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+// Source-owned feature permissions live apart from destination-owned
+// sync_settings. Tax metadata crosses only when this switch is on; actual tax
+// registrations and rates always remain the destination merchant's concern.
+const CREATE_SOURCE_CONNECTION_SETTINGS = `
+  CREATE TABLE IF NOT EXISTS source_connection_settings (
+    connection_id INT PRIMARY KEY,
+    sync_taxes TINYINT(1) NOT NULL DEFAULT 0,
+    tax_rate_percent DECIMAL(7,4) DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_source_settings_connection
       FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 `;
@@ -1149,6 +1230,7 @@ async function runMigrations() {
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
   await slimOrdersCustomerColumns();
+  await addOrderPackingSlipFields();
   await query(CREATE_ORDER_LINE_ITEMS);
   await linkLineItemsToMappedVariants();
   await query(CREATE_CUSTOMERS);
@@ -1159,6 +1241,9 @@ async function runMigrations() {
   await seedPlans();
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
+  await query(CREATE_SHIPPING_POLICIES);
+  await query(CREATE_SOURCE_CONNECTION_SETTINGS);
+  await addSourceTaxRateSetting();
   await addVariantInventorySettings();
   await addSyncSettingsReviewed();
   await addSyncSettingsCollections();
@@ -1166,6 +1251,7 @@ async function runMigrations() {
   await backfillSyncSettings();
   // After BOTH store_connections and orders -- it has a foreign key onto each.
   await query(CREATE_ORDER_MAPPINGS);
+  await addOrderShippingAccounting();
   await addSourceOrderStatus();
   await dropOrderPushColumns();
   await dropSourceOrderSettings();

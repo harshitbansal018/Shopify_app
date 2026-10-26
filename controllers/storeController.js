@@ -14,6 +14,8 @@
 const storeModel = require("../models/storeModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
+const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
+const shippingPolicyModel = require("../models/shippingPolicyModel");
 const productMappingModel = require("../models/productMappingModel");
 const notificationSettingsModel = require("../models/notificationSettingsModel");
 const payoutModel = require("../models/payoutModel");
@@ -468,6 +470,17 @@ exports.getSettings = async (req, res) => {
       ? await notificationSettingsModel.forConnection(current.id)
       : null;
 
+    // Read-only here: the source owns this reference percentage, while the
+    // destination owns the Shopify registrations and checkout calculation.
+    const sourceSettings = current
+      ? await sourceConnectionSettingsModel.forConnection(current.id)
+      : null;
+    const shippingPolicy = current
+      ? await shippingPolicyModel.forConnection(current.id, {
+          currency: current.destination.currency,
+        })
+      : null;
+
     // Whether the Collections switch may be used, and which plan would open
     // it. Asked of the same function the push asks, so the screen can never
     // offer something the push would then refuse.
@@ -481,6 +494,8 @@ exports.getSettings = async (req, res) => {
       connections,
       current: current ? { ...current, sync: settings.get(current.id) } : null,
       notifications,
+      sourceSettings,
+      shippingPolicy,
       emails: notificationSettingsModel.EMAILS,
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
@@ -658,7 +673,12 @@ exports.postDeleteStore = async (req, res) => {
       });
     }
 
-    // Cascades to product_mappings, sync_settings, order_mappings and payouts.
+    // Products are gone, so the app-owned delivery profile has no reason to
+    // remain in the destination admin. Remove it before the policy row
+    // cascades away with the connection and its Shopify id is forgotten.
+    await require("../services/shippingSync").removeConnectionProfile(connection);
+
+    // Cascades to product_mappings, settings, shipping policy, orders and payouts.
     await connectionModel.deleteConnection(connectionId);
 
     console.log(

@@ -139,6 +139,22 @@ console.log("\nPrice markup");
   check("a non-numeric price stays null", withMarkup("free", 15) === null);
 }
 
+console.log("\nIncluded supplier pricing");
+{
+  check("shipping and tax are included before destination margin",
+    productSync.withIncludedCharges(100, {
+      included_shipping_amount: 10,
+      included_tax_rate: 18,
+      price_markup_percent: 20,
+    }) === 153.6);
+  check("disabled source charges leave the normal margin formula",
+    productSync.withIncludedCharges(100, {
+      included_shipping_amount: 0,
+      included_tax_rate: null,
+      price_markup_percent: 20,
+    }) === 120);
+}
+
 console.log("\nProductSetInput");
 {
   const product = {
@@ -162,8 +178,8 @@ console.log("\nProductSetInput");
   };
 
   const variants = [
-    { sku: "SHIRT-S", price: "20.00", compare_at_price: null, requires_shipping: false, inventory_tracked: false, weight_value: 0.25, weight_unit: "kg", metafields: [{ namespace: "custom", key: "swatch", type: "color", value: "#0000ff" }], option1: "S", option2: "Blue" },
-    { sku: "SHIRT-M", price: "22.00", compare_at_price: "30.00", requires_shipping: true, inventory_tracked: true, weight_value: 12, weight_unit: "OUNCES", metafields: [], option1: "M", option2: "Blue" },
+    { shopify_variant_id: "101", sku: "SHIRT-S", price: "20.00", compare_at_price: null, taxable: true, tax_code: "PC040101", requires_shipping: false, inventory_tracked: false, inventory_quantity: 4, weight_value: 0.25, weight_unit: "kg", metafields: [{ namespace: "custom", key: "swatch", type: "color", value: "#0000ff" }], option1: "S", option2: "Blue" },
+    { shopify_variant_id: "102", sku: "SHIRT-M", price: "22.00", compare_at_price: "30.00", requires_shipping: true, inventory_tracked: true, inventory_quantity: 7, weight_value: 12, weight_unit: "OUNCES", metafields: [], option1: "M", option2: "Blue" },
   ];
 
   const input = productSync.buildProductInput(product, variants, {
@@ -196,6 +212,8 @@ console.log("\nProductSetInput");
     "requires shipping true is sent",
     input.variants[1].inventoryItem.requiresShipping === true
   );
+  check("tax classification is sent",
+    input.variants[0].taxable === true && input.variants[0].taxCode === "PC040101");
   check("inventory tracking false is sent",
     input.variants[0].inventoryItem.tracked === false);
   check("inventory tracking true is sent",
@@ -237,6 +255,51 @@ console.log("\nProductSetInput");
   check("updating sends the destination gid",
     update.id === "gid://shopify/Product/777", update.id);
 
+  const inventoryVariants = variants.map((variant) => ({
+    ...variant,
+    inventory_tracked: true,
+  }));
+  const locationAwareUpdate = productSync.buildProductInput(
+    product,
+    inventoryVariants,
+    {},
+    "777",
+    {
+      locationId: "gid://shopify/Location/default",
+      inventoryLocationIds: new Map([
+        ["101", "gid://shopify/Location/one"],
+        ["102", "gid://shopify/Location/two"],
+      ]),
+    }
+  );
+  check("existing variants use their own stocked inventory locations",
+    locationAwareUpdate.variants[0].inventoryQuantities[0].locationId ===
+      "gid://shopify/Location/one" &&
+    locationAwareUpdate.variants[1].inventoryQuantities[0].locationId ===
+      "gid://shopify/Location/two");
+
+  const missingLevelUpdate = productSync.buildProductInput(
+    product,
+    inventoryVariants,
+    {},
+    "777",
+    { locationId: "gid://shopify/Location/default", inventoryLocationIds: new Map() }
+  );
+  check("an unstocked existing item skips quantity without failing other fields",
+    missingLevelUpdate.variants.every((variant) => variant.inventoryQuantities === undefined) &&
+      missingLevelUpdate.variants[0].price === 20);
+
+  const createWithStock = productSync.buildProductInput(
+    product,
+    inventoryVariants,
+    {},
+    null,
+    { locationId: "gid://shopify/Location/default" }
+  );
+  check("new variants still start at the destination default location",
+    createWithStock.variants[0].inventoryQuantities[0].locationId ===
+      "gid://shopify/Location/default");
+
   // A product with no options must not send an empty array.
   const plain = productSync.buildProductInput(
     { title: "Sticker", status: "active", product_data: {} },
@@ -265,6 +328,36 @@ console.log("\nProductSetInput");
     cleared.category === null);
   check("clearing SKU and barcode reaches the destination",
     cleared.variants[0].sku === null && cleared.variants[0].barcode === null);
+}
+
+console.log("\nSource tax sync gate");
+{
+  const destinationAllowsTaxes = {
+    category: true,
+    variant_taxable: true,
+    variant_price: true,
+  };
+  const off = productSync.withSourceFeatureGates(
+    destinationAllowsTaxes,
+    { sync_taxes: false }
+  );
+  const on = productSync.withSourceFeatureGates(
+    destinationAllowsTaxes,
+    { sync_taxes: true }
+  );
+  const destinationBlocksCategory = productSync.withSourceFeatureGates(
+    { ...destinationAllowsTaxes, category: false },
+    { sync_taxes: true }
+  );
+
+  check("source tax sync off blocks category and taxable fields",
+    off.category === false && off.variant_taxable === false);
+  check("source tax sync on preserves destination tax permissions",
+    on.category === true && on.variant_taxable === true);
+  check("the source switch cannot override a destination tax-field block",
+    destinationBlocksCategory.category === false);
+  check("tax gating does not affect unrelated product settings",
+    off.variant_price === true);
 }
 
 console.log("\nMetafields");

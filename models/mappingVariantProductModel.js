@@ -193,6 +193,20 @@ async function listUnsynced(productMappingId) {
   );
 }
 
+/** Every live destination variant supplied by one connection. */
+async function destinationVariantIdsForConnection(connectionId) {
+  const rows = await query(
+    `SELECT DISTINCT mvp.destination_variant_id
+       FROM mapping_variant_products mvp
+       JOIN product_mappings pm ON pm.id = mvp.product_mapping_id
+      WHERE pm.connection_id = ?
+        AND pm.sync_status <> 'deleted'
+        AND mvp.destination_variant_id IS NOT NULL`,
+    [connectionId]
+  );
+  return rows.map((row) => String(row.destination_variant_id));
+}
+
 module.exports = {
   upsertMany,
   listForMapping,
@@ -204,4 +218,5 @@ module.exports = {
   removeMissing,
   countForMapping,
   listUnsynced,
+  destinationVariantIdsForConnection,
 };
