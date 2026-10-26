@@ -129,8 +129,8 @@
         <% products.forEach(function (product) { %>
           <tr>
             <td class="table__check">
-              <%# Every row can be ticked: Delete works on any product. Allow
-                  only ever acts on the ticked rows that are not shared yet. %>
+              <%# Every row can be ticked: Delete works on any product, and an
+                  existing share may be extended to another destination. %>
               <input
                 type="checkbox"
                 class="row-check"
@@ -245,6 +245,39 @@
 
   </main>
 
+  <% if (activeConnections.length > 1) { %>
+    <%# Sharing is scoped per connection. With one destination there is no
+        useful choice, so the existing one-click flow stays one click. %>
+    <s-modal id="destination-picker" heading="Choose destination stores">
+      <p class="modal__copy">
+        Select where the chosen products should be offered. Existing shares
+        with other stores will not be changed.
+      </p>
+
+      <div class="toggles" role="group" aria-label="Destination stores">
+        <% activeConnections.forEach(function (connection) {
+          var destination = connection.destination;
+          var destinationName = destination.store_name || destination.shop_domain;
+        %>
+          <label class="toggles__item">
+            <input
+              type="checkbox"
+              class="destination-check"
+              value="<%= connection.id %>">
+            <span><%= destinationName %></span>
+          </label>
+        <% }); %>
+      </div>
+
+      <p class="notice notice--error" id="destination-error" hidden></p>
+
+      <s-button slot="primary-action" variant="primary" id="destination-share" disabled>
+        Allow products
+      </s-button>
+      <s-button slot="secondary-actions" id="destination-cancel">Cancel</s-button>
+    </s-modal>
+  <% } %>
+
   <script>
     (function () {
       var pageError = document.getElementById("page-error");
@@ -278,7 +311,11 @@
       var bulkDelete = document.getElementById("bulk-delete");
       var bulkClear = document.getElementById("bulk-clear");
       var checkAll = document.getElementById("check-all");
-      var hasActiveDestinations = <%- json(activeConnections.length > 0) %>;
+      var activeDestinationIds = <%- json(activeConnections.map(function (connection) { return connection.id; })) %>;
+      var destinationPicker = document.getElementById("destination-picker");
+      var destinationShare = document.getElementById("destination-share");
+      var destinationCancel = document.getElementById("destination-cancel");
+      var destinationError = document.getElementById("destination-error");
 
       function rowChecks() {
         return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
@@ -289,13 +326,12 @@
       }
 
       /**
-       * One entry per ticked product that is NOT shared yet, always offering
-       * EVERY variant. variant_ids is null on purpose: the table shares whole
-       * products; narrowing variants happens on the product's own page.
+       * One entry per ticked product. Already-shared products stay eligible so
+       * they can be offered to a newly connected destination later. The
+       * server's per-connection upsert keeps an existing share idempotent.
        */
       function selections() {
         return ticked()
-          .filter(function (c) { return c.dataset.allowed !== "1"; })
           .map(function (c) {
             return { source_product_id: c.value, variant_ids: null };
           });
@@ -318,13 +354,9 @@
         bulkbar.hidden = count === 0;
         bulkCount.textContent = count + " selected";
 
-        // Allow only means something for the unshared ones in the selection.
-        var allowable = selections().length;
-        allowButton.disabled = allowable === 0;
-        allowButton.textContent = allowable && allowable !== count
-          ? "Allow " + allowable + " unshared"
-          : "Allow selected";
-        allowButton.title = allowable ? "" : "Everything selected is already shared";
+        allowButton.disabled = count === 0;
+        allowButton.textContent = "Allow selected";
+        allowButton.title = "";
       }
 
       rowChecks().forEach(function (check) {
@@ -343,23 +375,37 @@
         refresh();
       });
 
-      allowButton.addEventListener("click", async function () {
-        // Products may be staged before pairing. When there is nowhere to
-        // offer them yet, take the merchant straight to the source Stores
-        // screen, where the pairing code is generated and connections live.
-        if (!hasActiveDestinations) {
-          var returnTo = encodeURIComponent("/products?filter=unshared");
-          return window.appNavigate("/stores?returnTo=" + returnTo);
-        }
+      function destinationChecks() {
+        return Array.prototype.slice.call(
+          document.querySelectorAll(".destination-check")
+        );
+      }
 
+      function chosenDestinationIds() {
+        return destinationChecks()
+          .filter(function (check) { return check.checked; })
+          .map(function (check) { return Number(check.value); });
+      }
+
+      function refreshDestinationPicker() {
+        if (destinationShare) {
+          destinationShare.disabled = chosenDestinationIds().length === 0;
+        }
+      }
+
+      async function allowToDestinations(connectionIds, button) {
         pageError.hidden = true;
-        allowButton.disabled = true;
+        if (destinationError) destinationError.hidden = true;
 
         try {
-          var data = await post("/products/allow", { selections: selections() }, allowButton);
+          var data = await post("/products/allow", {
+            selections: selections(),
+            connection_ids: connectionIds
+          }, button);
+          if (destinationPicker) window.appClose(destinationPicker);
           window.appToast("Allowed on " + data.destinations + " destination store(s)");
           // Reload where they were -- same filter, same search. Page 1,
-          // though: the rows they just shared have moved.
+          // though: newly shared rows may have moved.
           window.appNavigate(<%- json(pager.href(1)) %>);
         } catch (err) {
           // The last destination may have paused after this page loaded. The
@@ -367,10 +413,51 @@
           // same pairing/resume flow instead of leaving an error at the top.
           if (err.redirect) return window.appNavigate(err.redirect);
 
-          allowButton.disabled = false;
-          fail(pageError, err.message);
+          if (destinationError) {
+            fail(destinationError, err.message);
+          } else {
+            fail(pageError, err.message);
+          }
         }
+      }
+
+      allowButton.addEventListener("click", function () {
+        // Products may be staged before pairing. When there is nowhere to
+        // offer them yet, take the merchant straight to the source Stores
+        // screen, where the pairing code is generated and connections live.
+        if (!activeDestinationIds.length) {
+          var returnTo = encodeURIComponent("/products?filter=unshared");
+          return window.appNavigate("/stores?returnTo=" + returnTo);
+        }
+
+        if (activeDestinationIds.length === 1) {
+          return allowToDestinations(activeDestinationIds, allowButton);
+        }
+
+        destinationChecks().forEach(function (check) { check.checked = false; });
+        destinationError.hidden = true;
+        refreshDestinationPicker();
+        window.appOpen(destinationPicker);
       });
+
+      destinationChecks().forEach(function (check) {
+        check.addEventListener("change", refreshDestinationPicker);
+      });
+
+      if (destinationShare) {
+        destinationShare.addEventListener("click", function () {
+          var connectionIds = chosenDestinationIds();
+          if (connectionIds.length) {
+            allowToDestinations(connectionIds, destinationShare);
+          }
+        });
+      }
+
+      if (destinationCancel) {
+        destinationCancel.addEventListener("click", function () {
+          window.appClose(destinationPicker);
+        });
+      }
 
       bulkDelete.addEventListener("click", async function () {
         var rows = ticked();
@@ -488,9 +575,9 @@
             type: "product",
             multiple: true,
             action: "add",
-            // Drafts are allowed through: they sync to the destination as
-            // drafts too. An archived product has nothing useful to copy.
-            filter: { archived: false }
+            // Only active products should be available to add. Draft and
+            // archived products are not ready to be shared with destinations.
+            filter: { draft: false, archived: false }
           });
         } catch (error) {
           return fail(pageError, "The product picker could not open.");
