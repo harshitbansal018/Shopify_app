@@ -138,7 +138,7 @@ function searchClause(search, { extraColumns = [] } = {}) {
  */
 async function listWithMappingStatus(
   storeId,
-  { limit = 100, offset = 0, filter = "all", search = null } = {}
+  { limit = 100, offset = 0, filter = "all", search = null, connectionId = null } = {}
 ) {
   // A HAVING, not a WHERE: `allowed` is the aggregate, and it does not exist
   // until the rows are grouped.
@@ -150,6 +150,7 @@ async function listWithMappingStatus(
         : "";
 
   const matching = searchClause(search);
+  const mappingScope = connectionId ? " AND pm.connection_id = ?" : "";
 
   const rows = await query(
     `SELECT sp.id, sp.shopify_product_id, sp.title, sp.handle, sp.vendor,
@@ -171,13 +172,19 @@ async function listWithMappingStatus(
             (SELECT COUNT(*) FROM source_variant_mappings svm
               WHERE svm.source_product_id = sp.id) AS variant_count
        FROM source_products sp
-       LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id
+       LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}
       WHERE sp.store_id = ?${matching.where}
       GROUP BY sp.id
       ${having}
       ORDER BY sp.title, sp.id
       LIMIT ? OFFSET ?`,
-    [storeId, ...matching.params, Number(limit), Number(offset)]
+    [
+      ...(connectionId ? [Number(connectionId)] : []),
+      storeId,
+      ...matching.params,
+      Number(limit),
+      Number(offset),
+    ]
   );
 
   return rows.map((row) => ({
@@ -210,11 +217,15 @@ async function listWithMappingStatus(
  * The subquery groups first and counts second: `allowed` is per product, and
  * counting the join directly would count mappings.
  */
-async function countsWithMappingStatus(storeId, { search = null } = {}) {
+async function countsWithMappingStatus(
+  storeId,
+  { search = null, connectionId = null } = {}
+) {
   // The same clause the list uses. While a search is running the dropdown must
   // count what MATCHES -- "Shared (48)" beside three visible rows would read
   // as a broken filter.
   const matching = searchClause(search);
+  const mappingScope = connectionId ? " AND pm.connection_id = ?" : "";
 
   const rows = await query(
     `SELECT COUNT(*)          AS total,
@@ -222,10 +233,14 @@ async function countsWithMappingStatus(storeId, { search = null } = {}) {
             SUM(allowed = 0)  AS unshared
        FROM (SELECT sp.id, COUNT(pm.id) AS allowed
                FROM source_products sp
-               LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id
+               LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}
               WHERE sp.store_id = ?${matching.where}
               GROUP BY sp.id) grouped`,
-    [storeId, ...matching.params]
+    [
+      ...(connectionId ? [Number(connectionId)] : []),
+      storeId,
+      ...matching.params,
+    ]
   );
 
   const row = rows[0] || {};

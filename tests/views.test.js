@@ -801,6 +801,7 @@ const STORE_ROW = {
       products: [SOURCE_ROW],
       connections: [CONN, SECOND_CONN],
       activeConnections: [CONN, SECOND_CONN],
+      storeFilter: 2,
     });
 
     check("multiple destinations open a destination picker",
@@ -811,6 +812,15 @@ const STORE_ROW = {
     check("the chosen destinations are sent to the server",
       multipleDestinations.includes("connection_ids: connectionIds") &&
         multipleDestinations.includes("chosenDestinationIds()"));
+    check("source products can be filtered by destination store",
+      multipleDestinations.includes('id="store-filter"') &&
+        /value="2"\s+selected/.test(multipleDestinations) &&
+        multipleDestinations.includes("Second destination") &&
+        multipleDestinations.includes('name="store" value="2"'),
+      "the selected destination must scope the rows, filters, and search");
+    check("the destination filter survives status changes",
+      /href="\/products\?filter=shared&amp;store=2"/.test(multipleDestinations) &&
+        multipleDestinations.includes("window.appNavigate(productsUrl(currentFilter))"));
     check("one destination keeps the one-click flow",
       !/<s-modal[^>]*id="destination-picker"/.test(all) &&
         all.includes("activeDestinationIds.length === 1"));
@@ -848,9 +858,9 @@ const STORE_ROW = {
       productController.noticeForImportedSelection({ shared: 1, unshared: 2 }) ===
         "3 products processed: 1 shared and 2 not shared.");
     check("the picker follows the filter returned by the import",
-      all.includes('shared: "/products?filter=shared"') &&
-        all.includes('unshared: "/products?filter=unshared"') &&
-        all.includes('all: "/products"') &&
+      all.includes('shared: productsUrl("shared")') &&
+        all.includes('unshared: productsUrl("unshared")') &&
+        all.includes('all: productsUrl("all")') &&
         all.includes("importDestinations[data.filter]"));
     check("the picker shows the server's matching popup message",
       all.includes('window.appToast(data.message || "Products added.")'));

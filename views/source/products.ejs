@@ -41,6 +41,7 @@
     <%# One list, with a filter over it. Two tabs made the catalogue look like
         two catalogues; this shows how much of it is out there and lets the
         merchant narrow it when they want to. %>
+    <% var selectedStore = typeof storeFilter !== "undefined" ? storeFilter : null; %>
     <div class="listbar">
       <%# Segmented filter. Real links, not a client-side hide: the server
           decides which rows there are, so counts and list cannot disagree.
@@ -53,6 +54,7 @@
         ].forEach(function (tab) {
           var params = [];
           if (tab.key !== "all") params.push("filter=" + tab.key);
+          if (selectedStore) params.push("store=" + selectedStore);
           if (search) params.push("q=" + encodeURIComponent(search));
           var href = "/products" + (params.length ? "?" + params.join("&") : "");
         %>
@@ -65,14 +67,43 @@
           </a>
         <% }); %></nav>
 
+      <%# One destination, or all of them. The selected store scopes both the
+          rows and their Shared/Not shared state: a product may be shared with
+          one destination and still be available to another. %>
+      <% if (connections.length > 1) { %>
+        <div class="listbar__filter">
+          <label class="field__label" for="store-filter">Destination store</label>
+          <select class="field__input field__input--compact" id="store-filter">
+            <option value="" <%= selectedStore ? "" : "selected" %>>All stores</option>
+            <% connections.forEach(function (connection) { %>
+              <option
+                value="<%= connection.id %>"
+                <%= selectedStore === connection.id ? "selected" : "" %>>
+                <%= connection.destination.store_name || connection.destination.shop_domain %><%=
+                  connection.status !== "active" ? " (" + connection.status + ")" : "" %>
+              </option>
+            <% }); %>
+          </select>
+        </div>
+      <% } %>
+
       <%# On the same row as the filter: both narrow the same list, and the two
           screens should not look like different designs. %>
+      <%
+        var clearParams = [];
+        if (filter !== "all") clearParams.push("filter=" + filter);
+        if (selectedStore) clearParams.push("store=" + selectedStore);
+        var clearHref = "/products" + (clearParams.length ? "?" + clearParams.join("&") : "");
+      %>
       <%- include("../partials/search", {
         action: "/products",
         search: search,
         placeholder: "Search by title, vendor, type or SKU",
-        hidden: [{ name: "filter", value: filter === "all" ? "" : filter }],
-        clearHref: filter === "all" ? "/products" : "/products?filter=" + filter,
+        hidden: [
+          { name: "filter", value: filter === "all" ? "" : filter },
+          { name: "store", value: selectedStore || "" },
+        ],
+        clearHref: clearHref,
       }) %>
     </div>
 
@@ -316,6 +347,29 @@
       var destinationShare = document.getElementById("destination-share");
       var destinationCancel = document.getElementById("destination-cancel");
       var destinationError = document.getElementById("destination-error");
+      var currentFilter = <%- json(filter) %>;
+      var currentSearch = <%- json(search || "") %>;
+      var currentStore = <%- json(selectedStore ? String(selectedStore) : "") %>;
+
+      function productsUrl(nextFilter) {
+        var params = new URLSearchParams();
+
+        if (nextFilter && nextFilter !== "all") params.set("filter", nextFilter);
+        if (currentStore) params.set("store", currentStore);
+        if (currentSearch) params.set("q", currentSearch);
+
+        var query = params.toString();
+        return query ? "/products?" + query : "/products";
+      }
+
+      var storeFilterControl = document.getElementById("store-filter");
+
+      if (storeFilterControl) {
+        storeFilterControl.addEventListener("change", function () {
+          currentStore = storeFilterControl.value;
+          window.appNavigate(productsUrl(currentFilter));
+        });
+      }
 
       function rowChecks() {
         return Array.prototype.slice.call(document.querySelectorAll(".row-check"));
@@ -609,9 +663,9 @@
           // selected product was already shared, Not shared when none were,
           // and All when the selection contained both kinds.
           var importDestinations = {
-            shared: "/products?filter=shared",
-            unshared: "/products?filter=unshared",
-            all: "/products"
+            shared: productsUrl("shared"),
+            unshared: productsUrl("unshared"),
+            all: productsUrl("all")
           };
           window.appNavigate(importDestinations[data.filter] || "/products");
         } catch (err) {
