@@ -118,21 +118,39 @@ exports.getProducts = async (req, res) => {
     // would show before the merchant picks it.
     // While a search is running these count what MATCHES: "Shared (48)" beside
     // three visible rows would read as a broken filter.
-    const [counts, connections] = await Promise.all([
-      sourceProductModel.countsWithMappingStatus(req.storeId, { search }),
-      connectionModel.listForSource(req.storeId),
-    ]);
+    const connections = await connectionModel.listForSource(req.storeId);
+
+    // Scope the aggregate status to one destination when requested. The id
+    // is accepted only if it belongs to this source; a guessed connection id
+    // simply falls back to All stores.
+    const requestedStore = typeof req.query.store === "string"
+      ? Number(req.query.store)
+      : NaN;
+    const selectedConnection = connections.find(
+      (connection) => connection.id === requestedStore
+    ) || null;
+    const storeFilter = selectedConnection ? selectedConnection.id : null;
+
+    const counts = await sourceProductModel.countsWithMappingStatus(req.storeId, {
+      search,
+      connectionId: storeFilter,
+    });
 
     const pager = paginate(req, counts[filter], {
       path: "/products",
       // The filter and the search travel with the page number, or Next would
       // drop the merchant back into the full catalogue.
-      params: { filter: filter === "all" ? "" : filter, q: search },
+      params: {
+        filter: filter === "all" ? "" : filter,
+        q: search,
+        store: storeFilter || "",
+      },
     });
 
     const products = await sourceProductModel.listWithMappingStatus(req.storeId, {
       filter,
       search,
+      connectionId: storeFilter,
       limit: pager.limit,
       offset: pager.offset,
     });
@@ -163,6 +181,7 @@ exports.getProducts = async (req, res) => {
       counts,
       pager,
       search,
+      storeFilter,
       products: products.map(withVariants),
 
       connections,
