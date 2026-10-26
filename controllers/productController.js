@@ -556,7 +556,7 @@ exports.postResetVariants = async (req, res) => {
 };
 
 /**
- * Allow (or stop allowing) products on every active connection.
+ * Allow products on the active connections selected by the source.
  *
  * Allowing creates a pending mapping; nothing is sent to Shopify here. The
  * push happens in postSync, so allowing a hundred products stays instant.
@@ -573,11 +573,11 @@ exports.postAllow = async (req, res) => {
   }
 
   try {
-    const connections = (await connectionModel.listForSource(req.storeId)).filter(
+    const activeConnections = (await connectionModel.listForSource(req.storeId)).filter(
       (connection) => connection.status === "active"
     );
 
-    if (!connections.length) {
+    if (!activeConnections.length) {
       return res.status(409).json({
         error:
           "No destination store is connected yet. Connect one from Stores first.",
@@ -585,6 +585,36 @@ exports.postAllow = async (req, res) => {
         redirect:
           "/stores?returnTo=" +
           encodeURIComponent("/products?filter=unshared"),
+      });
+    }
+
+    // The source chooses where this particular share goes. Connection ids are
+    // never trusted directly: only active connections owned by this source
+    // may survive the filter. Keep the one-destination fallback for older
+    // clients, where there was no choice to make.
+    const requestedConnectionIds = [...new Set(
+      (Array.isArray(req.body.connection_ids) ? req.body.connection_ids : [])
+        .map(Number)
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )];
+
+    const connections = requestedConnectionIds.length
+      ? activeConnections.filter((connection) =>
+          requestedConnectionIds.includes(Number(connection.id))
+        )
+      : activeConnections.length === 1
+        ? activeConnections
+        : [];
+
+    if (!connections.length) {
+      return res.status(400).json({
+        error: "Select at least one destination store.",
+      });
+    }
+
+    if (connections.length !== requestedConnectionIds.length && requestedConnectionIds.length) {
+      return res.status(400).json({
+        error: "One or more selected destination stores are unavailable.",
       });
     }
 

@@ -776,10 +776,44 @@ const STORE_ROW = {
     check("a shared one can be ticked too, marked as shared",
       /class="row-check"[^>]*value="12"[^>]*data-allowed="1"/.test(all) &&
         !/class="row-check"[^>]*value="12"[^>]*disabled/.test(all),
-      "Delete works on any product; Allow skips the shared ones");
-    check("Allow only sends the unshared ones in the selection",
-      all.includes('c.dataset.allowed !== "1"'),
-      "a shared product has nothing left to allow");
+      "Delete works on any product; Allow can extend an existing share");
+    check("Allow can send shared rows to another destination",
+      !all.includes('c.dataset.allowed !== "1"') &&
+        /function selections\(\)[\s\S]*return ticked\(\)[\s\S]*\.map\(/.test(all),
+      "a product shared with one store must still be available to another");
+
+    const SECOND_CONN = {
+      ...CONN,
+      id: 2,
+      destination: {
+        id: 3,
+        shop_domain: "second-dst.myshopify.com",
+        store_name: "Second destination",
+      },
+    };
+    const multipleDestinations = await render("source/products", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      filter: "all",
+      counts: { all: 1, shared: 0, unshared: 1 },
+      pager: pagerFor(1),
+      search: "",
+      products: [SOURCE_ROW],
+      connections: [CONN, SECOND_CONN],
+      activeConnections: [CONN, SECOND_CONN],
+    });
+
+    check("multiple destinations open a destination picker",
+      /<s-modal[^>]*id="destination-picker"/.test(multipleDestinations) &&
+        multipleDestinations.includes("Second destination") &&
+        multipleDestinations.includes('class="destination-check"'),
+      "the source needs to choose which stores receive the products");
+    check("the chosen destinations are sent to the server",
+      multipleDestinations.includes("connection_ids: connectionIds") &&
+        multipleDestinations.includes("chosenDestinationIds()"));
+    check("one destination keeps the one-click flow",
+      !/<s-modal[^>]*id="destination-picker"/.test(all) &&
+        all.includes("activeDestinationIds.length === 1"));
 
     check("View and Delete are on every row",
       (all.match(/view-product/g) || []).length >= 2 &&
@@ -962,7 +996,7 @@ const STORE_ROW = {
     );
     check(
       "Allow selected sends an unconnected source to the pairing flow",
-      noDestination.includes("var hasActiveDestinations = false") &&
+      noDestination.includes("var activeDestinationIds = []") &&
         noDestination.includes('window.appNavigate("/stores?returnTo=" + returnTo)') &&
         noDestination.includes("if (err.redirect) return window.appNavigate(err.redirect)"),
       "the merchant should land where they can generate a code"
