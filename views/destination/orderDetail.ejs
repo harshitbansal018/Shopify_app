@@ -123,11 +123,27 @@
         <%# Nothing to total when there are no lines. %>
         <% if (lines.length) { %>
         <tfoot>
+          <% if (Number(order.source_shipping_total || 0) > 0) { %>
+          <tr>
+            <td colspan="3"></td>
+            <td class="muted">Included supplier shipping</td>
+            <td class="muted">&mdash;</td>
+            <td><%= order.currency %> <%= Number(order.source_shipping_total).toFixed(2) %></td>
+          </tr>
+          <% } %>
+          <% if (order.source_tax_total !== null && order.source_tax_total !== undefined) { %>
+          <tr>
+            <td colspan="3"></td>
+            <td class="muted">Included supplier tax</td>
+            <td class="muted">&mdash;</td>
+            <td><%= order.currency %> <%= Number(order.source_tax_total).toFixed(2) %></td>
+          </tr>
+          <% } %>
           <tr>
             <td colspan="3"></td>
             <td class="muted">Totals</td>
             <td class="muted"><%= order.currency %> <%= paidTotal.toFixed(2) %></td>
-            <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
+            <td><strong><%= order.currency %> <%= Number(order.source_total == null ? sourceTotal : order.source_total).toFixed(2) %></strong></td>
           </tr>
         </tfoot>
         <% } %>

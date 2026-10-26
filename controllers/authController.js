@@ -17,7 +17,7 @@ const STATE_TTL_SECONDS = 600;
 // when the feature that needs it is actually being built.
 const SCOPES =
   process.env.SHOPIFY_SCOPES ||
-  "read_products,write_products,read_inventory,write_inventory";
+  "read_products,write_products,read_inventory,write_inventory,read_shipping,write_shipping";
 const REST_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
 
 function appHost() {

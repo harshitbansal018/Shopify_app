@@ -20,7 +20,7 @@
 //                               because a shopper must not stay charged for
 //                               goods nobody will send.
 const { query, pool } = require("../config/db");
-const { parseJson } = require("./helpers");
+const { parseJson, toJsonColumn } = require("./helpers");
 
 /** What the source has done with the sale. Drives the tabs on both screens. */
 const FULFILMENT_STATES = ["unfulfilled", "partial", "fulfilled", "cancelled"];
@@ -32,6 +32,7 @@ function hydrate(row) {
     ...row,
     source_tracking: parseJson(row.source_tracking, []) || [],
     shipping_address: parseJson(row.shipping_address, null),
+    shipping_policy_snapshot: parseJson(row.shipping_policy_snapshot, null),
   };
 }
 
@@ -50,11 +51,12 @@ const SELECT_WITH_ORDER = `
          o.fulfillment_status,
          o.cancelled_at,
          o.test,
-         o.created_at       AS placed_at,
+         COALESCE(o.placed_at, o.created_at) AS placed_at,
          o.customer_shopify_id,
          -- Where the goods actually go. The source is the one that ships, so
          -- without this its job cannot be done.
          o.shipping_address,
+         o.delivery_instructions,
          c.source_store_id,
          c.destination_store_id,
          c.status           AS connection_status,
@@ -82,11 +84,20 @@ async function claim(connectionId, destinationOrderId, details = {}) {
   await pool.query(
     `INSERT INTO order_mappings
        (connection_id, destination_order_id, destination_total, source_total,
-        currency, line_count, source_fulfillment_status)
-     VALUES (?, ?, ?, ?, ?, ?, 'unfulfilled')
+        source_products_total, source_shipping_total, source_tax_total,
+        customer_products_total, customer_shipping_total, customer_tax_total,
+        shipping_policy_snapshot, currency, line_count, source_fulfillment_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unfulfilled')
      ON DUPLICATE KEY UPDATE
        destination_total = VALUES(destination_total),
        source_total      = VALUES(source_total),
+       source_products_total = VALUES(source_products_total),
+       source_shipping_total = VALUES(source_shipping_total),
+       source_tax_total = VALUES(source_tax_total),
+       customer_products_total = VALUES(customer_products_total),
+       customer_shipping_total = VALUES(customer_shipping_total),
+       customer_tax_total = VALUES(customer_tax_total),
+       shipping_policy_snapshot = VALUES(shipping_policy_snapshot),
        currency          = VALUES(currency),
        line_count        = VALUES(line_count)`,
     [
@@ -94,6 +105,13 @@ async function claim(connectionId, destinationOrderId, details = {}) {
       destinationOrderId,
       details.destinationTotal ?? null,
       details.sourceTotal ?? null,
+      details.sourceProductsTotal ?? null,
+      details.sourceShippingTotal ?? 0,
+      details.sourceTaxTotal ?? null,
+      details.customerProductsTotal ?? details.destinationTotal ?? null,
+      details.customerShippingTotal ?? null,
+      details.customerTaxTotal ?? null,
+      toJsonColumn(details.shippingPolicySnapshot),
       details.currency || null,
       Number(details.lineCount) || 0,
     ]

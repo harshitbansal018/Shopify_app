@@ -46,6 +46,26 @@ function shopMoney(order, plainKey, setKey) {
   return toMoney(order[plainKey]);
 }
 
+/** Keep only customer-facing delivery instructions for the invoice. */
+function deliveryInstructions(order) {
+  const notes = [];
+
+  if (order.note && String(order.note).trim()) {
+    notes.push(String(order.note).trim());
+  }
+
+  (Array.isArray(order.note_attributes) ? order.note_attributes : [])
+    .filter((attribute) =>
+      attribute && /delivery|shipping|instruction/i.test(String(attribute.name || ""))
+    )
+    .forEach((attribute) => {
+      const value = String(attribute.value || "").trim();
+      if (value && !notes.includes(value)) notes.push(value);
+    });
+
+  return notes.length ? notes.join("\n").slice(0, 2000) : null;
+}
+
 function fromShopify(storeId, order) {
   const customer = order.customer || {};
   const shipping = order.shipping_address || null;
@@ -57,6 +77,8 @@ function fromShopify(storeId, order) {
       ? Number(order.order_number)
       : null,
     name: order.name ? String(order.name).slice(0, 50) : null,
+    placed_at: toDate(order.created_at),
+    delivery_instructions: deliveryInstructions(order),
 
     currency: order.currency || null,
     subtotal_price: shopMoney(order, "subtotal_price", "subtotal_price_set"),
@@ -86,17 +108,19 @@ function fromShopify(storeId, order) {
 
 const UPSERT_SQL = `
   INSERT INTO orders
-    (store_id, shopify_order_id, order_number, name,
+    (store_id, shopify_order_id, order_number, name, placed_at,
      currency, subtotal_price, total_tax,
      total_discounts, total_shipping, total_price,
      financial_status, fulfillment_status, cancelled_at, cancel_reason,
      closed_at, test,
      customer_shopify_id,
-     billing_address, shipping_address, shipping_country_code)
+     billing_address, shipping_address, shipping_country_code,
+     delivery_instructions)
   VALUES ?
   ON DUPLICATE KEY UPDATE
     order_number = VALUES(order_number),
     name = VALUES(name),
+    placed_at = VALUES(placed_at),
     currency = VALUES(currency),
     subtotal_price = VALUES(subtotal_price),
     total_tax = VALUES(total_tax),
@@ -112,7 +136,8 @@ const UPSERT_SQL = `
     customer_shopify_id = VALUES(customer_shopify_id),
     billing_address = VALUES(billing_address),
     shipping_address = VALUES(shipping_address),
-    shipping_country_code = VALUES(shipping_country_code)
+    shipping_country_code = VALUES(shipping_country_code),
+    delivery_instructions = VALUES(delivery_instructions)
 `;
 
 function toRow(record) {
@@ -121,6 +146,7 @@ function toRow(record) {
     record.shopify_order_id,
     record.order_number,
     record.name,
+    record.placed_at,
     record.currency,
     record.subtotal_price,
     record.total_tax,
@@ -137,6 +163,7 @@ function toRow(record) {
     toJsonColumn(record.billing_address),
     toJsonColumn(record.shipping_address),
     record.shipping_country_code,
+    record.delivery_instructions,
   ];
 }
 
@@ -327,7 +354,8 @@ async function redactCustomer(storeId, customerShopifyId) {
     `UPDATE orders
         SET customer_shopify_id = NULL,
             billing_address = NULL,
-            shipping_address = NULL
+            shipping_address = NULL,
+            delivery_instructions = NULL
       WHERE store_id = ? AND customer_shopify_id = ?`,
     [storeId, toShopifyId(customerShopifyId)]
   );

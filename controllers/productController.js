@@ -21,6 +21,8 @@ const sourceVariantModel = require("../models/sourceVariantModel");
 const mappingVariantProductModel = require("../models/mappingVariantProductModel");
 const productMappingModel = require("../models/productMappingModel");
 const connectionModel = require("../models/connectionModel");
+const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
+const shippingPolicyModel = require("../models/shippingPolicyModel");
 const productSync = require("../services/productSync");
 const { renderStoreType } = require("./storeController");
 const { paginate } = require("./pagination");
@@ -381,8 +383,12 @@ exports.getProduct = async (req, res) => {
 
       if (!offered) return res.status(404).send("Product not found");
 
-      const variants = await mappingVariantProductModel.mapForMappings([
-        offered.mapping_id,
+      const [variants, sourceSettings, shippingPolicy] = await Promise.all([
+        mappingVariantProductModel.mapForMappings([offered.mapping_id]),
+        sourceConnectionSettingsModel.forConnection(offered.connection_id),
+        shippingPolicyModel.forConnection(offered.connection_id, {
+          currency: offered.destination_currency || null,
+        }),
       ]);
 
       return res.render("destination/productDetail", {
@@ -393,6 +399,8 @@ exports.getProduct = async (req, res) => {
         shared: variants.get(offered.mapping_id) || [],
         totalVariants: offered.offered_variant_count,
         isShared: !offered.awaiting,
+        sourceSettings,
+        shippingPolicy,
       });
     }
 

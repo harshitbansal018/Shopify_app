@@ -7,7 +7,7 @@ embedded = true
 automatically_update_urls_on_dev = true
 
 [access_scopes]
-scopes = "read_products,write_products,read_inventory,write_inventory,read_orders,write_orders,read_publications,write_publications,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+scopes = "read_products,write_products,read_inventory,write_inventory,read_orders,write_orders,read_publications,write_publications,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_shipping,write_shipping"
 
 [auth]
 redirect_urls = [

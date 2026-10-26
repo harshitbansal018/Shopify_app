@@ -228,6 +228,32 @@
 
         </section>
 
+        <section class="panel source-tax">
+          <header class="settings__head">
+            <div class="settings__who">
+              <span class="settings__eyebrow">Included pricing from</span>
+              <h2 class="settings__store">
+                <%= connection.source.store_name || connection.source.shop_domain %>
+              </h2>
+            </div>
+          </header>
+          <div class="settings__group">
+            <p class="settings__hint">
+              <% if (typeof shippingPolicy !== "undefined" && shippingPolicy && shippingPolicy.mode !== "disabled") { %>
+                Shipping included: <strong><%= shippingPolicy.currency %> <%= Number(shippingPolicy.flat_rate || 0).toFixed(2) %> per unit</strong>. A free supplier checkout rate prevents charging it again.
+              <% } else { %>
+                Shipping is not included; configure it yourself in Shopify.
+              <% } %>
+              <br>
+              <% if (typeof sourceSettings !== "undefined" && sourceSettings && sourceSettings.sync_taxes) { %>
+                Tax included: <strong><%= Number(sourceSettings.tax_rate_percent || 0) %>%</strong>. It is baked into the synced price before your margin.
+              <% } else { %>
+                Tax is not included; configure it yourself in Shopify.
+              <% } %>
+            </p>
+          </div>
+        </section>
+
         <%# Email notifications for the same store, on a panel of their own with
             their own Save: these are about inboxes, not products, and saving
             them must not re-queue every product the way the sync Save does. %>

@@ -302,6 +302,7 @@ async function listSyncedIntoStore(
 
   const rows = await query(
     `SELECT pm.id AS mapping_id,
+            pm.connection_id,
             pm.destination_shopify_product_id,
             pm.sync_status,
             pm.accepted_at,

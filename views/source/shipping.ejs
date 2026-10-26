@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include("../partials/head") %>
+  <title>Settings</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <%- include("../partials/nav") %>
+  <main class="shell">
+    <header class="shell__header">
+      <div>
+        <h1>Settings</h1>
+        <p class="shell__sub">Include supplier shipping and tax in the synced product price.</p>
+      </div>
+      <% if (connections.length) { %>
+        <div class="shell__actions">
+          <form class="store-switch" action="/settings" data-navigate-form>
+            <label class="store-switch__label" for="shipping-store">Destination store</label>
+            <select class="field__input field__input--compact" id="shipping-store" name="connection">
+              <% connections.forEach(function (connection) { %>
+                <option value="<%= connection.id %>" <%= current && current.id === connection.id ? "selected" : "" %>>
+                  <%= connection.destination.store_name || connection.destination.shop_domain %>
+                </option>
+              <% }); %>
+            </select>
+          </form>
+        </div>
+      <% } %>
+    </header>
+
+    <p class="notice notice--error" id="shipping-error" hidden></p>
+
+    <% if (!current) { %>
+      <section class="empty">
+        <h2>No destination connected</h2>
+        <p>Connect a destination from <a class="link" href="/stores" data-navigate="/stores">Stores</a> first.</p>
+      </section>
+    <% } else { %>
+      <section class="panel settings" id="shipping-panel" data-connection="<%= current.id %>">
+        <header class="settings__head">
+          <div class="settings__who">
+            <span class="settings__eyebrow">Checkout policy for</span>
+            <h2 class="settings__store"><%= current.destination.store_name || current.destination.shop_domain %></h2>
+          </div>
+          <span class="pill pill--<%= policy.sync_status === "failed" ? "failed" : policy.sync_status === "synced" ? "synced" : "pending" %>"><%= policy.sync_status %></span>
+        </header>
+
+        <fieldset class="settings__controls" <%= current.status !== "active" ? "disabled" : "" %>>
+          <div class="settings__group">
+            <h3 class="settings__legend">Shipping</h3>
+            <label class="toggles__item">
+              <input type="checkbox" name="shipping_enabled" <%= policy.mode !== "disabled" ? "checked" : "" %>>
+              <span>Include source shipping in product price</span>
+            </label>
+            <p class="settings__hint">
+              When enabled, the amount below is added per product unit before the destination margin. Checkout receives a free supplier rate so the customer is not charged shipping twice. When disabled, the destination controls shipping.
+            </p>
+
+            <div class="shipping-options">
+              <input type="hidden" name="mode" value="included">
+
+              <label class="field shipping-flat">
+                <span class="field__label">Shipping amount per product (<%= current.destination.currency || "USD" %>)</span>
+                <input class="field__input" type="number" name="flat_rate" min="0" step="0.01" value="<%= policy.flat_rate %>">
+              </label>
+
+              <label class="field">
+                <span class="field__label">Service name</span>
+                <input class="field__input" type="text" name="service_name" maxlength="100" value="<%= policy.service_name || 'Shipping included' %>">
+              </label>
+
+              <label class="field">
+                <span class="field__label">Delivery countries</span>
+                <input class="field__input" type="text" name="country_codes" placeholder="IN, US, GB" value="<%= policy.country_codes.join(', ') %>">
+                <span class="settings__hint">Two-letter country codes, separated by commas.</span>
+              </label>
+
+              <div class="settings__margin">
+                <label class="field field--inline">
+                  <span class="field__label">Delivery estimate</span>
+                  <input class="field__input" type="number" name="delivery_min_days" min="1" placeholder="Min" value="<%= policy.delivery_min_days || '' %>">
+                  <input class="field__input" type="number" name="delivery_max_days" min="1" placeholder="Max" value="<%= policy.delivery_max_days || '' %>">
+                  <span>business days</span>
+                </label>
+              </div>
+            </div>
+
+            <% if (policy.sync_error) { %>
+              <p class="notice notice--error"><%= policy.sync_error %></p>
+            <% } %>
+          </div>
+
+          <div class="settings__group">
+            <h3 class="settings__legend">Taxes</h3>
+            <label class="toggles__item">
+              <input
+                type="checkbox"
+                name="sync_taxes"
+                <%= typeof sourceSettings !== "undefined" && sourceSettings && sourceSettings.sync_taxes ? "checked" : "" %>>
+              <span>Include source tax in product price</span>
+            </label>
+            <div class="tax-rate-setting">
+              <label class="field field--inline">
+                <span class="field__label">Supplier tax rate</span>
+                <span class="input-suffix">
+                  <input
+                    class="field__input"
+                    type="number"
+                    name="tax_rate_percent"
+                    min="0"
+                    max="100"
+                    step="0.0001"
+                    required
+                    placeholder="18"
+                    value="<%= typeof sourceSettings !== 'undefined' && sourceSettings && sourceSettings.tax_rate_percent !== null ? sourceSettings.tax_rate_percent : '' %>">
+                  <span class="input-suffix__unit">%</span>
+                </span>
+              </label>
+            </div>
+            <p class="settings__hint">
+              When enabled, tax is calculated on the source product price and included before the destination margin. The destination product is marked non-taxable to prevent a second checkout tax.
+            </p>
+            <p class="settings__hint">
+              When disabled, no source tax is added and the destination can configure tax in Shopify itself.
+            </p>
+          </div>
+
+          <footer class="settings__foot">
+            <button class="btn btn--primary" id="save-shipping" type="button">Save</button>
+          </footer>
+        </fieldset>
+      </section>
+    <% } %>
+  </main>
+
+  <script>
+    (function () {
+      var switcher = document.getElementById("shipping-store");
+      if (switcher) switcher.addEventListener("change", function () { switcher.form.requestSubmit(); });
+
+      var panel = document.getElementById("shipping-panel");
+      if (!panel) return;
+      var enabled = panel.querySelector('[name="shipping_enabled"]');
+      var syncTaxes = panel.querySelector('[name="sync_taxes"]');
+      var taxRate = panel.querySelector('[name="tax_rate_percent"]');
+      var taxRateSetting = panel.querySelector(".tax-rate-setting");
+      var options = panel.querySelector(".shipping-options");
+      function showMode() {
+        options.hidden = !enabled.checked;
+      }
+      function showTaxRate() { taxRateSetting.hidden = !syncTaxes.checked; }
+      enabled.addEventListener("change", showMode);
+      syncTaxes.addEventListener("change", showTaxRate);
+      showMode();
+      showTaxRate();
+
+      document.getElementById("save-shipping").addEventListener("click", async function (event) {
+        var button = event.currentTarget;
+        var errorBox = document.getElementById("shipping-error");
+        errorBox.hidden = true;
+        var policy = { mode: enabled.checked ? "included" : "disabled" };
+        ["flat_rate", "service_name", "country_codes", "delivery_min_days", "delivery_max_days"]
+          .forEach(function (name) { policy[name] = panel.querySelector('[name="' + name + '"]').value; });
+        var taxRatePercent = taxRate.value === "" ? null : Number(taxRate.value);
+        if (syncTaxes.checked &&
+            (!Number.isFinite(taxRatePercent) || taxRatePercent < 0 || taxRatePercent > 100)) {
+          errorBox.textContent = "Enter a supplier tax rate between 0 and 100 percent.";
+          errorBox.hidden = false;
+          taxRate.focus();
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "Saving…";
+        try {
+          var response = await window.appFetch("/settings", {
+            busy: button,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              connection_id: panel.dataset.connection,
+              policy: policy,
+              source_settings: {
+                sync_taxes: syncTaxes.checked,
+                tax_rate_percent: taxRatePercent
+              }
+            })
+          });
+          var data = await response.json().catch(function () { return {}; });
+          if (!response.ok) throw new Error(data.error || "Request failed");
+          window.appToast("Included pricing settings saved");
+          window.appNavigate("/settings?connection=" + panel.dataset.connection);
+        } catch (error) {
+          errorBox.textContent = error.message;
+          errorBox.hidden = false;
+        } finally {
+          button.disabled = false;
+          button.textContent = "Save";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

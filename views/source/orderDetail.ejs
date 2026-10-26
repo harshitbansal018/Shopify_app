@@ -39,7 +39,11 @@
           <strong><%= order.source_store_name || order.source_shop_domain %></strong>
         </p>
       </div>
-      <span class="pill pill--<%= pillClass %>"><%= pillText %></span>
+      <div class="actions">
+        <a class="btn" href="/orders/<%= order.id %>/invoice"
+           data-navigate="/orders/<%= order.id %>/invoice">Print invoice</a>
+        <span class="pill pill--<%= pillClass %>"><%= pillText %></span>
+      </div>
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
@@ -145,10 +149,24 @@
         <%# Nothing to total when there are no lines. %>
         <% if (lines.length) { %>
         <tfoot>
+          <% if (Number(order.source_shipping_total || 0) > 0) { %>
+          <tr>
+            <td colspan="<%= open ? 5 : 4 %>"></td>
+            <td class="muted">Included shipping</td>
+            <td><%= order.currency %> <%= Number(order.source_shipping_total).toFixed(2) %></td>
+          </tr>
+          <% } %>
+          <% if (order.source_tax_total !== null && order.source_tax_total !== undefined) { %>
+          <tr>
+            <td colspan="<%= open ? 5 : 4 %>"></td>
+            <td class="muted">Included tax</td>
+            <td><%= order.currency %> <%= Number(order.source_tax_total).toFixed(2) %></td>
+          </tr>
+          <% } %>
           <tr>
             <td colspan="<%= open ? 5 : 4 %>"></td>
             <td class="muted">Total</td>
-            <td><strong><%= order.currency %> <%= sourceTotal.toFixed(2) %></strong></td>
+            <td><strong><%= order.currency %> <%= Number(order.source_total == null ? sourceTotal : order.source_total).toFixed(2) %></strong></td>
           </tr>
         </tfoot>
         <% } %>

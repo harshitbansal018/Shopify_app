@@ -44,6 +44,20 @@
       </p>
     <% } %>
 
+    <p class="notice">
+      <% if (typeof shippingPolicy !== "undefined" && shippingPolicy && shippingPolicy.mode !== "disabled") { %>
+        <strong>Shipping included:</strong> <%= shippingPolicy.currency %> <%= Number(shippingPolicy.flat_rate || 0).toFixed(2) %> per unit is already included before your margin.
+      <% } else { %>
+        <strong>Shipping not included:</strong> configure this product's delivery in your Shopify shipping settings.
+      <% } %>
+      <br>
+      <% if (typeof sourceSettings !== "undefined" && sourceSettings && sourceSettings.sync_taxes) { %>
+        <strong>Tax included:</strong> <%= Number(sourceSettings.tax_rate_percent || 0) %>% is already included before your margin; the synced variant is non-taxable to prevent double charging.
+      <% } else { %>
+        <strong>Tax not included:</strong> configure tax for this product in your destination Shopify store.
+      <% } %>
+    </p>
+
     <!-- <section class="panel">
       <h2 class="panel__title">Variants in this product</h2> -->
 

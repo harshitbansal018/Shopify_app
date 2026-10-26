@@ -1399,6 +1399,8 @@ const STORE_ROW = {
       ],
       totalVariants: 1,
       isShared: true,
+      sourceSettings: { sync_taxes: true, tax_rate_percent: 18 },
+      shippingPolicy: { mode: "included", flat_rate: 10, currency: "USD" },
     });
 
     check("the destination sees the variants",
@@ -1415,6 +1417,12 @@ const STORE_ROW = {
       !destinationDetail.includes('id="reset-variants"'));
     check("and the heading is written for them",
       destinationDetail.includes("Variants in this product"));
+    check("the destination product shows included source charges",
+      destinationDetail.includes("Shipping included") &&
+        destinationDetail.includes("USD 10.00") &&
+        destinationDetail.includes("Tax included") &&
+        destinationDetail.includes("18%") &&
+        destinationDetail.includes("prevent double charging"));
 
     // Offered but not accepted: tell them what to do next.
     const offeredDetail = await render("destination/productDetail", {
@@ -1474,6 +1482,16 @@ const STORE_ROW = {
     const allOn = await settingsPage(syncSettingsModel.defaults(9));
 
     check("the source store is named", allOn.includes("Warehouse"));
+    const supplierTaxOn = await settingsPage(syncSettingsModel.defaults(9), {
+      sourceSettings: { sync_taxes: true, tax_rate_percent: 18 },
+      shippingPolicy: { mode: "included", flat_rate: 10, currency: "USD" },
+    });
+    check("destination settings show source charges as included and read-only",
+      supplierTaxOn.includes("Shipping included") &&
+        supplierTaxOn.includes("USD 10.00") &&
+        supplierTaxOn.includes("Tax included") &&
+        supplierTaxOn.includes("18%") &&
+        supplierTaxOn.includes("baked into the synced price"));
     // No identifier picker: the destination product is created by this app,
     // so its SKUs are the ones we sent and always line up.
     check("there is no identifier picker",
@@ -1899,6 +1917,7 @@ const STORE_ROW = {
         sync_status: "synced",
         source_order_name: "#5005",
         source_shopify_order_id: "500005",
+        source_tax_total: 3.6,
       },
       lines: [
         {
@@ -1923,6 +1942,8 @@ const STORE_ROW = {
       "2 x 10.00, which is what the source invoices");
     check("it says where the margin is set",
       detail.includes("/settings"));
+    check("destination order detail shows included supplier tax",
+      detail.includes("Included supplier tax") && detail.includes("USD 3.60"));
 
     const LINE = {
       line_id: 1, quantity: 2, source_price: 10, destination_price: 12.5,
@@ -1940,8 +1961,10 @@ const STORE_ROW = {
         shipments,
       });
 
-    const toShip = await sourceDetail(ROW, [LINE]);
+    const toShip = await sourceDetail({ ...ROW, source_tax_total: 3.6 }, [LINE]);
 
+    check("the source can open a printable invoice",
+      toShip.includes('/orders/11/invoice') && toShip.includes("Print invoice"));
     check("an open sale offers Fulfilled and Partially fulfilled",
       /id="fulfil"/.test(toShip) && /id="fulfil-partial"/.test(toShip));
     check("and Cancel, but not Unfulfilled -- nothing has shipped",
@@ -1950,6 +1973,8 @@ const STORE_ROW = {
       /class="[^"]*ship-qty"[^>]*max="2"[^>]*value="2"/.test(toShip),
       "the plain case -- send everything -- must need no typing");
     check("and shows what has shipped so far", toShip.includes("0 / 2"));
+    check("source order detail shows its included tax amount",
+      toShip.includes("Included tax") && toShip.includes("USD 3.60"));
 
     const halfway = await sourceDetail(
       { ...ROW, source_fulfillment_status: "partial" },
@@ -2011,6 +2036,52 @@ const STORE_ROW = {
     check("but drops the totals row",
       !emptyDetail.includes("Totals"),
       "totalling nothing would print 0.00 as though it were a real invoice");
+
+    const invoice = await render("source/invoice", {
+      packingSlip: {
+        mappingId: 11,
+        orderNumber: "#2001",
+        placedAt: "2026-09-04T09:00:00Z",
+        customerName: "Steve Shopper",
+        address: {
+          company: null,
+          address1: "1 Test Street",
+          address2: null,
+          city: "Mohali",
+          province: "Punjab",
+          postalCode: "160001",
+          country: "India",
+          phone: "555-0100",
+        },
+        deliveryInstructions: "Leave at the rear door",
+        lines: [{
+          product: "Blue Shirt", variant: "S", sku: "SH-S", quantity: 2,
+        }],
+        tracking: [{ number: "TRACK-1", company: "DHL", url: "https://dhl.test/1" }],
+      },
+      // Even if a caller accidentally grows its locals, the template has no
+      // references to commercial fields.
+      destinationSellingPrice: "9876.54",
+      sourceProductPrice: "8765.43",
+      destinationProfit: "7654.32",
+    });
+
+    check("invoice contains the requested order fields",
+      invoice.includes("#2001") && invoice.includes("Order date") &&
+        invoice.includes("Steve Shopper") && invoice.includes("1 Test Street") &&
+        invoice.includes("Blue Shirt") && invoice.includes(">S<") &&
+        invoice.includes("SH-S") && invoice.includes(">2<") &&
+        invoice.includes("TRACK-1") && invoice.includes("DHL") &&
+        invoice.includes("Leave at the rear door"));
+    check("invoice has a browser print action",
+      invoice.includes("window.print()") && invoice.includes("Print invoice"));
+    check("invoice does not show fulfilment status",
+      !invoice.includes("Unfulfilled") && !invoice.includes("Partially fulfilled") &&
+        !invoice.includes("Fulfilment status"));
+    check("invoice renders no commercial values",
+      !invoice.includes("9876.54") && !invoice.includes("8765.43") &&
+        !invoice.includes("7654.32") && !/<th>(Price|Tax|Shipping|Total|Profit)<\/th>/i.test(invoice),
+      "invoices must never disclose either store's commercial data");
   }
 
   console.log("\nPayouts");

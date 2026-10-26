@@ -14,7 +14,10 @@ const productMappingModel = require("../models/productMappingModel");
 const mappingVariantProductModel = require("../models/mappingVariantProductModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
+const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
+const shippingPolicyModel = require("../models/shippingPolicyModel");
 const collectionSync = require("./collectionSync");
+const shippingSync = require("./shippingSync");
 const planLimits = require("./planLimits");
 
 /* ------------------------------------------------------------------ */
@@ -94,6 +97,7 @@ function flatten(node) {
     compare_at_price: variant.compareAtPrice,
     position: variant.position ?? index + 1,
     taxable: variant.taxable,
+    tax_code: variant.taxCode,
     // CONTINUE or DENY -- "keep selling when out of stock".
     inventory_policy: variant.inventoryPolicy,
     inventory_quantity: variant.inventoryQuantity,
@@ -192,7 +196,7 @@ const PRODUCTS_BY_ID_QUERY = `
         variants(first: 100) {
           nodes {
             id title sku barcode price compareAtPrice position
-            taxable inventoryPolicy inventoryQuantity
+            taxable taxCode inventoryPolicy inventoryQuantity
             inventoryItem {
               id tracked requiresShipping unitCost { amount }
               measurement { weight { value unit } }
@@ -320,6 +324,7 @@ function fromWebhook(payload) {
       compare_at_price: variant.compare_at_price,
       position: variant.position ?? index + 1,
       taxable: variant.taxable,
+      tax_code: variant.tax_code,
       inventory_policy: variant.inventory_policy,
       inventory_quantity: variant.inventory_quantity,
       inventory_item_id: variant.inventory_item_id
@@ -589,6 +594,19 @@ const PRODUCT_SET_MUTATION = `
         }
       }
       userErrors { field message }
+    }
+  }
+`;
+
+const INVENTORY_ITEM_LOCATIONS_QUERY = `
+  query InventoryItemLocationsForSync($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on InventoryItem {
+        id
+        inventoryLevels(first: 1) {
+          nodes { location { id } }
+        }
+      }
     }
   }
 `;
@@ -951,6 +969,17 @@ function withMarkup(price, markupPercent) {
   return Number((base * (1 + markup / 100)).toFixed(2));
 }
 
+/** Source landed unit cost first, then the destination's margin. */
+function withIncludedCharges(price, settings = {}) {
+  if (price === null || price === undefined || price === "") return null;
+  const base = Number(price);
+  if (!Number.isFinite(base)) return null;
+  const taxRate = Math.max(Number(settings.included_tax_rate) || 0, 0);
+  const shipping = Math.max(Number(settings.included_shipping_amount) || 0, 0);
+  const landed = base + base * taxRate / 100 + shipping;
+  return withMarkup(landed, settings.price_markup_percent);
+}
+
 /**
  * Narrow a product's variants to the ones the merchant allowed.
  *
@@ -981,7 +1010,7 @@ function buildProductInput(
   variants,
   settings,
   destinationProductId,
-  { locationId = null, collections = null } = {}
+  { locationId = null, inventoryLocationIds = null, collections = null } = {}
 ) {
   const data = product.product_data || {};
   const sourceOptions = data.options || [];
@@ -1057,21 +1086,26 @@ function buildProductInput(
       if (on("variant_barcode")) out.barcode = variant.barcode || null;
 
       if (on("variant_price")) {
-        out.price = withMarkup(variant.price, settings.price_markup_percent);
+        out.price = withIncludedCharges(variant.price, settings);
 
         // null is deliberate: it clears a destination compare-at price when
         // the source removes its sale price.
-        out.compareAtPrice = withMarkup(
-          variant.compare_at_price,
-          settings.price_markup_percent
-        );
+        out.compareAtPrice = withIncludedCharges(variant.compare_at_price, settings);
       }
 
       // Tri-state at the source: null means it never told us, which is not
       // the same as false.
-      if (on("variant_taxable") && variant.taxable !== null &&
+      if (settings.included_tax_rate !== undefined && settings.included_tax_rate !== null) {
+        // Supplier tax is already inside the price; charging destination tax
+        // on the same amount would double-charge the customer.
+        out.taxable = false;
+      } else if (on("variant_taxable") && variant.taxable !== null &&
           variant.taxable !== undefined) {
         out.taxable = Boolean(variant.taxable);
+      }
+
+      if (settings.included_tax_rate == null && on("variant_taxable") && variant.tax_code) {
+        out.taxCode = String(variant.tax_code);
       }
 
       if (on("variant_continue_selling") && variant.inventory_policy) {
@@ -1124,12 +1158,22 @@ function buildProductInput(
 
       // Stock needs somewhere to put it. Without a location on the destination
       // there is nothing to set, so it is skipped rather than guessed at.
-      if (on("inventory") && locationId && variant.inventory_tracked !== 0 &&
+      // New products can be stocked at the store's default location. Existing
+      // inventory items may each be connected to a different location, so an
+      // update must use that item's own active level instead of blindly using
+      // the first store location (Shopify rejects that with "not stocked at
+      // the location"). A missing active level skips only this quantity; it
+      // must not make every other product field fail to sync.
+      const inventoryLocationId = inventoryLocationIds instanceof Map
+        ? inventoryLocationIds.get(String(variant.shopify_variant_id)) || null
+        : locationId;
+
+      if (on("inventory") && inventoryLocationId && variant.inventory_tracked !== 0 &&
           variant.inventory_quantity !== null &&
           variant.inventory_quantity !== undefined) {
         out.inventoryQuantities = [
           {
-            locationId,
+            locationId: inventoryLocationId,
             name: "available",
             quantity: Number(variant.inventory_quantity),
           },
@@ -1198,6 +1242,64 @@ function buildProductInput(
 }
 
 /**
+ * Source variant id -> the location where its existing destination inventory
+ * item is actually stocked. Shopify inventory levels are per item, so a
+ * store-wide "first location" is not valid for updates in a multi-location
+ * shop.
+ */
+async function destinationInventoryLocations(shop, productMappingId) {
+  const links = await mappingVariantProductModel.listForMapping(productMappingId);
+  const withItems = links.filter((link) => link.destination_inventory_item_id);
+  const locations = new Map();
+
+  if (!withItems.length) return locations;
+
+  try {
+    const data = await shopify.forShop(shop, {
+      query: INVENTORY_ITEM_LOCATIONS_QUERY,
+      variables: {
+        ids: withItems.map((link) =>
+          `gid://shopify/InventoryItem/${link.destination_inventory_item_id}`
+        ),
+      },
+    });
+    const locationByItem = new Map();
+
+    for (const item of data.nodes || []) {
+      const locationId = item?.inventoryLevels?.nodes?.[0]?.location?.id;
+      if (item?.id && locationId) locationByItem.set(numericId(item.id), locationId);
+    }
+
+    for (const link of withItems) {
+      const locationId = locationByItem.get(String(link.destination_inventory_item_id));
+      if (locationId) locations.set(String(link.source_shopify_variant_id), locationId);
+    }
+  } catch (error) {
+    // Inventory is only one independently controlled product field. If its
+    // location cannot be read, omit quantities and still sync tax, shipping,
+    // price and the remaining enabled fields.
+    console.warn(`Could not resolve inventory locations for ${shop}: ${error.message}`);
+  }
+
+  return locations;
+}
+
+/**
+ * Tax metadata has two owners: the source opts into sending it, while the
+ * destination can still protect individual fields through its sync settings.
+ * OFF means omit those fields from ProductSetInput, which leaves destination
+ * values unchanged rather than clearing them.
+ */
+function withSourceFeatureGates(settings, sourceSettings) {
+  const effective = { ...settings };
+  if (!sourceSettings?.sync_taxes) {
+    effective.category = false;
+    effective.variant_taxable = false;
+  }
+  return effective;
+}
+
+/**
  * Push ONE mapping to its destination.
  *
  * Variants are matched back by their option values, never by title or
@@ -1229,10 +1331,29 @@ async function pushOne(connection, mapping) {
 
   // What this connection is configured to copy. Never null: an unconfigured
   // connection reads as "everything on".
-  const settings = await syncSettingsModel.forConnection(connection.id);
+  const [destinationSettings, sourceSettings, shippingPolicy] = await Promise.all([
+    syncSettingsModel.forConnection(connection.id),
+    sourceConnectionSettingsModel.forConnection(connection.id),
+    shippingPolicyModel.forConnection(connection.id, {
+      currency: connection.destination.currency,
+    }),
+  ]);
+  const settings = withSourceFeatureGates(destinationSettings, sourceSettings);
+  settings.included_shipping_amount = shippingPolicy.mode === "disabled"
+    ? 0
+    : Number(shippingPolicy.flat_rate || 0);
+  settings.included_tax_rate = sourceSettings.sync_taxes
+    ? Number(sourceSettings.tax_rate_percent || 0)
+    : null;
 
   const locationId = settings.inventory
     ? await destinationLocationId(connection.destination.shop_domain)
+    : null;
+  const inventoryLocationIds = settings.inventory && mapping.destination_shopify_product_id
+    ? await destinationInventoryLocations(
+        connection.destination.shop_domain,
+        mapping.id
+      )
     : null;
 
   /* Two gates, both of which have to be open. The switch is the destination's
@@ -1275,7 +1396,7 @@ async function pushOne(connection, mapping) {
     variants,
     settings,
     mapping.destination_shopify_product_id,
-    { locationId, collections }
+    { locationId, inventoryLocationIds, collections }
   );
 
   // Values alone create unstructured metafields, which do not appear as a
@@ -1315,32 +1436,42 @@ async function pushOne(connection, mapping) {
 
   const destinationProduct = result.product;
   const destinationId = numericId(destinationProduct.id);
+  const isNewDestinationProduct = !mapping.destination_shopify_product_id;
 
-  // First time this product has landed over there. productSet attaches it to
-  // no sales channel, so without this it exists in the admin and nowhere on
-  // the storefront. An update is left alone: the destination may have
-  // unpublished it on purpose.
-  if (!mapping.destination_shopify_product_id) {
-    await publishToOnlineStore(
-      connection.destination.shop_domain,
-      destinationProduct.id
-    );
-  }
-
+  // Persist the destination id before ancillary work. If Shopify accepts the
+  // product but refuses its shipping profile, the retry must UPDATE this same
+  // product rather than create a duplicate. It remains failed/unpublished
+  // until the profile assignment succeeds.
   await productMappingModel.markSynced(mapping.id, {
     destinationProductId: destinationId,
     sourceUpdatedAt: product.shopify_updated_at,
   });
 
-  // Variants off means nothing was sent and the destination's own variants
-  // were left alone -- so there is nothing new to link, and re-deriving links
-  // from what is over there would wrongly claim we put it there.
   if (settings.variants) {
     await linkVariants(
       mapping.id,
       variants,
       destinationProduct.variants?.nodes || [],
       settings.match_by
+    );
+  }
+
+  // A configured source shipping policy owns these variants at checkout.
+  // Associating them with its app profile removes them from general shipping,
+  // preventing the destination from charging its rate on the same item.
+  await shippingSync.assignProduct(
+    connection,
+    destinationProduct.variants?.nodes || []
+  );
+
+  // First time this product has landed over there. productSet attaches it to
+  // no sales channel, so without this it exists in the admin and nowhere on
+  // the storefront. An update is left alone: the destination may have
+  // unpublished it on purpose.
+  if (isNewDestinationProduct) {
+    await publishToOnlineStore(
+      connection.destination.shop_domain,
+      destinationProduct.id
     );
   }
 
@@ -1882,12 +2013,15 @@ module.exports = {
   pushPending,
   pushOne,
   buildProductInput,
+  destinationInventoryLocations,
+  withSourceFeatureGates,
   splitMetafields,
   cleanVariantMetafields,
   definitionsForMetafields,
   syncMetafieldDefinitions,
   selectVariants,
   withMarkup,
+  withIncludedCharges,
   optionKey,
   identityOf,
   publishToOnlineStore,

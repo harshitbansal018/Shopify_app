@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice <%= packingSlip.orderNumber %></title>
+  <style>
+    :root { color: #202223; font-family: Arial, Helvetica, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f6f8; }
+    .toolbar { display: flex; gap: 10px; justify-content: flex-end; max-width: 900px; margin: 20px auto 0; }
+    button { border: 1px solid #8c9196; border-radius: 7px; background: #fff; color: #202223; cursor: pointer; font-weight: 600; padding: 9px 14px; }
+    button.primary { border-color: #303030; background: #303030; color: #fff; }
+    .slip { width: min(900px, calc(100% - 32px)); margin: 12px auto 32px; padding: 42px; background: #fff; box-shadow: 0 1px 8px rgba(0,0,0,.12); }
+    .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #202223; padding-bottom: 20px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin: 0 0 12px; font-size: 16px; text-transform: uppercase; letter-spacing: .04em; }
+    p { margin: 4px 0; line-height: 1.45; }
+    .muted { color: #616a71; }
+    .meta { min-width: 245px; }
+    .meta-row { display: flex; justify-content: space-between; gap: 24px; margin: 4px 0; }
+    .meta-row strong { text-align: right; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; padding: 28px 0; }
+    .instructions { white-space: pre-line; }
+    table { width: 100%; border-collapse: collapse; }
+    th { border-bottom: 1px solid #8c9196; padding: 10px 8px; text-align: left; font-size: 12px; text-transform: uppercase; }
+    td { border-bottom: 1px solid #dfe3e8; padding: 12px 8px; vertical-align: top; }
+    th.qty, td.qty { text-align: center; width: 80px; }
+    .tracking { margin-top: 30px; }
+    .tracking-list { margin: 0; padding-left: 20px; }
+    a { color: inherit; }
+    @media (max-width: 650px) {
+      .slip { width: 100%; margin: 0; padding: 24px; box-shadow: none; }
+      .header, .grid { display: block; }
+      .meta, .grid section + section { margin-top: 24px; }
+      .table-wrap { overflow-x: auto; }
+    }
+    @media print {
+      @page { margin: 14mm; }
+      body { background: #fff; }
+      .no-print { display: none !important; }
+      .slip { width: 100%; margin: 0; padding: 0; box-shadow: none; }
+      a { text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <button type="button" onclick="history.back()">Back to order</button>
+    <button class="primary" type="button" onclick="window.print()">Print invoice</button>
+  </div>
+
+  <main class="slip">
+    <header class="header">
+      <div>
+        <h1>Invoice</h1>
+        <p class="muted">Order and delivery details</p>
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span>Order</span><strong><%= packingSlip.orderNumber %></strong></div>
+        <div class="meta-row">
+          <span>Order date</span>
+          <strong><%= packingSlip.placedAt ? new Date(packingSlip.placedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "Not available" %></strong>
+        </div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section>
+        <h2>Ship to</h2>
+        <p><strong><%= packingSlip.customerName %></strong></p>
+        <% if (packingSlip.address.company) { %><p><%= packingSlip.address.company %></p><% } %>
+        <% if (packingSlip.address.address1) { %><p><%= packingSlip.address.address1 %></p><% } %>
+        <% if (packingSlip.address.address2) { %><p><%= packingSlip.address.address2 %></p><% } %>
+        <p><%= [packingSlip.address.city, packingSlip.address.province, packingSlip.address.postalCode].filter(Boolean).join(", ") %></p>
+        <% if (packingSlip.address.country) { %><p><%= packingSlip.address.country %></p><% } %>
+        <% if (packingSlip.address.phone) { %><p><%= packingSlip.address.phone %></p><% } %>
+        <% if (!packingSlip.address.address1) { %><p class="muted">No shipping address available.</p><% } %>
+      </section>
+
+      <section>
+        <h2>Delivery instructions</h2>
+        <% if (packingSlip.deliveryInstructions) { %>
+          <p class="instructions"><%= packingSlip.deliveryInstructions %></p>
+        <% } else { %>
+          <p class="muted">No delivery instructions provided.</p>
+        <% } %>
+      </section>
+    </div>
+
+    <section>
+      <h2>Items</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Product</th><th>Variant</th><th>SKU</th><th class="qty">Quantity</th></tr>
+          </thead>
+          <tbody>
+            <% if (!packingSlip.lines.length) { %>
+              <tr><td colspan="4" class="muted">No items available.</td></tr>
+            <% } %>
+            <% packingSlip.lines.forEach(function (line) { %>
+              <tr>
+                <td><strong><%= line.product %></strong></td>
+                <td><%= line.variant || "Default" %></td>
+                <td><%= line.sku || "—" %></td>
+                <td class="qty"><%= line.quantity %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="tracking">
+      <h2>Tracking details</h2>
+      <% if (packingSlip.tracking.length) { %>
+        <ul class="tracking-list">
+          <% packingSlip.tracking.forEach(function (parcel) { %>
+            <li>
+              <% if (parcel.company) { %><%= parcel.company %>: <% } %>
+              <% if (parcel.url) { %><a href="<%= parcel.url %>"><%= parcel.number %></a><% } else { %><%= parcel.number %><% } %>
+            </li>
+          <% }); %>
+        </ul>
+      <% } else { %>
+        <p class="muted">No tracking details added.</p>
+      <% } %>
+    </section>
+  </main>
+</body>
+</html>

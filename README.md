@@ -2,6 +2,21 @@
 
 Shopify app for synchronizing products and orders between source and destination stores.
 
+## Source shipping policies
+
+Phase-one shipping is configured by the source under **Shipping**, once per
+destination connection. `Included` assigns synced variants to an app-owned
+delivery profile with a zero checkout rate. `Flat` assigns the same variants to
+that profile with the configured destination-currency rate. Because the
+variants leave the destination's general delivery profile, its general rate is
+not also applied to those products.
+
+The feature requires `read_shipping` and `write_shipping`. Stores installed
+before those scopes were added must approve the updated app permissions. Tax
+rates and registrations are deliberately not copied between merchants;
+taxable, Shopify category and variant tax code are synced, and the destination
+Shopify checkout remains responsible for calculating retail tax.
+
 ## Production details
 
 - Public URL: `https://productsync.sistagging.com`
