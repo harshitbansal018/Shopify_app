@@ -570,7 +570,11 @@ exports.getProduct = async (req, res) => {
 
     for (const connection of productConnections) {
       const mapping = mappingByConnection.get(Number(connection.id));
-      if (!mapping || mapping.sync_status === "deleted") continue;
+      if (mapping?.sync_status === "deleted") continue;
+      // A not-yet-shared product still needs inventory controls. Saving from
+      // that state first creates the offer for this one destination and then
+      // reserves the entered quantities variant by variant.
+      if (!mapping && connection.status !== "active") continue;
 
       const [allocations, syncSettings] = await Promise.all([
         inventoryAllocationModel.listForConnectionProduct(
@@ -585,10 +589,13 @@ exports.getProduct = async (req, res) => {
 
       allocationDestinations.push({
         connection,
-        mapping,
+        mapping: mapping || {
+          allowed_variant_ids: product.selected_variant_ids || null,
+        },
         allocations: byVariant,
         inventoryEnabled:
           connection.status === "active" && syncSettings.inventory !== false,
+        needsAllow: !mapping,
       });
     }
 

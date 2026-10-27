@@ -75,7 +75,10 @@
               <th>Price</th>
               <th>Source stock</th>
               <% if (inlineDestination) { %>
-                <th>Inventory for <%= inlineDestinationName %></th>
+                <th class="allocation-column">
+                  Allocate
+                  <span class="allocation-store"><%= inlineDestinationName %></span>
+                </th>
               <% } %>
               <th class="table__actions-head">Actions</th>
             </tr>
@@ -131,7 +134,7 @@
                       ? "—" : variant.inventory_quantity %>
                 </td>
                 <% if (inlineDestination) { %>
-                  <td>
+                  <td class="allocation-column">
                     <div class="quantity-stepper">
                       <button
                         class="quantity-stepper__button allocation-step"
@@ -159,7 +162,7 @@
                         <%= inlineInventoryEnabled ? "" : "disabled" %>>+</button>
                     </div>
                     <span class="allocation-limit">
-                      <%= inlineRemaining %> remaining &middot; maximum <%= inlineMax %>
+                      Remaining <%= inlineRemaining %> &middot; Max <%= inlineMax %>
                     </span>
                   </td>
                 <% } %>
@@ -191,12 +194,13 @@
           <% } %>
           <div
             class="allocation-form__actions allocation-controls"
-            data-connection="<%= inlineDestination.connection.id %>">
+            data-connection="<%= inlineDestination.connection.id %>"
+            data-needs-allow="<%= inlineDestination.needsAllow ? 1 : 0 %>">
             <button class="btn btn--small allocation-return" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
-              Return all unsold stock
+              Return unsold
             </button>
             <button class="btn btn--small btn--primary allocation-save" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
-              Save inventory
+              <%= inlineDestination.needsAllow ? "Share & save" : "Save" %>
             </button>
           </div>
         <% } %>
@@ -293,18 +297,21 @@
                               aria-label="Reserved total for <%= variantName %> at <%= destinationName %>">
                             <button class="quantity-stepper__button allocation-step" type="button" data-step="1" <%= inventoryEnabled ? "" : "disabled" %>>+</button>
                           </div>
-                          <span class="allocation-limit">maximum <%= maximum %></span>
+                          <span class="allocation-limit">Remaining <%= remaining %> &middot; Max <%= maximum %></span>
                         </td>
                       </tr>
                     <% }); %>
                   </tbody>
                 </table>
-                <div class="allocation-form__actions allocation-controls" data-connection="<%= connection.id %>">
+                <div
+                  class="allocation-form__actions allocation-controls"
+                  data-connection="<%= connection.id %>"
+                  data-needs-allow="<%= destination.needsAllow ? 1 : 0 %>">
                   <button class="btn btn--small allocation-return" type="button" <%= inventoryEnabled ? "" : "disabled" %>>
-                    Return all unsold stock
+                    Return unsold
                   </button>
                   <button class="btn btn--small btn--primary allocation-save" type="submit" <%= inventoryEnabled ? "" : "disabled" %>>
-                    Save allocation
+                    <%= destination.needsAllow ? "Share & save" : "Save" %>
                   </button>
                 </div>
               </form>
@@ -402,6 +409,19 @@
         document.querySelectorAll(".allocation-input")
       );
 
+      allAllocationInputs.forEach(function (input) {
+        input.title = "Click the field, then scroll to increase or decrease";
+        input.addEventListener("wheel", function (event) {
+          if (input.disabled || document.activeElement !== input) return;
+
+          event.preventDefault();
+          input.value = clampAllocation(
+            input,
+            Number(input.value || 0) + (event.deltaY < 0 ? 1 : -1)
+          );
+        }, { passive: false });
+      });
+
       Array.prototype.slice.call(document.querySelectorAll(".allocation-controls"))
         .forEach(function (controls) {
           var connectionId = Number(controls.dataset.connection);
@@ -439,6 +459,22 @@
             }
 
             try {
+              if (controls.dataset.needsAllow === "1") {
+                await post(
+                  "/products/allow",
+                  {
+                    selections: [{
+                      source_product_id: productId,
+                      variant_ids: inputs.map(function (input) {
+                        return Number(input.dataset.variant);
+                      })
+                    }],
+                    connection_ids: [connectionId]
+                  },
+                  save
+                );
+              }
+
               var data = await post(
                 "/products/" + productId + "/inventory-allocation",
                 {

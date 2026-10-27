@@ -1379,17 +1379,47 @@ const STORE_ROW = {
       }],
     });
     check("source can reserve inventory per destination and variant",
-      allocated.includes("Inventory for Retail shop") &&
+      allocated.includes("Allocate") &&
         allocated.includes("Retail shop") &&
         allocated.includes('value="25"') &&
         allocated.includes('data-variant="101"'));
     check("the allocation screen separates sold and remaining stock",
-      allocated.includes("20 remaining") &&
-        allocated.includes("Return all unsold stock"));
+      allocated.includes("Remaining 20") &&
+        allocated.includes("Return unsold"));
     check("inline inventory cannot exceed its current maximum",
       allocated.includes('max="29"') &&
-        allocated.includes("maximum 29") &&
+        allocated.includes("Max 29") &&
         allocated.includes('class="quantity-stepper__button allocation-step"'));
+    check("allocation quantity supports focused mouse-wheel changes",
+      allocated.includes('addEventListener("wheel"') &&
+        allocated.includes("document.activeElement !== input") &&
+        allocated.includes("event.deltaY < 0 ? 1 : -1"));
+
+    const unsharedAllocation = await render("source/productDetail", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      product: PRODUCT,
+      shared: VARIANTS,
+      totalVariants: 2,
+      isShared: false,
+      allocationDestinations: [{
+        connection: {
+          id: 9,
+          destination: { store_name: "Second shop", shop_domain: "second.myshopify.com" },
+        },
+        mapping: { allowed_variant_ids: null },
+        allocations: new Map(),
+        inventoryEnabled: true,
+        needsAllow: true,
+      }],
+    });
+    check("a not-shared product can set each variant before sharing",
+      unsharedAllocation.includes("Share &amp; save") &&
+        unsharedAllocation.includes('data-needs-allow="1"') &&
+        (unsharedAllocation.match(/class="field__input allocation-input"/g) || []).length === 2);
+    check("share-and-save creates the offer before reserving its inventory",
+      unsharedAllocation.indexOf('"/products/allow"') <
+        unsharedAllocation.indexOf('"/products/" + productId + "/inventory-allocation"'));
 
     // The LAST shared variant cannot be removed -- that would push a product
     // with no variants and strip the destination's copy to nothing.
