@@ -167,26 +167,7 @@
               <tr class="row--empty">
                 <%# One cell across every column, the checkbox one included. %>
                 <td class="table__empty" colspan="8">
-                  <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
                   <strong>No records found</strong>
-                  <span>
-                    <%# A search that found nothing is not an empty tab. %>
-                    <% if (search) { %>
-                      Nothing on this tab matches <strong><%= search %></strong>.
-                      Titles, vendors, SKUs and source store names are all
-                      searched &mdash; try a shorter term, the other tab, or
-                      <strong>Clear</strong>.
-                    <% } else if (storeFilter) { %>
-                      <%# An empty FILTER is not an empty tab: say which store
-                          is hiding everything, and how to see the rest. %>
-                      Nothing on this tab from that store. Switch to
-                      <strong>All stores</strong> to see the others.
-                    <% } else { %>
-                      <%= tab === "unsynced"
-                          ? "Nothing is waiting for you. When a source store offers a product it appears here."
-                          : "Nothing synced yet. Check the Unsynced tab for anything waiting." %>
-                    <% } %>
-                  </span>
                 </td>
               </tr>
             <% } else { %>
