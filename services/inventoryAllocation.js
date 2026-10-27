@@ -15,7 +15,10 @@ const INVENTORY_LEVELS_QUERY = `
         tracked
         inventoryLevels(first: 250) {
           nodes {
-            location { id name isActive }
+            # The name is deliberately not requested. Reading it needs the
+            # separate read_locations scope, while allocation only needs the
+            # location id exposed through read_inventory.
+            location { id isActive }
             quantities(names: ["available"]) { name quantity }
           }
         }

@@ -36,6 +36,10 @@ function isThrottledBody(body) {
 /** Retry only what a retry can actually fix. */
 function isRetryable(error) {
   if (error.throttled) return true;
+  // A GraphQL validation, permission or user-facing API error arrived as a
+  // successful HTTP response. Repeating the exact query cannot fix it and
+  // must not be mislabeled as a network failure.
+  if (error.graphql) return false;
 
   const status = error.response?.status;
 
@@ -114,7 +118,10 @@ async function shopifyRequest(shop, accessToken, apiVersion, queryData) {
           "Shopify GraphQL errors:",
           JSON.stringify(response.data.errors)
         );
-        throw new Error(message);
+        const graphqlError = new Error(message);
+        graphqlError.graphql = true;
+        graphqlError.graphqlErrors = response.data.errors;
+        throw graphqlError;
       }
 
       return response.data.data;

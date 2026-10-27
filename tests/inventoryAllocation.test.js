@@ -22,6 +22,9 @@ check("source adjustments use Shopify idempotency",
   allocation.ADJUST_INVENTORY_MUTATION.includes("@idempotent"));
 check("destination stock sets use Shopify idempotency",
   allocation.SET_DESTINATION_INVENTORY_MUTATION.includes("@idempotent"));
+check("inventory levels do not require the read_locations scope",
+  allocation.INVENTORY_LEVELS_QUERY.includes("location { id isActive }") &&
+    !allocation.INVENTORY_LEVELS_QUERY.includes("id name isActive"));
 
 const levels = [
   {
