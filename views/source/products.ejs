@@ -127,33 +127,35 @@
         <% if (!products.length) { %>
           <tr class="row--empty">
             <td class="table__empty" colspan="5">
-              <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
-              <strong>No records found</strong>
-              <span>
-                <%# A search that found nothing is not an empty catalogue.
-                    Saying so, and repeating the term, is the difference
-                    between "you have no products" and "try another word". %>
-                <% if (search) { %>
+              <%# A genuinely empty catalogue stays deliberately terse. Search
+                  and filter results still explain why their table is empty. %>
+              <% if (!search && !counts.all) { %>
+                <strong>No records found</strong>
+              <% } else { %>
+                <span class="linked__icon" aria-hidden="true"><%- include("../partials/icon", { name: "box" }) %></span>
+                <strong>No records found</strong>
+                <span>
+                  <%# A search that found nothing is not an empty catalogue.
+                      Saying so, and repeating the term, is the difference
+                      between "you have no products" and "try another word". %>
+                  <% if (search) { %>
                   Nothing matches <strong><%= search %></strong><%
                     %><% if (filter !== "all") { %> in this filter<% } %>.
                   Titles, vendors, product types and SKUs are all searched
                   &mdash; try a shorter term, or <strong>Clear</strong> to see
                   the whole catalogue again.
-                <% } else if (!counts.all) { %>
-                  Use <strong>Add products</strong> to pull products in from this
-                  store's Shopify catalogue. Nothing is sent anywhere until you
-                  allow it.
-                <% } else if (filter === "shared") { %>
+                  <% } else if (filter === "shared") { %>
                   <%# The catalogue is not empty -- the filter is. Saying which
                       one is hiding everything is the useful half. %>
                   Nothing is shared yet. Switch to <strong>All</strong>,
                   tick what you want to sell through a destination store, and
                   press Allow selected.
-                <% } else { %>
+                  <% } else { %>
                   Everything staged here is already shared. Use
                   <strong>Add products</strong> to bring in more.
-                <% } %>
-              </span>
+                  <% } %>
+                </span>
+              <% } %>
             </td>
           </tr>
         <% } else { %>
