@@ -1011,7 +1011,7 @@ exports.postAllow = async (req, res) => {
  * written to. pushPending filters on accepted_at, so even a hand-made request
  * cannot move a product the destination never ticked.
  */
-async function runSync(req, res, connections) {
+async function runSync(req, res, connections, { forceActiveMappingIds = [] } = {}) {
   if (!connections.length) {
     return res.status(409).json({ error: "No active connection to sync." });
   }
@@ -1019,7 +1019,9 @@ async function runSync(req, res, connections) {
   const totals = { synced: 0, failed: 0 };
 
   for (const connection of connections) {
-    const result = await productSync.pushPending(connection.id);
+    const result = await productSync.pushPending(connection.id, {
+      forceActiveMappingIds,
+    });
     totals.synced += result.synced;
     totals.failed += result.failed;
   }
@@ -1138,7 +1140,8 @@ exports.postAccept = async (req, res) => {
       res,
       (await connectionModel.listForDestination(req.storeId)).filter(
         (connection) => connection.status === "active"
-      )
+      ),
+      { forceActiveMappingIds: ids }
     );
   } catch (err) {
     return res.status(err.statusCode || 502).json({
@@ -1158,17 +1161,41 @@ exports.postDecline = async (req, res) => {
   }
 
   try {
+    const connections = await connectionModel.listForDestination(req.storeId);
+    const connectionById = new Map(
+      connections.map((connection) => [Number(connection.id), connection])
+    );
+    const mappings = await productMappingModel.listForDestinationByIds(
+      req.storeId,
+      ids
+    );
+
+    // Draft every existing Shopify copy before updates are stopped. Only after
+    // all remote writes succeed do we clear accepted_at locally; a failed API
+    // call therefore cannot leave a live product unmanaged by this app.
+    for (const mapping of mappings) {
+      if (!mapping.destination_shopify_product_id) continue;
+
+      const connection = connectionById.get(Number(mapping.connection_id));
+      if (!connection) continue;
+
+      await productSync.setDestinationProductStatus(
+        connection.destination.shop_domain,
+        mapping.destination_shopify_product_id,
+        "DRAFT"
+      );
+    }
+
     const declined = await productMappingModel.declineForDestination(
       req.storeId,
       ids
     );
 
-    // The product already in the destination store is left alone: this stops
-    // future updates, it does not delete what the merchant already has.
     return res.json({ ok: true, declined });
   } catch (err) {
-    console.error("Declining products failed:", err.message);
-    return res.status(500).json({ error: "Could not decline those products." });
+    return res.status(err.statusCode || 502).json({
+      error: reauthAware(err, "Could not unsync those products."),
+    });
   }
 };
 

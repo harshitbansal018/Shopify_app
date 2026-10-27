@@ -1206,6 +1206,14 @@ const STORE_ROW = {
     check("no more products can be selected when the plan is full",
       /class="awaiting-check"[\s\S]{0,140}disabled/.test(noProductSlots) &&
         /data-action="sync"[\s\S]{0,100}disabled/.test(noProductSlots));
+    check("Sync selected stays disabled when no plan slots remain",
+      noProductSlots.includes(
+        "acceptButton.disabled = count === 0 || selectionLimit === 0"
+      ));
+    check("a server-side plan refusal keeps the row Sync button disabled",
+      noProductSlots.includes("selectionLimit = 0") &&
+        noProductSlots.includes("pill.disabled = !unsync && selectionLimit === 0") &&
+        noProductSlots.includes("Your product plan limit has been reached"));
     check("selection is capped at the remaining plan allowance",
       unsynced.includes("count >= selectionLimit") &&
         unsynced.includes("index < selectionLimit"));
@@ -1220,9 +1228,11 @@ const STORE_ROW = {
       /class="bulkbar__btn bulkbar__btn--danger"[^>]*id="unsync-button"/.test(synced));
     check("it posts to decline, which is what clears accepted_at",
       synced.includes('"/products/decline"'));
-    check("and warns that nothing leaves the store",
-      synced.includes("They stay in your store exactly as they are"),
-      "'unsync' reads as 'delete' unless it is said plainly");
+    check("and explains the reversible Draft lifecycle",
+      synced.includes("They will become Draft in Shopify") &&
+        synced.includes("make them Active") &&
+        synced.includes("They are not deleted"),
+      "the merchant should know exactly what Unsync and a later Sync do");
     check("then sends them to the tab they moved to",
       synced.includes('productsUrl("unsynced")'));
 

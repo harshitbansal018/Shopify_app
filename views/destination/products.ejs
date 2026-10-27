@@ -38,8 +38,8 @@
 
     <%# One table, two tabs, always shown: "nothing here" on one of them is
         itself the answer and the other tab may still have something.
-        "Unsynced" is what a source has offered and this store has not
-        accepted; nothing of it has been written here yet. %>
+        "Unsynced" is either a new source offer or a product whose existing
+        destination copy has been moved to Draft. %>
     <%# Tabs and search on one row: both narrow the same table, so they belong
         together rather than stacked as two separate-looking controls. %>
     <div class="listbar">
@@ -455,8 +455,8 @@
             // one does, because the merchant is giving up future updates.
             if (unsync && !(await window.appConfirm(
               "Stop syncing this product?\n\n" +
-              "It moves back to Unsynced. What is already in your store stays, " +
-              "it just will not be updated any more.",
+              "It moves back to Unsynced and becomes Draft in Shopify. " +
+              "Sync it again to make it Active and resume updates.",
               { confirmLabel: "Stop syncing" }
             ))) return;
 
@@ -483,7 +483,23 @@
               // The row belongs on the other tab now, so go and show it there.
               window.appNavigate(productsUrl(unsync ? "unsynced" : "synced"));
             } catch (err) {
-              pill.disabled = false;
+              // A plan refusal is authoritative even if this page was opened
+              // before another tab used the last slot. Keep every action that
+              // ADDS a product disabled; retrying cannot succeed until usage
+              // changes or the plan is upgraded. Unsync is never plan-blocked.
+              if (err.plan && !unsync) {
+                selectionLimit = 0;
+                Array.prototype.slice.call(
+                  document.querySelectorAll(
+                    '.product-sync-action[data-action="sync"]'
+                  )
+                ).forEach(function (button) {
+                  button.disabled = true;
+                  button.title = "Your product plan limit has been reached";
+                });
+                refresh();
+              }
+              pill.disabled = !unsync && selectionLimit === 0;
               pill.textContent = pill.dataset.was;
               fail(err.message, err.plan);
             }
@@ -557,6 +573,13 @@
         }
 
         bulkButtons.forEach(function (button) { button.disabled = count === 0; });
+        // Sync selected creates new accepted products and consumes plan
+        // capacity. Never let a restored/stale checked checkbox re-enable it
+        // when there are zero slots. Decline remains available because it
+        // removes an offer and consumes no capacity.
+        if (acceptButton) {
+          acceptButton.disabled = count === 0 || selectionLimit === 0;
+        }
 
         // The count goes on the primary action of each tab, so the merchant
         // can see how many they are about to act on without recounting ticks.
@@ -648,14 +671,14 @@
       if (unsyncButton) unsyncButton.addEventListener("click", async function () {
         var count = chosen().length;
 
-        // Said plainly, because "unsync" could easily be read as "delete".
-        // Nothing leaves the store here -- the products stay exactly as they
-        // are and simply stop being updated.
+        // The Shopify copy stays in Admin but is made Draft, so it cannot keep
+        // selling after this app stops managing it.
         if (!(await window.appConfirm(
           "Stop syncing " + count + " product(s)?\n\n" +
-          "They stay in your store exactly as they are; they just will not " +
-          "receive any more updates from the source store.\n\n" +
-          "You can sync them again from the Unsynced tab.",
+          "They will become Draft in Shopify and stop receiving updates. " +
+          "They are not deleted.\n\n" +
+          "Sync them again from the Unsynced tab to make them Active and " +
+          "resume updates.",
           { confirmLabel: "Stop syncing" }
         ))) return;
 
@@ -671,7 +694,7 @@
       if (declineButton) declineButton.addEventListener("click", async function () {
         if (!(await window.appConfirm(
           "Stop receiving " + chosen().length + " product(s)?\n\n" +
-          "Anything already in your store stays; it just will not be updated.",
+          "Any existing Shopify copy will become Draft and stop receiving updates.",
           { confirmLabel: "Decline" }
         ))) return;
 

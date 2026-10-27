@@ -190,6 +190,18 @@ console.log("\nProductSetInput");
 
   check("title is copied", input.title === "Blue Shirt");
   check("status is upper-cased for GraphQL", input.status === "ACTIVE", input.status);
+  const forcedActive = productSync.buildProductInput(
+    { ...product, status: "draft" },
+    variants,
+    { status: false },
+    "777",
+    { forceActive: true }
+  );
+  check(
+    "re-sync forces an existing destination product active even when status sync is off",
+    forcedActive.status === "ACTIVE",
+    forcedActive.status
+  );
   check("both options are sent", input.productOptions.length === 2);
   check(
     "option values are objects, as ProductSetInput wants",
@@ -849,6 +861,26 @@ console.log("\nPublishing to the online store");
   }
 
   (async () => {
+    calls.length = 0;
+    fakeShopify((shop, body) => ({
+      productSet: {
+        product: { id: body.variables.input.id, variants: { nodes: [] } },
+        userErrors: [],
+      },
+    }));
+    await productSync.setDestinationProductStatus(
+      "destination.myshopify.com",
+      "700",
+      "draft"
+    );
+    check(
+      "unsync changes only the existing destination product status to Draft",
+      calls.length === 1 &&
+        calls[0].body.variables.input.id === "gid://shopify/Product/700" &&
+        calls[0].body.variables.input.status === "DRAFT" &&
+        Object.keys(calls[0].body.variables.input).length === 2
+    );
+
     console.log("\nMetafield definitions");
 
     const sourceMetafields = [
