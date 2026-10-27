@@ -599,6 +599,46 @@ const PRODUCT_SET_MUTATION = `
   }
 `;
 
+/** Change lifecycle state without replacing any product content. */
+async function setDestinationProductStatus(shop, destinationProductId, status) {
+  const normalized = String(status || "").toUpperCase();
+
+  if (!destinationProductId || !["ACTIVE", "DRAFT"].includes(normalized)) {
+    const err = new Error("A destination product and a valid status are required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const data = await shopify.forShop(shop, {
+    query: PRODUCT_SET_MUTATION,
+    variables: {
+      input: {
+        id: `gid://shopify/Product/${destinationProductId}`,
+        status: normalized,
+      },
+      synchronous: true,
+    },
+  });
+  const result = data.productSet;
+  const userErrors = result?.userErrors || [];
+
+  if (userErrors.length) {
+    const err = new Error(
+      userErrors.map((item) => `${(item.field || []).join(".")}: ${item.message}`).join("; ")
+    );
+    err.statusCode = 422;
+    throw err;
+  }
+
+  if (!result?.product) {
+    const err = new Error("Shopify did not return the updated destination product");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return result.product;
+}
+
 const INVENTORY_ITEM_LOCATIONS_QUERY = `
   query InventoryItemLocationsForSync($ids: [ID!]!) {
     nodes(ids: $ids) {
@@ -1016,6 +1056,7 @@ function buildProductInput(
     inventoryLocationIds = null,
     collections = null,
     allocatedInventory = null,
+    forceActive = false,
   } = {}
 ) {
   const data = product.product_data || {};
@@ -1038,6 +1079,9 @@ function buildProductInput(
   if (on("product_type")) input.productType = product.product_type || "";
   if (on("tags") && Array.isArray(data.tags)) input.tags = data.tags;
   if (on("status")) input.status = (product.status || "ACTIVE").toUpperCase();
+  // Re-accepting an unsynced product is an explicit request to sell it again.
+  // It must reactivate even when ordinary source-status syncing is disabled.
+  if (forceActive) input.status = "ACTIVE";
   // The taxonomy is global, so the same id means the same category over there.
   if (on("category")) input.category = data.category || null;
   if (on("metafields") && Array.isArray(data.metafields)) {
@@ -1316,7 +1360,7 @@ function withSourceFeatureGates(settings, sourceSettings) {
  * position: a rename at either end must not re-point a variant at the wrong
  * row, which is what mapping_variant_products exists to prevent.
  */
-async function pushOne(connection, mapping) {
+async function pushOne(connection, mapping, { forceActive = false } = {}) {
   const product = await sourceProductModel.findById(mapping.source_product_id);
 
   if (!product) {
@@ -1410,7 +1454,13 @@ async function pushOne(connection, mapping) {
     variants,
     settings,
     mapping.destination_shopify_product_id,
-    { locationId, inventoryLocationIds, collections, allocatedInventory }
+    {
+      locationId,
+      inventoryLocationIds,
+      collections,
+      allocatedInventory,
+      forceActive,
+    }
   );
 
   // Values alone create unstructured metafields, which do not appear as a
@@ -1579,7 +1629,10 @@ async function linkVariants(
  * One product failing does not stop the rest: each is marked failed with its
  * own message, so the screen can show exactly which ones need attention.
  */
-async function pushPending(connectionId, { limit = 100 } = {}) {
+async function pushPending(
+  connectionId,
+  { limit = 100, forceActiveMappingIds = [] } = {}
+) {
   const connection = await connectionModel.findById(connectionId);
 
   if (!connection) throw new Error("Connection not found");
@@ -1599,10 +1652,13 @@ async function pushPending(connectionId, { limit = 100 } = {}) {
 
   let synced = 0;
   let failed = 0;
+  const forceActive = new Set(forceActiveMappingIds.map(Number));
 
   for (const mapping of pending) {
     try {
-      const result = await pushOne(connection, mapping);
+      const result = await pushOne(connection, mapping, {
+        forceActive: forceActive.has(Number(mapping.id)),
+      });
       result.ok ? (synced += 1) : (failed += 1);
     } catch (err) {
       // A thrown error is a transport failure, not a rejected product; record
@@ -2026,6 +2082,7 @@ module.exports = {
   stopAutoSync,
   pushPending,
   pushOne,
+  setDestinationProductStatus,
   buildProductInput,
   destinationInventoryLocations,
   withSourceFeatureGates,

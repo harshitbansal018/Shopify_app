@@ -66,6 +66,25 @@ async function findById(id) {
   return hydrate(rows[0]);
 }
 
+/** Mapping ids supplied by one destination, safely scoped back to that store. */
+async function listForDestinationByIds(destinationStoreId, mappingIds) {
+  const ids = [...new Set((mappingIds || []).map(Number))].filter(
+    (id) => Number.isInteger(id) && id > 0
+  );
+
+  if (!ids.length) return [];
+
+  const rows = await query(
+    `SELECT m.*
+       FROM product_mappings m
+       JOIN store_connections c ON c.id = m.connection_id
+      WHERE m.id IN (?) AND c.destination_store_id = ?`,
+    [ids, destinationStoreId]
+  );
+
+  return rows.map(hydrate);
+}
+
 /**
  * The mappings that produced a given product IN a destination store.
  *
@@ -538,6 +557,7 @@ module.exports = {
   findBySourceProductId,
   findByDestinationProductId,
   findById,
+  listForDestinationByIds,
   markGoneFromDestination,
   listForSourceProduct,
   listForConnection,
