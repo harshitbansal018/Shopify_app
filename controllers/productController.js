@@ -220,10 +220,13 @@ function sourceOnly(req, res) {
  * variant": setSelectedVariants stores that as NULL so a variant added at the
  * source later still flows.
  */
-async function recordSelections(storeId, picks) {
+async function recordSelections(storeId, picks, { existingIds = new Set() } = {}) {
   let narrowed = 0;
   let shared = 0;
   let unshared = 0;
+  let added = 0;
+  let alreadyAdded = 0;
+  let updated = 0;
 
   for (const pick of picks) {
     const cached = await sourceProductModel.findByShopifyId(storeId, pick.id);
@@ -258,6 +261,17 @@ async function recordSelections(storeId, picks) {
 
     if (saved.selected_variant_ids) narrowed += 1;
 
+    if (!existingIds.has(String(pick.id))) {
+      added += 1;
+    } else if (
+      JSON.stringify(cached.selected_variant_ids || null) !==
+      JSON.stringify(saved.selected_variant_ids || null)
+    ) {
+      updated += 1;
+    } else {
+      alreadyAdded += 1;
+    }
+
     // Carry it onto the mappings, or a shared product would keep sending the
     // variants it was sharing before.
     await productMappingModel.setAllowedVariantsForProduct(
@@ -266,7 +280,7 @@ async function recordSelections(storeId, picks) {
     );
   }
 
-  return { narrowed, shared, unshared };
+  return { narrowed, shared, unshared, added, alreadyAdded, updated };
 }
 
 /** Which source Products filter best represents what the picker just added. */
@@ -279,26 +293,53 @@ function filterForImportedSelection({ shared = 0, unshared = 0 } = {}) {
 
 exports.filterForImportedSelection = filterForImportedSelection;
 
-/** A short popup describing what the picker changed. */
-function noticeForImportedSelection({ shared = 0, unshared = 0 } = {}) {
-  if (shared > 0 && unshared > 0) {
-    const total = shared + unshared;
-    return `${total} products processed: ${shared} shared and ${unshared} not shared.`;
-  }
-
-  if (shared > 0) {
-    return shared === 1
-      ? "Shared product updated."
-      : `${shared} shared products updated.`;
-  }
-
-  if (unshared > 0) {
-    return unshared === 1
+/** A short popup that distinguishes new products from existing selections. */
+function noticeForImportedSelection({
+  added = 0,
+  alreadyAdded = 0,
+  updated = 0,
+} = {}) {
+  if (added > 0 && updated === 0 && alreadyAdded === 0) {
+    return added === 1
       ? "Product added."
-      : `${unshared} products added.`;
+      : `${added} products added.`;
   }
 
-  return "No products were added.";
+  if (alreadyAdded > 0 && added === 0 && updated === 0) {
+    return alreadyAdded === 1
+      ? "This product is already added."
+      : `${alreadyAdded} products are already added.`;
+  }
+
+  if (updated > 0 && added === 0 && alreadyAdded === 0) {
+    return updated === 1
+      ? "Product already added. Variant selection updated."
+      : `${updated} already-added products had their variant selections updated.`;
+  }
+
+  const parts = [];
+
+  if (added > 0) {
+    parts.push(added === 1 ? "1 product added." : `${added} products added.`);
+  }
+
+  if (updated > 0) {
+    parts.push(
+      updated === 1
+        ? "1 already-added product's variant selection updated."
+        : `${updated} already-added products' variant selections updated.`
+    );
+  }
+
+  if (alreadyAdded > 0) {
+    parts.push(
+      alreadyAdded === 1
+        ? "1 product was already added."
+        : `${alreadyAdded} products were already added.`
+    );
+  }
+
+  return parts.join(" ") || "No products were added.";
 }
 
 exports.noticeForImportedSelection = noticeForImportedSelection;
@@ -316,13 +357,36 @@ exports.postImport = async (req, res) => {
   // [{ id, variant_ids: [...] }] -- the picker reopens pre-ticked with the
   // current choice, so whatever comes back IS the new choice. Products the
   // merchant did not touch are simply absent and keep what they had.
-  const picks = Array.isArray(req.body.products) ? req.body.products : [];
+  const rawPicks = Array.isArray(req.body.products) ? req.body.products : [];
+  // The Shopify picker returns one entry per product, but the endpoint is
+  // public to any authenticated client. De-duplicate a crafted payload too,
+  // otherwise one product could inflate the popup counts.
+  const picks = [...new Map(
+    rawPicks
+      .filter(
+        (pick) =>
+          pick && pick.id !== undefined && pick.id !== null && String(pick.id)
+      )
+      .map((pick) => [String(pick.id), pick])
+  ).values()];
 
   if (!picks.length) {
     return res.status(400).json({ error: "Pick at least one product." });
   }
 
   try {
+    // Snapshot membership before the upsert. source_products deliberately
+    // updates an existing row in place, so checking afterwards cannot tell a
+    // genuinely new pick from a product the merchant selected again.
+    const existingIds = new Set();
+    const uniquePickIds = [...new Set(picks.map((pick) => String(pick.id)))];
+
+    for (const id of uniquePickIds) {
+      if (await sourceProductModel.findByShopifyId(req.storeId, id)) {
+        existingIds.add(id);
+      }
+    }
+
     const result = await productSync.importProducts(
       req.shop,
       req.storeId,
@@ -336,7 +400,8 @@ exports.postImport = async (req, res) => {
     );
     const selection = await recordSelections(
       req.storeId,
-      picks.filter((pick) => importedIds.has(String(pick.id)))
+      picks.filter((pick) => importedIds.has(String(pick.id))),
+      { existingIds }
     );
     const filter = filterForImportedSelection(selection);
     const message = noticeForImportedSelection(selection);
@@ -350,6 +415,9 @@ exports.postImport = async (req, res) => {
     return res.json({
       ok: true,
       imported: result.imported,
+      added: selection.added,
+      alreadyAdded: selection.alreadyAdded,
+      updated: selection.updated,
       narrowed: selection.narrowed,
       requeued: result.requeued,
       filter,

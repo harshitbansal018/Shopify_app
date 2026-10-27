@@ -411,6 +411,12 @@ const STORE_ROW = {
       "empty list is explained",
       noCode.includes("No destination store is connected")
     );
+    check(
+      "a newly connected destination appears without a manual refresh",
+      noCode.includes('window.appFetch("/stores/status"') &&
+        noCode.includes('window.appNavigate(returnTo || "/stores")') &&
+        noCode.includes("status.active > activeConnectionCount")
+    );
 
     const waitingReturn = await render("source/stores", {
       ...BASE,
@@ -844,19 +850,22 @@ const STORE_ROW = {
       productController.filterForImportedSelection({ shared: 0, unshared: 2 }) === "unshared");
     check("adding a mixture selects All",
       productController.filterForImportedSelection({ shared: 1, unshared: 1 }) === "all");
-    check("the import popup explains a shared-only result",
-      productController.noticeForImportedSelection({ shared: 2, unshared: 0 }) ===
-        "2 shared products updated." &&
-      productController.noticeForImportedSelection({ shared: 1, unshared: 0 }) ===
-        "Shared product updated.");
-    check("the import popup explains an unshared-only result",
-      productController.noticeForImportedSelection({ shared: 0, unshared: 2 }) ===
+    check("the import popup explains newly added products",
+      productController.noticeForImportedSelection({ added: 2 }) ===
         "2 products added." &&
-      productController.noticeForImportedSelection({ shared: 0, unshared: 1 }) ===
+      productController.noticeForImportedSelection({ added: 1 }) ===
         "Product added.");
+    check("the import popup explains products that were already added",
+      productController.noticeForImportedSelection({ alreadyAdded: 2 }) ===
+        "2 products are already added." &&
+      productController.noticeForImportedSelection({ alreadyAdded: 1 }) ===
+        "This product is already added.");
+    check("the import popup explains an updated variant selection",
+      productController.noticeForImportedSelection({ updated: 1 }) ===
+        "Product already added. Variant selection updated.");
     check("the import popup explains a mixed result",
-      productController.noticeForImportedSelection({ shared: 1, unshared: 2 }) ===
-        "3 products processed: 1 shared and 2 not shared.");
+      productController.noticeForImportedSelection({ added: 2, alreadyAdded: 1 }) ===
+        "2 products added. 1 product was already added.");
     check("the picker follows the filter returned by the import",
       all.includes('shared: productsUrl("shared")') &&
         all.includes('unshared: productsUrl("unshared")') &&

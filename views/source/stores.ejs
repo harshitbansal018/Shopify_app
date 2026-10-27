@@ -168,6 +168,9 @@
       var codeBar = document.getElementById("code-bar");
       var returnTo = <%- json(productsReturn) %>;
       var destinationReady = <%- json(destinationReady) %>;
+      var activeConnectionCount = <%- json(connections.filter(function (connection) {
+        return connection.status === "active";
+      }).length) %>;
       var returnButton = document.getElementById("return-button");
       var ttlMs = <%- json(codeTtlMinutes) %> * 60 * 1000;
       var expiresAt = <%- json(pairingCode && pairingCode.expiresAt ? new Date(pairingCode.expiresAt).getTime() : null) %>;
@@ -204,7 +207,7 @@
 
       if (returnTo && destinationReady) {
         window.appNavigate(returnTo);
-      } else if (returnTo) {
+      } else {
         var checkingConnection = false;
 
         var connectionTimer = setInterval(async function () {
@@ -217,10 +220,13 @@
             });
             var status = await response.json().catch(function () { return {}; });
 
-            if (response.ok && status.connected) {
+            if (response.ok && status.active > activeConnectionCount) {
               clearInterval(connectionTimer);
               window.appToast("Destination connected");
-              window.appNavigate(returnTo);
+              // During the Products handoff, continue where the merchant left
+              // off. On a normal Stores visit, reload this route through the
+              // app navigator so the new destination row appears by itself.
+              window.appNavigate(returnTo || "/stores");
             }
           } catch (_) {
             // A temporary polling failure needs no banner: the next quiet
