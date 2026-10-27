@@ -148,10 +148,10 @@ const STORE_ROW = {
       topSellers: [],
     });
 
-    check("an empty source explains its next steps",
+    check("an empty source keeps its cards and standard table state",
         sourceEmpty.includes("No products staged yet") &&
         sourceEmpty.includes("No destination store is connected") &&
-        sourceEmpty.includes("None of your synced products have sold yet"));
+        sourceEmpty.includes("No records found"));
     check("an empty source has no invalid chart values",
       !sourceEmpty.includes("NaN") && !sourceEmpty.includes("stroke-dasharray"));
 
@@ -258,8 +258,8 @@ const STORE_ROW = {
     check("and explains both charts",
       empty.includes("Nothing has been offered") &&
         empty.includes("No source store is connected"));
-    check("and shows an empty top-sellers state",
-      empty.includes("No records found") && empty.includes("Nothing has sold yet"));
+    check("and shows the standard empty top-sellers state",
+      empty.includes("No records found") && !empty.includes("Nothing has sold yet"));
     check("no NaN anywhere",
       !empty.includes("NaN"),
       "dividing by a zero total");
@@ -407,10 +407,9 @@ const STORE_ROW = {
       /<div class="code" id="code-box" hidden>/.test(noCode)
     );
     check("source offers to generate one", noCode.includes("Generate a code"));
-    check(
-      "empty list is explained",
-      noCode.includes("No destination store is connected")
-    );
+    check("empty list uses the standard message",
+      noCode.includes("No records found") &&
+        !noCode.includes("No stores connected yet"));
     check(
       "a newly connected destination appears without a manual refresh",
       noCode.includes('window.appFetch("/stores/status"') &&
@@ -885,10 +884,9 @@ const STORE_ROW = {
 
     check("an empty filter keeps the filter visible",
       /All\s*<span class="segment__count">2</.test(emptyShared));
-    check("and says it is the filter that is empty",
-      emptyShared.includes("Nothing is shared yet") &&
-        emptyShared.includes("Switch to"),
-      "'no records' on a full catalogue reads as data loss");
+    check("and uses the standard empty-table message",
+      emptyShared.includes("No records found") &&
+        !emptyShared.includes("Nothing is shared yet"));
 
     // The picker opens BLANK on purpose. Pre-ticking it with everything
     // already staged made it hand the whole catalogue back on every Add, and
@@ -1309,8 +1307,9 @@ const STORE_ROW = {
     check("an empty tab still shows both tabs",
       emptyUnsynced.includes("Synced (0)") && emptyUnsynced.includes("Unsynced (0)"),
       "the other tab may still have something");
-    check("and explains itself",
-      emptyUnsynced.includes("Nothing is waiting for you"));
+    check("and uses the standard empty-table message",
+      emptyUnsynced.includes("No records found") &&
+        !emptyUnsynced.includes("Nothing is waiting for you"));
     check("in a row of an otherwise complete table",
       emptyUnsynced.includes("<table") &&
         emptyUnsynced.includes("No records found") &&
@@ -1918,8 +1917,8 @@ const STORE_ROW = {
       "a stale mirror must look stale, not like the source has done nothing");
 
     const none = await orders("destination", "placed", []);
-    check("an empty screen explains itself",
-      none.includes("No orders yet") && none.includes("No records found"));
+    check("an empty screen uses the standard message",
+      none.includes("No records found") && !none.includes("No orders yet"));
     check("and keeps its columns", none.includes("<table"),
       "the table vanished instead of saying it is empty");
 
@@ -2044,8 +2043,9 @@ const STORE_ROW = {
       lines: [],
       shipments: [],
     });
-    check("a detail with no lines left explains why",
-      emptyDetail.includes("nothing left to charge for"));
+    check("a detail with no lines uses the standard message",
+      emptyDetail.includes("No records found") &&
+        !emptyDetail.includes("nothing left to charge for"));
     check("and keeps its columns",
       emptyDetail.includes("<table") && emptyDetail.includes("No records found"));
     check("but drops the totals row",
@@ -2724,9 +2724,9 @@ const STORE_ROW = {
 
     check("the source screen carries its filter into the search",
       sourceScreen.includes('name="filter" value="unshared"'));
-    check("and a search that finds nothing says so, not 'no products'",
-      sourceScreen.includes("Nothing matches") && sourceScreen.includes("widget"),
-      "an empty catalogue and an empty result are different problems");
+    check("and an empty search uses the standard table message",
+      sourceScreen.includes("No records found") &&
+        !sourceScreen.includes("Nothing matches"));
     check("the search survives a change of filter",
       /href="\/products\?filter=shared&amp;q=/.test(sourceScreen),
       "narrowing mid-search must mean 'the shared ones OF THIS'");
@@ -2789,9 +2789,9 @@ const STORE_ROW = {
       (await byStore(8, { search: "hat" }))
         .includes('data-navigate="/products?tab=synced&amp;store=8"'),
       "the & is HTML-escaped in an attribute; the browser hands back a plain &");
-    check("an empty filter says so, not 'nothing synced'",
-      filtered.includes("Nothing on this tab from that store"),
-      "an empty tab and an empty filter are different problems");
+    check("an empty store filter uses the standard table message",
+      filtered.includes("No records found") &&
+        !filtered.includes("Nothing on this tab from that store"));
 
     check("with one supplier there is no filter to offer",
       !destinationScreen.includes('id="store-filter"'),
@@ -2799,8 +2799,9 @@ const STORE_ROW = {
     check("and can search by the store that sent it",
       destinationScreen.includes("source store"),
       "over there a merchant thinks in suppliers, not product names");
-    check("its empty result says which tab is empty",
-      destinationScreen.includes("Nothing on this tab matches"));
+    check("its empty result uses the standard table message",
+      destinationScreen.includes("No records found") &&
+        !destinationScreen.includes("Nothing on this tab matches"));
 
     /* One row, not two. The search and the control beside it narrow the same
      * table; stacked, they read as two unrelated widgets. */
