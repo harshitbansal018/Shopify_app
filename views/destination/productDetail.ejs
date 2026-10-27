@@ -110,6 +110,9 @@
                   <%= variant.inventory_quantity === null ||
                       variant.inventory_quantity === undefined
                       ? "—" : variant.inventory_quantity %>
+                  <% if (variant.allocated_quantity !== undefined) { %>
+                    <span class="muted"> reserved remaining<% if (variant.sold_quantity) { %> (<%= variant.sold_quantity %> sold)<% } %></span>
+                  <% } %>
                 </td>
               </tr>
             <% }); %>

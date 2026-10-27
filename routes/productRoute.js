@@ -10,6 +10,7 @@ const {
   postResetVariants,
   postRemoveVariant,
   postDeleteProduct,
+  postInventoryAllocation,
   postSync,
   postAccept,
   postDecline,
@@ -42,6 +43,7 @@ router.post("/decline", postDecline); // stop receiving
 // other fixed path above it.
 router.get("/:id", getProduct); // one product's shared variants
 router.post("/:id/variants/remove", postRemoveVariant); // drop one variant
+router.post("/:id/inventory-allocation", postInventoryAllocation);
 router.post("/:id/delete", postDeleteProduct); // here AND on the destinations
 
 module.exports = router;

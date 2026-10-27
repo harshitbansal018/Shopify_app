@@ -300,6 +300,21 @@ console.log("\nProductSetInput");
     createWithStock.variants[0].inventoryQuantities[0].locationId ===
       "gid://shopify/Location/default");
 
+  const allocatedStock = productSync.buildProductInput(
+    product,
+    inventoryVariants.map((variant, index) => ({ ...variant, id: index + 1 })),
+    {},
+    null,
+    {
+      locationId: "gid://shopify/Location/default",
+      allocatedInventory: new Map([[1, 25], [2, 0]]),
+    }
+  );
+  check("a destination receives its reserved quantity instead of source stock",
+    allocatedStock.variants[0].inventoryQuantities[0].quantity === 25);
+  check("a fully sold allocation syncs as zero, not as missing",
+    allocatedStock.variants[1].inventoryQuantities[0].quantity === 0);
+
   // A product with no options must not send an empty array.
   const plain = productSync.buildProductInput(
     { title: "Sticker", status: "active", product_data: {} },

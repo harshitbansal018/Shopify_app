@@ -12,6 +12,7 @@ const sourceProductModel = require("../models/sourceProductModel");
 const sourceVariantModel = require("../models/sourceVariantModel");
 const productMappingModel = require("../models/productMappingModel");
 const mappingVariantProductModel = require("../models/mappingVariantProductModel");
+const inventoryAllocationModel = require("../models/inventoryAllocationModel");
 const connectionModel = require("../models/connectionModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
 const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
@@ -1010,7 +1011,12 @@ function buildProductInput(
   variants,
   settings,
   destinationProductId,
-  { locationId = null, inventoryLocationIds = null, collections = null } = {}
+  {
+    locationId = null,
+    inventoryLocationIds = null,
+    collections = null,
+    allocatedInventory = null,
+  } = {}
 ) {
   const data = product.product_data || {};
   const sourceOptions = data.options || [];
@@ -1168,14 +1174,18 @@ function buildProductInput(
         ? inventoryLocationIds.get(String(variant.shopify_variant_id)) || null
         : locationId;
 
+      const inventoryQuantity = allocatedInventory instanceof Map &&
+        allocatedInventory.has(Number(variant.id))
+        ? allocatedInventory.get(Number(variant.id))
+        : variant.inventory_quantity;
+
       if (on("inventory") && inventoryLocationId && variant.inventory_tracked !== 0 &&
-          variant.inventory_quantity !== null &&
-          variant.inventory_quantity !== undefined) {
+          inventoryQuantity !== null && inventoryQuantity !== undefined) {
         out.inventoryQuantities = [
           {
             locationId: inventoryLocationId,
             name: "available",
-            quantity: Number(variant.inventory_quantity),
+            quantity: Number(inventoryQuantity),
           },
         ];
       }
@@ -1338,6 +1348,10 @@ async function pushOne(connection, mapping) {
       currency: connection.destination.currency,
     }),
   ]);
+  const allocatedInventory = await inventoryAllocationModel.remainingMap(
+    connection.id,
+    product.id
+  );
   const settings = withSourceFeatureGates(destinationSettings, sourceSettings);
   settings.included_shipping_amount = shippingPolicy.mode === "disabled"
     ? 0
@@ -1396,7 +1410,7 @@ async function pushOne(connection, mapping) {
     variants,
     settings,
     mapping.destination_shopify_product_id,
-    { locationId, inventoryLocationIds, collections }
+    { locationId, inventoryLocationIds, collections, allocatedInventory }
   );
 
   // Values alone create unstructured metafields, which do not appear as a

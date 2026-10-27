@@ -49,6 +49,22 @@
           there too.
         </p> -->
 
+        <%
+          var inventoryDestinations = typeof allocationDestinations !== "undefined"
+            ? allocationDestinations
+            : [];
+          var inlineDestination = inventoryDestinations.length === 1
+            ? inventoryDestinations[0]
+            : null;
+          var inlineDestinationName = inlineDestination
+            ? (inlineDestination.connection.destination.store_name ||
+              inlineDestination.connection.destination.shop_domain)
+            : "";
+          var inlineInventoryEnabled = inlineDestination
+            ? inlineDestination.inventoryEnabled !== false
+            : false;
+        %>
+
         <%# The table keeps its columns when it is empty and says so in a row
             of its own: a table that vanishes reads as a screen that failed. %>
         <table class="table">
@@ -57,27 +73,45 @@
               <th>Variant</th>
               <th>SKU</th>
               <th>Price</th>
-              <th>Stock</th>
+              <th>Source stock</th>
+              <% if (inlineDestination) { %>
+                <th>Inventory for <%= inlineDestinationName %></th>
+              <% } %>
               <th class="table__actions-head">Actions</th>
             </tr>
           </thead>
           <tbody>
             <% if (!shared.length) { %>
               <tr class="row--empty">
-                <td class="table__empty" colspan="5">
+                <td class="table__empty" colspan="<%= inlineDestination ? 6 : 5 %>">
                   <strong>No records found</strong>
                 </td>
               </tr>
             <% } else { %>
-            <% shared.forEach(function (variant) { %>
+            <% shared.forEach(function (variant) {
+              var name = [variant.option1, variant.option2, variant.option3]
+                .filter(Boolean).join(" / ") || variant.title;
+              var inlineAllocation = inlineDestination
+                ? inlineDestination.allocations.get(Number(variant.id))
+                : null;
+              var inlineAllocated = inlineAllocation
+                ? Number(inlineAllocation.allocated_quantity || 0)
+                : 0;
+              var inlineSold = inlineAllocation
+                ? Number(inlineAllocation.sold_quantity || 0)
+                : 0;
+              var inlineRemaining = inlineAllocation
+                ? Number(inlineAllocation.remaining_quantity || 0)
+                : 0;
+              var sourceAvailable = Number(variant.inventory_quantity);
+              var inlineMax = inlineAllocated +
+                (Number.isFinite(sourceAvailable) ? Math.max(sourceAvailable, 0) : 0);
+            %>
               <tr>
                 <td>
                   <span class="table__title">
                     <%# Shopify calls a single default variant "Default Title",
                         which means nothing to a merchant. %>
-                    <% var name = [variant.option1, variant.option2, variant.option3]
-                         .filter(Boolean).join(" / ")
-                       || variant.title; %>
                     <%= name === "Default Title" ? "Single variant" : (name || "—") %>
                   </span>
                 </td>
@@ -96,6 +130,39 @@
                       variant.inventory_quantity === undefined
                       ? "—" : variant.inventory_quantity %>
                 </td>
+                <% if (inlineDestination) { %>
+                  <td>
+                    <div class="quantity-stepper">
+                      <button
+                        class="quantity-stepper__button allocation-step"
+                        type="button"
+                        data-step="-1"
+                        aria-label="Decrease inventory for <%= name %>"
+                        <%= inlineInventoryEnabled ? "" : "disabled" %>>&minus;</button>
+                      <input
+                        class="field__input allocation-input"
+                        type="number"
+                        min="<%= inlineSold %>"
+                        max="<%= inlineMax %>"
+                        step="1"
+                        value="<%= inlineAllocated %>"
+                        data-connection="<%= inlineDestination.connection.id %>"
+                        data-variant="<%= variant.id %>"
+                        data-sold="<%= inlineSold %>"
+                        <%= inlineInventoryEnabled ? "" : "disabled" %>
+                        aria-label="Inventory allotted to <%= inlineDestinationName %> for <%= name %>">
+                      <button
+                        class="quantity-stepper__button allocation-step"
+                        type="button"
+                        data-step="1"
+                        aria-label="Increase inventory for <%= name %>"
+                        <%= inlineInventoryEnabled ? "" : "disabled" %>>+</button>
+                    </div>
+                    <span class="allocation-limit">
+                      <%= inlineRemaining %> remaining &middot; maximum <%= inlineMax %>
+                    </span>
+                  </td>
+                <% } %>
                 <td class="table__actions">
                   <button
                     class="btn btn--small btn--danger remove-variant"
@@ -114,6 +181,26 @@
           </tbody>
         </table>
 
+        <% if (inlineDestination) { %>
+          <% if (!inlineInventoryEnabled) { %>
+            <p class="notice notice--warn">
+              Inventory allocation is unavailable for <%= inlineDestinationName %>.
+              Keep the connection active and enable inventory sync in the
+              destination Settings before changing it.
+            </p>
+          <% } %>
+          <div
+            class="allocation-form__actions allocation-controls"
+            data-connection="<%= inlineDestination.connection.id %>">
+            <button class="btn btn--small allocation-return" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
+              Return all unsold stock
+            </button>
+            <button class="btn btn--small btn--primary allocation-save" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
+              Save inventory
+            </button>
+          </div>
+        <% } %>
+
         <%# Nothing shared at all is its own state, handled in the row above. %>
         <% if (shared.length && shared.length < totalVariants) { %>
           <p class="muted">
@@ -124,6 +211,105 @@
               Share all <%= totalVariants %> variants
             </button>
           </div>
+        <% } %>
+
+        <% if (inventoryDestinations.length > 1) { %>
+          <section class="allocation-panel" aria-labelledby="allocation-heading">
+            <div class="allocation-panel__header">
+              <div>
+                <h2 class="panel__title" id="allocation-heading">Inventory allocation</h2>
+                <p class="panel__copy">
+                  Reserve stock for each destination. Reserved units are removed from
+                  this source store now, so the same unit cannot sell in two stores.
+                </p>
+              </div>
+            </div>
+
+            <% inventoryDestinations.forEach(function (destination) {
+              var connection = destination.connection;
+              var mapping = destination.mapping;
+              var allowedIds = mapping.allowed_variant_ids
+                ? mapping.allowed_variant_ids.map(Number)
+                : null;
+              var destinationVariants = allowedIds
+                ? shared.filter(function (variant) { return allowedIds.indexOf(Number(variant.id)) !== -1; })
+                : shared;
+              var destinationName = connection.destination.store_name || connection.destination.shop_domain;
+              var inventoryEnabled = destination.inventoryEnabled !== false;
+            %>
+              <form class="allocation-form" data-connection="<%= connection.id %>">
+                <div class="allocation-form__title">
+                  <strong><%= destinationName %></strong>
+                  <span class="muted">Total reserved includes units already sold.</span>
+                </div>
+                <% if (!inventoryEnabled) { %>
+                  <p class="notice notice--warn">
+                    Inventory allocation is unavailable for this destination.
+                    Keep the connection active and enable inventory sync in the
+                    destination Settings before changing it.
+                  </p>
+                <% } %>
+                <table class="table table--allocation">
+                  <thead>
+                    <tr>
+                      <th>Variant</th>
+                      <th>Available at source</th>
+                      <th>Sold</th>
+                      <th>Remaining there</th>
+                      <th>Reserved total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <% destinationVariants.forEach(function (variant) {
+                      var allocation = destination.allocations.get(Number(variant.id));
+                      var allocated = allocation ? allocation.allocated_quantity : 0;
+                      var sold = allocation ? allocation.sold_quantity : 0;
+                      var remaining = allocation ? allocation.remaining_quantity : 0;
+                      var available = Number(variant.inventory_quantity);
+                      var maximum = Number(allocated) +
+                        (Number.isFinite(available) ? Math.max(available, 0) : 0);
+                      var variantName = [variant.option1, variant.option2, variant.option3]
+                        .filter(Boolean).join(" / ") || variant.title;
+                    %>
+                      <tr>
+                        <td><span class="table__title"><%= variantName === "Default Title" ? "Single variant" : variantName %></span></td>
+                        <td><%= variant.inventory_quantity == null ? "—" : variant.inventory_quantity %></td>
+                        <td><%= sold %></td>
+                        <td><%= remaining %></td>
+                        <td>
+                          <div class="quantity-stepper">
+                            <button class="quantity-stepper__button allocation-step" type="button" data-step="-1" <%= inventoryEnabled ? "" : "disabled" %>>&minus;</button>
+                            <input
+                              class="field__input allocation-input"
+                              type="number"
+                              min="<%= sold %>"
+                              max="<%= maximum %>"
+                              step="1"
+                              value="<%= allocated %>"
+                              data-connection="<%= connection.id %>"
+                              data-variant="<%= variant.id %>"
+                              data-sold="<%= sold %>"
+                              <%= inventoryEnabled ? "" : "disabled" %>
+                              aria-label="Reserved total for <%= variantName %> at <%= destinationName %>">
+                            <button class="quantity-stepper__button allocation-step" type="button" data-step="1" <%= inventoryEnabled ? "" : "disabled" %>>+</button>
+                          </div>
+                          <span class="allocation-limit">maximum <%= maximum %></span>
+                        </td>
+                      </tr>
+                    <% }); %>
+                  </tbody>
+                </table>
+                <div class="allocation-form__actions allocation-controls" data-connection="<%= connection.id %>">
+                  <button class="btn btn--small allocation-return" type="button" <%= inventoryEnabled ? "" : "disabled" %>>
+                    Return all unsold stock
+                  </button>
+                  <button class="btn btn--small btn--primary allocation-save" type="submit" <%= inventoryEnabled ? "" : "disabled" %>>
+                    Save allocation
+                  </button>
+                </div>
+              </form>
+            <% }); %>
+          </section>
         <% } %>
 
     </section>
@@ -194,6 +380,95 @@
           }
         });
       }
+
+      function clampAllocation(input, value) {
+        var minimum = Number(input.min || 0);
+        var maximum = Number(input.max || minimum);
+        return Math.min(maximum, Math.max(minimum, Math.round(value)));
+      }
+
+      Array.prototype.slice.call(document.querySelectorAll(".allocation-step"))
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            var input = button.parentElement.querySelector(".allocation-input");
+            input.value = clampAllocation(
+              input,
+              Number(input.value || 0) + Number(button.dataset.step || 0)
+            );
+          });
+        });
+
+      var allAllocationInputs = Array.prototype.slice.call(
+        document.querySelectorAll(".allocation-input")
+      );
+
+      Array.prototype.slice.call(document.querySelectorAll(".allocation-controls"))
+        .forEach(function (controls) {
+          var connectionId = Number(controls.dataset.connection);
+          var save = controls.querySelector(".allocation-save");
+          var returnButton = controls.querySelector(".allocation-return");
+          var form = controls.closest("form");
+          var inputs = allAllocationInputs.filter(function (input) {
+            return Number(input.dataset.connection) === connectionId;
+          });
+
+          returnButton.addEventListener("click", function () {
+            inputs.forEach(function (input) {
+              input.value = input.dataset.sold || "0";
+            });
+          });
+
+          async function saveAllocation(event) {
+            event.preventDefault();
+            pageError.hidden = true;
+
+            for (var i = 0; i < inputs.length; i++) {
+              var input = inputs[i];
+              var quantity = Number(input.value);
+              var maximum = Number(input.max);
+              var minimum = Number(input.min);
+
+              if (!Number.isInteger(quantity) || quantity < minimum || quantity > maximum) {
+                fail(
+                  "Inventory must be a whole number between " + minimum +
+                  " and " + maximum + "."
+                );
+                input.focus();
+                return;
+              }
+            }
+
+            try {
+              var data = await post(
+                "/products/" + productId + "/inventory-allocation",
+                {
+                  connection_id: connectionId,
+                  allocations: inputs.map(function (input) {
+                    return {
+                      variant_id: Number(input.dataset.variant),
+                      quantity: Number(input.value)
+                    };
+                  })
+                },
+                save
+              );
+              window.appToast(
+                data.queued
+                  ? "Inventory saved; destination inventory is queued to sync"
+                  : "Inventory saved"
+              );
+              window.appNavigate("/products/" + productId);
+            } catch (err) {
+              fail(err.message);
+            }
+          }
+
+          if (form) {
+            form.addEventListener("submit", saveAllocation);
+          } else {
+            save.addEventListener("click", saveAllocation);
+          }
+        });
     })();
   </script>
 
