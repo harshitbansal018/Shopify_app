@@ -678,16 +678,22 @@ const STORE_ROW = {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
       filter: "all",
-      counts: { all: 1, shared: 0, unshared: 1 },
-      pager: pagerFor(1),
+      counts: { all: 0, shared: 0, unshared: 0 },
+      pager: pagerFor(0),
       search: "",
       products: [],
       connections: [CONN],
       activeConnections: [CONN],
     });
 
-    check("source empty state explains Add products",
-      emptySource.includes("Add products"));
+    const emptySourceRow = emptySource.slice(
+      emptySource.indexOf('<tr class="row--empty">'),
+      emptySource.indexOf("</tr>", emptySource.indexOf('<tr class="row--empty">'))
+    );
+    check("source empty state only says no records found",
+      emptySourceRow.includes("No records found") &&
+        !emptySourceRow.includes("linked__icon") &&
+        !emptySourceRow.includes("<span>"));
     // An empty table keeps its columns and says so in a row of its own. A
     // table that disappears reads as a screen that failed to load.
     check("source empty state keeps the columns",
