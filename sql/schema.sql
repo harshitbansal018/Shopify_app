@@ -140,6 +140,21 @@ CREATE TABLE IF NOT EXISTS `source_variant_mappings` (
   KEY `idx_source_variant_sku` (`sku`),
   CONSTRAINT `fk_source_variant_product` FOREIGN KEY (`source_product_id`) REFERENCES `source_products` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS `inventory_allocations` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `connection_id` int(11) NOT NULL,
+  `source_variant_mapping_id` int(11) NOT NULL,
+  `allocated_quantity` int(11) NOT NULL DEFAULT 0,
+  `location_allocations` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`location_allocations`)),
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_inventory_allocation` (`connection_id`,`source_variant_mapping_id`),
+  KEY `idx_inventory_allocation_variant` (`source_variant_mapping_id`),
+  CONSTRAINT `fk_inventory_allocation_connection` FOREIGN KEY (`connection_id`) REFERENCES `store_connections` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_inventory_allocation_variant` FOREIGN KEY (`source_variant_mapping_id`) REFERENCES `source_variant_mappings` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `chk_inventory_allocation_nonnegative` CHECK (`allocated_quantity` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS `mapping_variant_products` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `product_mapping_id` int(11) NOT NULL,

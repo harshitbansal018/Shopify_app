@@ -23,6 +23,9 @@ const productMappingModel = require("../models/productMappingModel");
 const connectionModel = require("../models/connectionModel");
 const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
 const shippingPolicyModel = require("../models/shippingPolicyModel");
+const syncSettingsModel = require("../models/syncSettingsModel");
+const inventoryAllocationModel = require("../models/inventoryAllocationModel");
+const inventoryAllocation = require("../services/inventoryAllocation");
 const productSync = require("../services/productSync");
 const { renderStoreType } = require("./storeController");
 const { paginate } = require("./pagination");
@@ -84,14 +87,36 @@ exports.getProducts = async (req, res) => {
 
       // One batched query for the whole page, not one per product -- and now
       // for fifteen rows rather than the whole catalogue.
-      const variants = await mappingVariantProductModel.mapForMappings(
-        offered.map((product) => product.mapping_id)
-      );
+      const mappingIds = offered.map((product) => product.mapping_id);
+      const [variants, allocations] = await Promise.all([
+        mappingVariantProductModel.mapForMappings(mappingIds),
+        inventoryAllocationModel.mapForMappings(mappingIds),
+      ]);
 
-      const withVariants = (product) => ({
-        ...product,
-        variants: variants.get(product.mapping_id) || [],
-      });
+      const withVariants = (product) => {
+        const reserved = allocations.get(product.mapping_id) || [];
+        const byVariant = new Map(reserved.map((allocation) => [
+          Number(allocation.source_variant_mapping_id), allocation,
+        ]));
+        const productVariants = (variants.get(product.mapping_id) || [])
+          .map((variant) => {
+            const allocation = byVariant.get(Number(variant.source_variant_mapping_id));
+            return allocation
+              ? { ...variant, inventory_quantity: allocation.remaining_quantity }
+              : variant;
+          });
+
+        return {
+          ...product,
+          // Once allocation is configured, this destination's pool is the
+          // only honest stock number -- never the source store's remainder.
+          inventory: reserved.length
+            ? reserved.reduce((sum, allocation) =>
+                sum + allocation.remaining_quantity, 0)
+            : product.inventory,
+          variants: productVariants,
+        };
+      };
 
       return res.render("destination/products", {
         shop: req.shop,
@@ -451,20 +476,64 @@ exports.getProduct = async (req, res) => {
 
       if (!offered) return res.status(404).send("Product not found");
 
-      const [variants, sourceSettings, shippingPolicy] = await Promise.all([
+      const [mappedVariants, sourceSettings, shippingPolicy, allocations] = await Promise.all([
         mappingVariantProductModel.mapForMappings([offered.mapping_id]),
         sourceConnectionSettingsModel.forConnection(offered.connection_id),
         shippingPolicyModel.forConnection(offered.connection_id, {
           currency: offered.destination_currency || null,
         }),
+        inventoryAllocationModel.listForConnectionProduct(
+          offered.connection_id,
+          offered.source_product_id
+        ),
       ]);
+
+      const allocationByVariant = new Map(allocations.map((allocation) => [
+        Number(allocation.source_variant_mapping_id), allocation,
+      ]));
+      let shared = mappedVariants.get(offered.mapping_id) || [];
+
+      // Before acceptance there are no destination variant-link rows yet.
+      // Still show the offer and its reserved quantities from the source rows.
+      if (!shared.length) {
+        const sourceVariants = await sourceVariantModel.listForProduct(
+          offered.source_product_id
+        );
+        shared = productSync.selectVariants(
+          sourceVariants,
+          offered.allowed_variant_ids
+        ).map((variant) => ({
+          source_variant_mapping_id: variant.id,
+          source_title: variant.title,
+          source_price: variant.price,
+          sku: variant.sku,
+          option1: variant.option1,
+          option2: variant.option2,
+          option3: variant.option3,
+          inventory_quantity: variant.inventory_quantity,
+        }));
+      }
+
+      shared = shared.map((variant) => {
+        const allocation = allocationByVariant.get(
+          Number(variant.source_variant_mapping_id)
+        );
+        return allocation
+          ? {
+              ...variant,
+              inventory_quantity: allocation.remaining_quantity,
+              allocated_quantity: allocation.allocated_quantity,
+              sold_quantity: allocation.sold_quantity,
+            }
+          : variant;
+      });
 
       return res.render("destination/productDetail", {
         shop: req.shop,
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
         product: offered,
-        shared: variants.get(offered.mapping_id) || [],
+        shared,
         totalVariants: offered.offered_variant_count,
         isShared: !offered.awaiting,
         sourceSettings,
@@ -490,6 +559,39 @@ exports.getProduct = async (req, res) => {
     const live = mappings.find((mapping) => mapping.sync_status !== "deleted");
     const picked = live ? live.allowed_variant_ids : product.selected_variant_ids;
 
+    // Keep paused connections visible here as disabled allocation targets.
+    // Hiding the column entirely makes an existing share look as though the
+    // inventory feature disappeared; the write endpoint still requires active.
+    const productConnections = await connectionModel.listForSource(req.storeId);
+    const mappingByConnection = new Map(mappings.map((mapping) => [
+      Number(mapping.connection_id), mapping,
+    ]));
+    const allocationDestinations = [];
+
+    for (const connection of productConnections) {
+      const mapping = mappingByConnection.get(Number(connection.id));
+      if (!mapping || mapping.sync_status === "deleted") continue;
+
+      const [allocations, syncSettings] = await Promise.all([
+        inventoryAllocationModel.listForConnectionProduct(
+          connection.id,
+          product.id
+        ),
+        syncSettingsModel.forConnection(connection.id),
+      ]);
+      const byVariant = new Map(allocations.map((allocation) => [
+        Number(allocation.source_variant_mapping_id), allocation,
+      ]));
+
+      allocationDestinations.push({
+        connection,
+        mapping,
+        allocations: byVariant,
+        inventoryEnabled:
+          connection.status === "active" && syncSettings.inventory !== false,
+      });
+    }
+
     res.render("source/productDetail", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
@@ -500,6 +602,7 @@ exports.getProduct = async (req, res) => {
         : variants,
       totalVariants: variants.length,
       isShared: mappings.length > 0,
+      allocationDestinations,
     });
   } catch (err) {
     console.error("Product page failed:", err.message);
@@ -536,6 +639,18 @@ exports.postRemoveVariant = async (req, res) => {
     if (!remaining.length) {
       return res.status(409).json({
         error: "This is the only variant being shared. Delete the product instead.",
+      });
+    }
+
+    const reserved = (await inventoryAllocationModel.listForProduct(product.id))
+      .filter((allocation) =>
+        Number(allocation.source_variant_mapping_id) === variantId
+      )
+      .reduce((sum, allocation) => sum + allocation.remaining_quantity, 0);
+    if (reserved > 0) {
+      return res.status(409).json({
+        error:
+          `Return the ${reserved} unsold reserved unit(s) before removing this variant.`,
       });
     }
 
@@ -587,7 +702,10 @@ exports.postDeleteProduct = async (req, res) => {
       });
     }
 
-    // Cascades to the mappings, the cached variants and the variant links.
+    // Return every unsold reserved unit before the allocation rows cascade.
+    await inventoryAllocation.releaseProduct(req.store, product.id);
+
+    // Cascades to the mappings, allocations, cached variants and variant links.
     await sourceProductModel.deleteByShopifyId(
       req.storeId,
       product.shopify_product_id
@@ -602,6 +720,115 @@ exports.postDeleteProduct = async (req, res) => {
   } catch (err) {
     return res.status(err.statusCode || 502).json({
       error: reauthAware(err, "Could not delete that product."),
+    });
+  }
+};
+
+/** Reserve source inventory for one destination, variant by variant. */
+exports.postInventoryAllocation = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  try {
+    const product = await sourceProductModel.findById(req.params.id);
+    if (!product || product.store_id !== req.storeId) {
+      return res.status(404).json({ error: "Product not found." });
+    }
+
+    const connectionId = Number(req.body.connection_id);
+    const connections = await connectionModel.listForSource(req.storeId);
+    const connection = connections.find((item) =>
+      Number(item.id) === connectionId && item.status === "active"
+    );
+    if (!connection) {
+      return res.status(404).json({ error: "Destination store not found." });
+    }
+
+    const mapping = (await productMappingModel.listForSourceProduct(product.id))
+      .find((item) => Number(item.connection_id) === connectionId &&
+        item.sync_status !== "deleted");
+    if (!mapping) {
+      return res.status(409).json({
+        error: "Allow this product to the destination before allocating stock.",
+      });
+    }
+
+    const syncSettings = await syncSettingsModel.forConnection(connection.id);
+    if (syncSettings.inventory === false) {
+      return res.status(409).json({
+        error:
+          "Inventory sync is off for this destination. Enable it in the destination Settings first.",
+      });
+    }
+
+    if (!mapping.accepted_at && mapping.destination_shopify_product_id) {
+      return res.status(409).json({
+        error:
+          "This destination has unsynced the product but still keeps its Shopify copy. " +
+          "Remove the destination connection before returning that stock.",
+      });
+    }
+
+    const variants = await sourceVariantModel.listForProduct(product.id);
+    const allowed = new Set(productSync.selectVariants(
+      variants,
+      mapping.allowed_variant_ids
+    ).map((variant) => Number(variant.id)));
+    const targets = Array.isArray(req.body.allocations) ? req.body.allocations : [];
+    if (targets.some((target) => !allowed.has(Number(target.variant_id)))) {
+      return res.status(400).json({
+        error: "One or more variants are not shared with this destination.",
+      });
+    }
+
+    const beforeRows = await inventoryAllocationModel.listForConnectionProduct(
+      connection.id,
+      product.id
+    );
+    const beforeByVariant = new Map(beforeRows.map((allocation) => [
+      Number(allocation.source_variant_mapping_id),
+      allocation.allocated_quantity,
+    ]));
+    const allocations = await inventoryAllocation.setForProduct({
+      store: req.store,
+      connection,
+      product,
+      targets,
+    });
+
+    let destinationSynced = false;
+    try {
+      const pushed = await inventoryAllocation.syncDestination(
+        connection,
+        mapping,
+        product.id
+      );
+      destinationSynced = pushed.synced;
+    } catch (syncError) {
+      // Source stock has already moved. Restore the exact prior reservation
+      // before reporting failure, so a destination that rejected the update
+      // can never keep units that are also sellable at the source.
+      await inventoryAllocation.setForProduct({
+        store: req.store,
+        connection,
+        product,
+        targets: targets.map((target) => ({
+          variant_id: target.variant_id,
+          quantity: beforeByVariant.get(Number(target.variant_id)) || 0,
+        })),
+      });
+      throw syncError;
+    }
+
+    return res.json({
+      ok: true,
+      allocations,
+      queued: !destinationSynced,
+      destinationSynced,
+    });
+  } catch (err) {
+    console.error("Saving inventory allocation failed:", err.message);
+    return res.status(err.statusCode || 502).json({
+      error: reauthAware(err, "Could not save the inventory allocation."),
     });
   }
 };

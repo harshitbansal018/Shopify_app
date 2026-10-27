@@ -299,6 +299,39 @@ const CREATE_SOURCE_VARIANT_MAPPINGS = `
 `;
 
 /* ------------------------------------------------------------------ */
+/* 5a. inventory_allocations                                          */
+/* ------------------------------------------------------------------ */
+const CREATE_INVENTORY_ALLOCATIONS = `
+  CREATE TABLE IF NOT EXISTS inventory_allocations (
+    id                        INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id             INT NOT NULL,
+    source_variant_mapping_id INT NOT NULL,
+
+    -- Total units reserved for this destination. Units sold are derived from
+    -- order lines, making a redelivered webhook unable to decrement twice.
+    allocated_quantity INT NOT NULL DEFAULT 0,
+
+    -- [{ locationId, quantity }]. Source stock may live at several Shopify
+    -- locations; remembering the split lets a reduction return every unit to
+    -- the exact location from which it was reserved.
+    location_allocations JSON NOT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uniq_inventory_allocation (connection_id, source_variant_mapping_id),
+    KEY idx_inventory_allocation_variant (source_variant_mapping_id),
+
+    CONSTRAINT fk_inventory_allocation_connection
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE,
+    CONSTRAINT fk_inventory_allocation_variant
+      FOREIGN KEY (source_variant_mapping_id)
+      REFERENCES source_variant_mappings(id) ON DELETE CASCADE,
+    CONSTRAINT chk_inventory_allocation_nonnegative CHECK (allocated_quantity >= 0)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+/* ------------------------------------------------------------------ */
 /* 6. mapping_variant_products                                         */
 /* ------------------------------------------------------------------ */
 /*
@@ -1227,6 +1260,7 @@ async function runMigrations() {
   await addDestinationAcceptance();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
   await addVariantDetailColumns();
+  await query(CREATE_INVENTORY_ALLOCATIONS);
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
   await slimOrdersCustomerColumns();

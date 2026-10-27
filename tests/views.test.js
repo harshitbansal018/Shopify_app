@@ -1358,6 +1358,39 @@ const STORE_ROW = {
     check("and it says how many are held back",
       html.includes("2 variants are"));
 
+    const allocated = await render("source/productDetail", {
+      ...BASE,
+      store: { ...STORE_ROW, store_type: "source" },
+      product: PRODUCT,
+      shared: VARIANTS,
+      totalVariants: 2,
+      isShared: true,
+      allocationDestinations: [{
+        connection: {
+          id: 7,
+          destination: { store_name: "Retail shop", shop_domain: "retail.myshopify.com" },
+        },
+        mapping: { allowed_variant_ids: null },
+        allocations: new Map([[101, {
+          allocated_quantity: 25,
+          sold_quantity: 5,
+          remaining_quantity: 20,
+        }]]),
+      }],
+    });
+    check("source can reserve inventory per destination and variant",
+      allocated.includes("Inventory for Retail shop") &&
+        allocated.includes("Retail shop") &&
+        allocated.includes('value="25"') &&
+        allocated.includes('data-variant="101"'));
+    check("the allocation screen separates sold and remaining stock",
+      allocated.includes("20 remaining") &&
+        allocated.includes("Return all unsold stock"));
+    check("inline inventory cannot exceed its current maximum",
+      allocated.includes('max="29"') &&
+        allocated.includes("maximum 29") &&
+        allocated.includes('class="quantity-stepper__button allocation-step"'));
+
     // The LAST shared variant cannot be removed -- that would push a product
     // with no variants and strip the destination's copy to nothing.
     const lastOne = await render("source/productDetail", {
@@ -1409,6 +1442,8 @@ const STORE_ROW = {
           option1: "S", option2: null, option3: null,
           sku: "SH-S", source_title: "S", source_price: "20.00",
           inventory_quantity: 4,
+          allocated_quantity: 6,
+          sold_quantity: 2,
         },
       ],
       totalVariants: 1,
@@ -1419,6 +1454,10 @@ const STORE_ROW = {
 
     check("the destination sees the variants",
       destinationDetail.includes("SH-S") && destinationDetail.includes("20.00"));
+    check("the destination sees reserved remaining stock and sales",
+      destinationDetail.includes("4") &&
+        destinationDetail.includes("reserved remaining") &&
+        destinationDetail.includes("2 sold"));
     check("the variant name comes from the source row",
       destinationDetail.includes(">\n                    S\n") ||
         destinationDetail.includes("S<"));

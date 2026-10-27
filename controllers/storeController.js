@@ -678,6 +678,13 @@ exports.postDeleteStore = async (req, res) => {
     // cascades away with the connection and its Shopify id is forgotten.
     await require("../services/shippingSync").removeConnectionProfile(connection);
 
+    // Only unsold units come back. Sold units remain consumed; the rest are
+    // restored to the same source locations from which they were reserved.
+    await require("../services/inventoryAllocation").releaseConnection(
+      connection.source,
+      connectionId
+    );
+
     // Cascades to product_mappings, settings, shipping policy, orders and payouts.
     await connectionModel.deleteConnection(connectionId);
 
