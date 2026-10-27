@@ -39,6 +39,8 @@ console.log("\nRetry classification");
   check("503 is retried", isRetryable({ response: { status: 503 } }));
   check("a network error with no response is retried", isRetryable({}));
   check("an explicit throttle flag is retried", isRetryable({ throttled: true }));
+  check("a GraphQL permission error is NOT retried",
+    !isRetryable({ graphql: true }));
 
   // These are bad requests. Retrying them just burns the rate limit.
   check("400 is NOT retried", !isRetryable({ response: { status: 400 } }));
