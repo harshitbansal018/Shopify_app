@@ -1430,6 +1430,11 @@ const STORE_ROW = {
     check("share-and-save creates the offer before reserving its inventory",
       unsharedAllocation.indexOf('"/products/allow"') <
         unsharedAllocation.indexOf('"/products/" + productId + "/inventory-allocation"'));
+    check("allocation feedback describes sharing, saving, and zero inventory",
+      unsharedAllocation.includes('message = "Product shared with 0 inventory"') &&
+        unsharedAllocation.includes('message = "Product shared and inventory saved"') &&
+        unsharedAllocation.includes('message = "Inventory saved at 0"') &&
+        unsharedAllocation.includes('message += ". Destination sync is queued"'));
 
     // The LAST shared variant cannot be removed -- that would push a product
     // with no variants and strip the destination's copy to nothing.

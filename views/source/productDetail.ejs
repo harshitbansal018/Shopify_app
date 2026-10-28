@@ -442,6 +442,9 @@
             event.preventDefault();
             pageError.hidden = true;
 
+            var isSharing = controls.dataset.needsAllow === "1";
+            var isZeroInventory = true;
+
             for (var i = 0; i < inputs.length; i++) {
               var input = inputs[i];
               var quantity = Number(input.value);
@@ -456,10 +459,12 @@
                 input.focus();
                 return;
               }
+
+              if (quantity !== 0) isZeroInventory = false;
             }
 
             try {
-              if (controls.dataset.needsAllow === "1") {
+              if (isSharing) {
                 await post(
                   "/products/allow",
                   {
@@ -488,11 +493,19 @@
                 },
                 save
               );
-              window.appToast(
-                data.queued
-                  ? "Inventory saved; destination inventory is queued to sync"
-                  : "Inventory saved"
-              );
+
+              var message;
+              if (isSharing && isZeroInventory) {
+                message = "Product shared with 0 inventory";
+              } else if (isSharing) {
+                message = "Product shared and inventory saved";
+              } else if (isZeroInventory) {
+                message = "Inventory saved at 0";
+              } else {
+                message = "Inventory saved";
+              }
+              if (data.queued) message += ". Destination sync is queued";
+              window.appToast(message);
               window.appNavigate("/products/" + productId);
             } catch (err) {
               fail(err.message);
