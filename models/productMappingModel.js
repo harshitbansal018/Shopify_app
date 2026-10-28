@@ -78,7 +78,9 @@ async function listForDestinationByIds(destinationStoreId, mappingIds) {
     `SELECT m.*
        FROM product_mappings m
        JOIN store_connections c ON c.id = m.connection_id
-      WHERE m.id IN (?) AND c.destination_store_id = ?`,
+       WHERE m.id IN (?)
+         AND c.destination_store_id = ?
+         AND m.source_revoked_at IS NULL`,
     [ids, destinationStoreId]
   );
 
@@ -155,9 +157,10 @@ async function countLiveForConnection(connectionId) {
 }
 
 /** Every connection that already carries this source product. */
-async function listForSourceProduct(sourceProductId) {
+async function listForSourceProduct(sourceProductId, { includeRevoked = true } = {}) {
   const rows = await query(
-    "SELECT * FROM product_mappings WHERE source_product_id = ?",
+    `SELECT * FROM product_mappings
+      WHERE source_product_id = ?${includeRevoked ? "" : " AND source_revoked_at IS NULL"}`,
     [sourceProductId]
   );
   return rows.map(hydrate);
@@ -172,7 +175,7 @@ async function listForConnection(
   { limit = 50, offset = 0, status = null, acceptedOnly = false } = {}
 ) {
   const params = [connectionId];
-  let where = "";
+  let where = " AND m.source_revoked_at IS NULL";
 
   if (status && SYNC_STATUSES.includes(status)) {
     where += " AND m.sync_status = ?";
@@ -222,6 +225,7 @@ async function acceptForDestination(destinationStoreId, mappingIds) {
             m.sync_status = IF(m.sync_status = 'deleted', 'deleted', 'pending')
       WHERE m.id IN (?)
         AND c.destination_store_id = ?
+         AND m.source_revoked_at IS NULL
         AND m.accepted_at IS NULL`,
     [ids, destinationStoreId]
   );
@@ -263,7 +267,8 @@ async function countForConnection(connectionId, status = null) {
 
   const rows = await query(
     `SELECT COUNT(*) AS total FROM product_mappings
-      WHERE connection_id = ?${statusClause}`,
+      WHERE connection_id = ?
+        AND source_revoked_at IS NULL${statusClause}`,
     params
   );
   return Number(rows[0] ? rows[0].total : 0);
@@ -275,6 +280,7 @@ async function statusBreakdown(connectionId) {
     `SELECT sync_status, COUNT(*) AS total
        FROM product_mappings
       WHERE connection_id = ?
+        AND source_revoked_at IS NULL
       GROUP BY sync_status`,
     [connectionId]
   );
@@ -314,6 +320,11 @@ async function ensure({
        -- job, which says so explicitly.
        allowed_variant_ids =
          COALESCE(VALUES(allowed_variant_ids), allowed_variant_ids),
+        -- A source re-sharing a withdrawn product makes it an offer again.
+        -- Keep the destination product id so accepting can update/reactivate
+        -- the existing Draft instead of creating a duplicate.
+        accepted_at = IF(source_revoked_at IS NULL, accepted_at, NULL),
+        source_revoked_at = NULL,
        -- Re-allowing a product queues it again: the selection may have
        -- changed, and a 'synced' row would otherwise never be pushed.
        sync_status = IF(sync_status = 'deleted', 'deleted', 'pending')`,
@@ -345,6 +356,7 @@ async function requeueForSourceProduct(sourceProductId) {
     `UPDATE product_mappings
         SET sync_status = 'pending'
       WHERE source_product_id = ?
+        AND source_revoked_at IS NULL
         AND sync_status <> 'deleted'`,
     [sourceProductId]
   );
@@ -360,7 +372,7 @@ async function requeueForSourceProduct(sourceProductId) {
  * sending yesterday's variants.
  */
 async function setAllowedVariantsForProduct(sourceProductId, ids) {
-  const mappings = await listForSourceProduct(sourceProductId);
+  const mappings = await listForSourceProduct(sourceProductId, { includeRevoked: false });
   let changed = 0;
 
   for (const mapping of mappings) {
@@ -388,6 +400,7 @@ async function resetAllowedVariantsForProduct(sourceProductId) {
         SET allowed_variant_ids = NULL,
             sync_status = IF(sync_status = 'deleted', 'deleted', 'pending')
       WHERE source_product_id = ?
+        AND source_revoked_at IS NULL
         AND allowed_variant_ids IS NOT NULL`,
     [sourceProductId]
   );
@@ -410,7 +423,7 @@ async function removeAllowedVariant(sourceProductId, variantId, allVariantIds) {
   const removing = Number(variantId);
   const every = (allVariantIds || []).map(Number);
 
-  const mappings = await listForSourceProduct(sourceProductId);
+  const mappings = await listForSourceProduct(sourceProductId, { includeRevoked: false });
   let changed = 0;
 
   for (const mapping of mappings) {
@@ -451,6 +464,7 @@ async function requeueForConnection(connectionId) {
     `UPDATE product_mappings
         SET sync_status = 'pending'
       WHERE connection_id = ?
+        AND source_revoked_at IS NULL
         AND sync_status = 'synced'
         AND accepted_at IS NOT NULL`,
     [connectionId]
@@ -483,6 +497,7 @@ async function requeueForDestination(destinationStoreId, mappingIds) {
         SET m.sync_status = 'pending'
       WHERE m.id IN (?)
         AND c.destination_store_id = ?
+         AND m.source_revoked_at IS NULL
         AND m.accepted_at IS NOT NULL
         AND m.sync_status <> 'deleted'`,
     [ids, destinationStoreId]
@@ -538,6 +553,19 @@ async function markSkipped(id) {
   );
 }
 
+/** Source withdrew this offer; keep its destination id for a later re-share. */
+async function markSourceRevoked(id) {
+  await query(
+    `UPDATE product_mappings
+        SET source_revoked_at = NOW(),
+            accepted_at = NULL,
+            sync_status = IF(sync_status = 'deleted', 'deleted', 'skipped'),
+            error_message = NULL
+      WHERE id = ?`,
+    [id]
+  );
+}
+
 /**
  * Product removed at the source. The row is KEPT -- it records that this
  * product once existed and what it became on the destination, which a hard
@@ -579,5 +607,6 @@ module.exports = {
   markSynced,
   markFailed,
   markSkipped,
+  markSourceRevoked,
   markDeleted,
 };

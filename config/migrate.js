@@ -225,6 +225,7 @@ const CREATE_PRODUCT_MAPPINGS = `
     -- them". Once set it stays set, so later updates to an accepted product
     -- flow through without asking again -- which is the point of a sync.
     accepted_at DATETIME DEFAULT NULL,
+    source_revoked_at DATETIME DEFAULT NULL,
 
     source_updated_at DATETIME DEFAULT NULL,
     last_synced_at    DATETIME DEFAULT NULL,
@@ -811,6 +812,14 @@ async function addAllowedVariants() {
   );
 }
 
+/** The source can withdraw an offer without deleting the destination copy. */
+async function addSourceRevokedAt() {
+  await safeAlter(
+    "product_mappings.source_revoked_at",
+    "ALTER TABLE product_mappings ADD COLUMN source_revoked_at DATETIME DEFAULT NULL AFTER accepted_at"
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* 10. sync_settings                                                    */
 /* ------------------------------------------------------------------ */
@@ -1258,6 +1267,7 @@ async function runMigrations() {
   await query(CREATE_PRODUCT_MAPPINGS);
   await addAllowedVariants();
   await addDestinationAcceptance();
+  await addSourceRevokedAt();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
   await addVariantDetailColumns();
   await query(CREATE_INVENTORY_ALLOCATIONS);

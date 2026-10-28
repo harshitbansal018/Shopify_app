@@ -135,6 +135,19 @@ async function snapshot(store, { now = null } = {}) {
   };
 }
 
+/** Product-only capacity for the live Products poll (no order/email counts). */
+async function productCapacity(store) {
+  const { plan } = await effectivePlan(store);
+  const limit = plan ? planModel.limitsOf(plan).products : null;
+  const used = await usageModel.countProducts(store.id);
+
+  return {
+    used,
+    limit,
+    remaining: limit === null ? null : Math.max(0, limit - used),
+  };
+}
+
 /**
  * The warnings a destination sees at the top of every screen. Empty when all
  * is well, so the banner simply does not render.
@@ -477,6 +490,7 @@ module.exports = {
   effectivePlan,
   stateOf,
   snapshot,
+  productCapacity,
   bannerItems,
   formatDate,
   acceptProducts,

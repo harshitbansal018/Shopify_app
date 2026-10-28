@@ -1,0 +1,102 @@
+<% if (!products.length) { %>
+  <tr class="row--empty">
+    <td class="table__empty" colspan="5">
+      <strong>No records found</strong>
+    </td>
+  </tr>
+<% } else { %>
+<% products.forEach(function (product) { %>
+  <tr>
+    <td class="table__check">
+      <input
+        type="checkbox"
+        class="row-check"
+        value="<%= product.id %>"
+        data-allowed="<%= product.allowed ? 1 : 0 %>"
+        data-title="<%= product.title %>"
+        data-synced="<%= product.synced || 0 %>"
+        aria-label="Select <%= product.title %>">
+    </td>
+    <td>
+      <span class="media">
+        <% if (product.image_url) { %>
+          <img class="media__thumb" src="<%= product.image_url %>"
+               alt="" loading="lazy" width="40" height="40">
+        <% } else { %>
+          <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+        <% } %>
+        <span class="media__body">
+          <a class="table__title record-link"
+             href="<%= shopifyAdminUrl(shop, 'products', product.shopify_product_id) %>"
+             target="_blank" rel="noopener noreferrer">
+            <%= product.title %>
+          </a>
+          <span class="muted">
+            <% if (product.vendor) { %><%= product.vendor %> &middot; <% } %><%
+            %><%= product.variants.length %><%
+            %><% if (product.variants.length < product.variant_count) { %> of <%= product.variant_count %><% } %>
+            variant<%= product.variant_count === 1 ? "" : "s" %>
+          </span>
+        </span>
+      </span>
+    </td>
+    <td>
+      <% var status = String(product.status || "").toLowerCase(); %>
+      <% if (status) { %>
+        <span class="status status--<%= status %>">
+          <span class="dot" aria-hidden="true"></span><%= status %>
+        </span>
+      <% } else { %>
+        <span class="muted">&mdash;</span>
+      <% } %>
+    </td>
+    <td>
+      <% if (!product.allowed) { %>
+        <span class="muted">Not shared</span>
+      <% } else { %>
+        <% if (product.synced) { %>
+          <span class="pill pill--active"
+                title="Live in <%= product.synced %> destination store(s)">
+            &#10003; <%= product.synced %> synced
+          </span>
+        <% } %>
+        <% if (product.awaiting) { %>
+          <span class="pill pill--pending"
+                title="Offered, but the destination store has not accepted it yet. Nothing for you to do.">
+            <%= product.awaiting %> awaiting them
+          </span>
+        <% } %>
+        <% if (product.pending) { %>
+          <span class="pill pill--paused"
+                title="Accepted, and queued to be written to their store on the next sync">
+            <%= product.pending %> pending
+          </span>
+        <% } %>
+        <% if (product.failed) { %>
+          <span class="pill pill--failed" title="<%= product.error_message || "" %>">
+            <%= product.failed %> failed
+          </span>
+        <% } %>
+      <% } %>
+    </td>
+    <td class="table__actions">
+      <button
+        class="btn btn--small view-product"
+        type="button"
+        data-product="<%= product.id %>">
+        View
+      </button>
+      <button
+        class="icon-btn icon-btn--danger delete-product"
+        type="button"
+        data-product="<%= product.id %>"
+        data-title="<%= product.title %>"
+        data-synced="<%= product.synced %>"
+        title="Delete"
+        aria-label="Delete <%= product.title %>">
+        <%- include("../../partials/icon", { name: "trash" }) %>
+      </button>
+    </td>
+  </tr>
+<% }); %>
+<% } %>

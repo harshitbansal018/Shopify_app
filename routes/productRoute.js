@@ -4,9 +4,11 @@ const router = express.Router();
 const { requireSession } = require("../middleware/auth");
 const {
   getProducts,
+  getProductsLive,
   getProduct,
   postImport,
   postAllow,
+  postUnshare,
   postResetVariants,
   postRemoveVariant,
   postDeleteProduct,
@@ -21,6 +23,7 @@ const {
 router.use(requireSession);
 
 router.get("/", getProducts);
+router.get("/live", getProductsLive);
 
 // Source-only. Each handler re-checks the role: a route being unreachable in
 // the UI is not the same as it being unreachable.
@@ -30,6 +33,7 @@ router.get("/", getProducts);
 // server is the ids the merchant chose.
 router.post("/import", postImport); // picked -> source_products
 router.post("/allow", postAllow); // table -> offered to destinations
+router.post("/unshare", postUnshare); // source withdrawal -> Draft, retained
 router.post("/reset-variants", postResetVariants); // undo a narrowed selection
 
 // Destination-only. The source decides WHAT may be shared; the destination

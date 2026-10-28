@@ -36,7 +36,7 @@
 
     <p class="notice notice--error" id="page-error" hidden></p>
 
-    <%# One table, two tabs, always shown: "nothing here" on one of them is
+    <%# One table, three tabs, always shown: "nothing here" on one of them is
         itself the answer and the other tab may still have something.
         "Unsynced" is either a new source offer or a product whose existing
         destination copy has been moved to Draft. %>
@@ -44,6 +44,11 @@
         together rather than stacked as two separate-looking controls. %>
     <div class="listbar">
       <nav class="tabs">
+        <button
+          class="tabs__tab<%= tab === "all" ? " tabs__tab--on" : "" %>"
+          type="button" data-tab="all">
+          All (<%= counts.all %>)
+        </button>
         <button
           class="tabs__tab<%= tab === "synced" ? " tabs__tab--on" : "" %>"
           type="button" data-tab="synced">
@@ -162,7 +167,7 @@
               <th class="table__actions-head">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="product-rows">
             <% if (!products.length) { %>
               <tr class="row--empty">
                 <%# One cell across every column, the checkbox one included. %>
@@ -172,6 +177,7 @@
               </tr>
             <% } else { %>
             <% products.forEach(function (product) { %>
+              <% var rowSynced = product.accepted_at !== null; %>
               <tr>
                 <td class="table__check">
                   <%# One class for both tabs -- what the tick MEANS is decided
@@ -186,14 +192,15 @@
                     type="checkbox"
                     class="awaiting-check"
                     value="<%= product.mapping_id %>"
+                    data-synced="<%= rowSynced ? 1 : 0 %>"
                     <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
-                    <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
+                    <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
                     title="<%= product.sync_status === "deleted"
                       ? "Deleted at the source store"
-                      : (tab === "unsynced" && productSelectionLimit === 0
+                      : (!rowSynced && productSelectionLimit === 0
                         ? "Your product plan limit has been reached"
                         : "") %>"
-                    aria-label="<%= tab === "unsynced" ? "Sync" : "Unsync" %> <%= product.title %>">
+                    aria-label="<%= rowSynced ? "Unsync" : "Sync" %> <%= product.title %>">
                 </td>
                 <td>
                   <span class="media">
@@ -239,7 +246,7 @@
                       control lives in the final Actions column. %>
                   <% if (product.sync_status === "deleted") { %>
                     <span class="pill pill--failed">deleted</span>
-                  <% } else if (tab === "unsynced") { %>
+                  <% } else if (!rowSynced) { %>
                     <span class="pill pill--pending">unsynced</span>
                   <% } else { %>
                     <span class="pill pill--<%= product.sync_status %>">
@@ -261,17 +268,17 @@
                 <td class="table__actions">
                   <% if (product.sync_status !== "deleted") { %>
                     <button
-                      class="btn btn--small product-sync-action<%= tab === "synced" ? " btn--danger" : " btn--success" %>"
+                      class="btn btn--small product-sync-action<%= rowSynced ? " btn--danger" : " btn--success" %>"
                       type="button"
                       data-mapping="<%= product.mapping_id %>"
-                      data-action="<%= tab === "unsynced" ? "sync" : "unsync" %>"
-                      <%= tab === "unsynced" && productSelectionLimit === 0 ? "disabled" : "" %>
-                      title="<%= tab === "unsynced"
+                      data-action="<%= rowSynced ? "unsync" : "sync" %>"
+                      <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+                      title="<%= !rowSynced
                         ? (productSelectionLimit === 0
                           ? "Your product plan limit has been reached"
                           : "Sync into this store")
                         : "Stop syncing and move back to Unsynced" %>">
-                      <%= tab === "unsynced" ? "Sync" : "Unsync" %>
+                      <%= rowSynced ? "Unsync" : "Sync" %>
                     </button>
                   <% } %>
                 </td>
@@ -282,23 +289,27 @@
         </table>
 
     <%# Floats in over the table once anything is ticked. Unsynced: accept or
-        decline. Synced: refresh ("Sync now" -- nothing new is added) or stop
+        decline. Synced: refresh what is already there or stop
         receiving. %>
-    <% if (products.length) { %>
       <div class="bulkbar" id="bulkbar" role="region" aria-label="Bulk actions" hidden>
         <span class="bulkbar__count" id="bulk-count">0 selected</span>
-        <% if (tab === "unsynced") { %>
+        <% if (tab === "all") { %>
+          <button class="bulkbar__btn" type="button" id="accept-button" disabled>Sync selected</button>
+          <button class="bulkbar__btn bulkbar__btn--danger" type="button" id="unsync-button" disabled>Unsync selected</button>
+          <button class="bulkbar__btn bulkbar__btn--ghost" type="button" id="decline-button" disabled>Decline</button>
+        <% } else if (tab === "unsynced") { %>
           <button class="bulkbar__btn" type="button" id="accept-button" disabled>Sync selected</button>
           <button class="bulkbar__btn bulkbar__btn--ghost" type="button" id="decline-button" disabled>Decline</button>
         <% } else { %>
-          <button class="bulkbar__btn" type="button" id="sync-button" disabled>Sync now</button>
+          <button class="bulkbar__btn" type="button" id="sync-button" disabled>Refresh now</button>
           <button class="bulkbar__btn bulkbar__btn--danger" type="button" id="unsync-button" disabled>Unsync selected</button>
         <% } %>
         <button class="bulkbar__close" type="button" id="bulk-clear" aria-label="Clear selection">&times;</button>
       </div>
-    <% } %>
 
-    <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+    <div id="products-pager">
+      <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+    </div>
 
   </main>
 
@@ -359,6 +370,7 @@
        * a row to the other tab, the merchant should arrive there still looking
        * for what they were looking for -- not back at the full list. */
       var currentSearch = <%- json(search || "") %>;
+      var currentTab = <%- json(tab) %>;
 
       var currentStore = <%- json(storeFilter ? String(storeFilter) : "") %>;
 
@@ -372,6 +384,86 @@
         var query = params.toString();
         return query ? "/products?" + query : "/products";
       }
+
+      var productRows = document.getElementById("product-rows");
+      var productsPager = document.getElementById("products-pager");
+      var productLiveVersion = <%- json(
+        typeof liveVersion !== "undefined" ? liveVersion : ""
+      ) %>;
+      var liveRefreshing = false;
+
+      function liveProductsUrl() {
+        var url = new URL(window.location.href);
+        url.pathname = "/products/live";
+        url.searchParams.delete("id_token");
+        return url.pathname + url.search;
+      }
+
+      function updateDestinationCounts(counts) {
+        ["all", "synced", "unsynced"].forEach(function (key) {
+          var tab = document.querySelector('.tabs__tab[data-tab="' + key + '"]');
+          if (tab && counts && counts[key] !== undefined) {
+            var label = key.charAt(0).toUpperCase() + key.slice(1);
+            tab.textContent = label + " (" + counts[key] + ")";
+          }
+        });
+      }
+
+      async function refreshProductsLive(force) {
+        if (liveRefreshing || document.hidden) return false;
+        if (!force && document.querySelector(".is-loading")) return false;
+        liveRefreshing = true;
+
+        try {
+          var response = await window.appFetch(liveProductsUrl(), {
+            background: true
+          });
+          var data = await response.json().catch(function () { return {}; });
+          if (!response.ok || !data.ok) return false;
+
+          updateDestinationCounts(data.counts);
+          if (acceptButton) selectionLimit = data.productSelectionLimit;
+          Array.prototype.slice.call(
+            document.querySelectorAll('.product-sync-action[data-action="sync"]')
+          ).forEach(function (button) {
+            button.disabled = selectionLimit === 0;
+            button.title = selectionLimit === 0
+              ? "Your product plan limit has been reached"
+              : "Sync into this store";
+          });
+          if (data.version === productLiveVersion) {
+            refresh();
+            return false;
+          }
+          productLiveVersion = data.version;
+          if (productsPager && productsPager.innerHTML.trim() !== data.pager.trim()) {
+            productsPager.innerHTML = data.pager;
+          }
+          if (productRows && productRows.innerHTML.trim() !== data.rows.trim()) {
+            productRows.innerHTML = data.rows;
+            if (checkAll) checkAll.checked = false;
+            bindViewButtons();
+            bindSyncActions();
+            refresh();
+            return true;
+          }
+        } catch (_) {
+          // A background failure is retried quietly. Button actions continue
+          // to report failures in the page error banner.
+        } finally {
+          liveRefreshing = false;
+        }
+
+        return false;
+      }
+
+      var productLiveTimer = setInterval(function () {
+        refreshProductsLive(false);
+      }, 4000);
+
+      window.addEventListener("pagehide", function () {
+        clearInterval(productLiveTimer);
+      });
 
       /* ---------------- store filter ---------------- */
 
@@ -406,12 +498,18 @@
 
       /* ---------------- view one product ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".view-product"))
+      function bindViewButtons() {
+        Array.prototype.slice.call(document.querySelectorAll(".view-product"))
         .forEach(function (button) {
+          if (button.dataset.liveBound) return;
+          button.dataset.liveBound = "1";
           button.addEventListener("click", function () {
             window.appNavigate("/products/" + button.dataset.product);
           });
         });
+      }
+
+      bindViewButtons();
 
       /* ---------------- refresh what is already accepted ---------------- */
 
@@ -421,8 +519,13 @@
 
           // Every bulk button goes down together: a second action fired
           // mid-request would send the same ids twice.
-          bulkButtons.forEach(function (button) { button.disabled = true; });
-          syncButton.textContent = "Syncing…";
+          // appFetch owns the pressed button's disabled/loading state. Disable
+          // only its neighbours here so the helper sees this button as active
+          // and can restore it correctly if the request fails.
+          bulkButtons.forEach(function (button) {
+            if (button !== syncButton) button.disabled = true;
+          });
+          syncButton.textContent = "Refreshing…";
 
           try {
             var response = await window.appFetch("/products/sync", {
@@ -436,7 +539,7 @@
             if (!response.ok) throw requestFailed(data);
 
             window.appToast(data.synced + " updated, " + data.failed + " failed");
-            window.appNavigate(productsUrl("synced"));
+            await refreshProductsLive(true);
           } catch (err) {
             refresh();
             fail(err.message, err.plan);
@@ -446,8 +549,11 @@
 
       /* ---------------- one product from the Actions column ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".product-sync-action"))
+      function bindSyncActions() {
+        Array.prototype.slice.call(document.querySelectorAll(".product-sync-action"))
         .forEach(function (pill) {
+          if (pill.dataset.liveBound) return;
+          pill.dataset.liveBound = "1";
           pill.addEventListener("click", async function () {
             var unsync = pill.dataset.action === "unsync";
 
@@ -480,8 +586,7 @@
               if (!response.ok) throw requestFailed(data);
 
               window.appToast(unsync ? "Moved to Unsynced" : "Synced");
-              // The row belongs on the other tab now, so go and show it there.
-              window.appNavigate(productsUrl(unsync ? "unsynced" : "synced"));
+              await refreshProductsLive(true);
             } catch (err) {
               // A plan refusal is authoritative even if this page was opened
               // before another tab used the last slot. Keep every action that
@@ -508,6 +613,9 @@
           // Remembered before any click, so a failure can put the word back.
           pill.dataset.was = pill.textContent.trim();
         });
+      }
+
+      bindSyncActions();
 
       /* ---------------- acting on the ticked rows ----------------
 
@@ -538,16 +646,27 @@
           .map(function (c) { return c.value; });
       }
 
+      function chosenBySyncState(synced) {
+        return checks()
+          .filter(function (c) {
+            return c.checked && (c.dataset.synced === "1") === synced;
+          })
+          .map(function (c) { return c.value; });
+      }
+
       var bulkbar = document.getElementById("bulkbar");
       var bulkCount = document.getElementById("bulk-count");
       var bulkClear = document.getElementById("bulk-clear");
 
       function refresh() {
         var count = chosen().length;
+        var unsyncedCount = chosenBySyncState(false).length;
+        var syncedCount = chosenBySyncState(true).length;
 
         if (acceptButton && selectionLimit !== null) {
           checks().forEach(function (c) {
-            var heldByLimit = !c.checked && count >= selectionLimit;
+            var heldByLimit = c.dataset.synced !== "1" &&
+              !c.checked && unsyncedCount >= selectionLimit;
             c.disabled = heldByLimit;
             c.title = heldByLimit
               ? "You have selected all products available on your plan"
@@ -564,9 +683,13 @@
           bulkCount.textContent = count + " selected";
         }
         if (checkAll) {
-          var all = selectionLimit === null
-            ? checks().length
-            : Math.min(checks().length, selectionLimit);
+          var syncedAvailable = checks().filter(function (c) {
+            return c.dataset.synced === "1";
+          }).length;
+          var unsyncedAvailable = checks().length - syncedAvailable;
+          var all = syncedAvailable + (selectionLimit === null
+            ? unsyncedAvailable
+            : Math.min(unsyncedAvailable, selectionLimit));
           checkAll.checked = count > 0 && count === all;
           checkAll.indeterminate = count > 0 && count < all;
           checkAll.disabled = all === 0;
@@ -578,23 +701,28 @@
         // when there are zero slots. Decline remains available because it
         // removes an offer and consumes no capacity.
         if (acceptButton) {
-          acceptButton.disabled = count === 0 || selectionLimit === 0;
+          acceptButton.disabled = unsyncedCount === 0 || selectionLimit === 0;
         }
+        if (declineButton) declineButton.disabled = unsyncedCount === 0;
+        if (unsyncButton) unsyncButton.disabled = syncedCount === 0;
+        if (syncButton) syncButton.disabled = syncedCount === 0;
 
         // The count goes on the primary action of each tab, so the merchant
         // can see how many they are about to act on without recounting ticks.
         if (acceptButton) {
-          acceptButton.textContent = count
-            ? "Sync " + count + " selected"
+          acceptButton.textContent = unsyncedCount
+            ? "Sync " + unsyncedCount + " selected"
             : "Sync selected";
         }
         if (unsyncButton) {
-          unsyncButton.textContent = count
-            ? "Unsync " + count + " selected"
+          unsyncButton.textContent = syncedCount
+            ? "Unsync " + syncedCount + " selected"
             : "Unsync selected";
         }
         if (syncButton) {
-          syncButton.textContent = count ? "Sync " + count + " now" : "Sync now";
+          syncButton.textContent = syncedCount
+            ? "Refresh " + syncedCount + " now"
+            : "Refresh now";
         }
         // No count on Decline -- it is the quieter of the two actions on this
         // tab -- but its word still has to come back after a failed attempt
@@ -602,15 +730,18 @@
         if (declineButton) declineButton.textContent = "Decline";
       }
 
-      checks().forEach(function (check) {
-        check.addEventListener("change", refresh);
+      if (productRows) productRows.addEventListener("change", function (event) {
+        if (event.target.matches(".awaiting-check")) refresh();
       });
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
-          checks().forEach(function (c, index) {
-            c.checked = checkAll.checked &&
-              (selectionLimit === null || index < selectionLimit);
+          var unsyncedPicked = 0;
+          checks().forEach(function (c) {
+            var isSynced = c.dataset.synced === "1";
+            var hasRoom = selectionLimit === null || unsyncedPicked < selectionLimit;
+            c.checked = checkAll.checked && (isSynced || hasRoom);
+            if (c.checked && !isSynced) unsyncedPicked++;
           });
           refresh();
         });
@@ -623,12 +754,17 @@
         });
       }
 
-      async function send(url, label, pressed) {
+      async function send(url, label, pressed, mappingIds) {
         pageError.hidden = true;
 
         // Every one of them, not just the one pressed: a second action fired
         // mid-request would send the same ids twice.
-        bulkButtons.forEach(function (button) { button.disabled = true; });
+        // Leave the pressed button to appFetch, which adds its visible spinner
+        // and remembers its original enabled state. Lock only the other bulk
+        // actions while this request is running.
+        bulkButtons.forEach(function (button) {
+          if (button !== pressed) button.disabled = true;
+        });
 
         // The button the merchant actually pressed is the one that reports
         // back. Sync and Decline sit side by side on the Unsynced tab, so
@@ -639,7 +775,7 @@
           var response = await window.appFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mapping_ids: chosen() }),
+            body: JSON.stringify({ mapping_ids: mappingIds || chosen() }),
             busy: pressed
           });
 
@@ -657,53 +793,76 @@
 
       if (acceptButton) acceptButton.addEventListener("click", async function () {
         // Accepting also pulls the products in, so this can take a moment.
-        var data = await send("/products/accept", "Syncing…", acceptButton);
+        var data = await send(
+          "/products/accept",
+          "Syncing…",
+          acceptButton,
+          chosenBySyncState(false)
+        );
 
         if (!data) return;
 
         window.appToast(data.synced + " synced, " + data.failed + " failed");
-        // They are synced now, so show them where they landed.
-        window.appNavigate(productsUrl("synced"));
+        await refreshProductsLive(true);
       });
 
       /* ---- Synced tab: stop receiving several at once ---- */
 
       if (unsyncButton) unsyncButton.addEventListener("click", async function () {
-        var count = chosen().length;
+        var count = chosenBySyncState(true).length;
 
         // The Shopify copy stays in Admin but is made Draft, so it cannot keep
         // selling after this app stops managing it.
         if (!(await window.appConfirm(
           "Stop syncing " + count + " product(s)?\n\n" +
           "They will become Draft in Shopify and stop receiving updates. " +
+          "Their unsold reserved inventory will return to the source. " +
           "They are not deleted.\n\n" +
           "Sync them again from the Unsynced tab to make them Active and " +
           "resume updates.",
           { confirmLabel: "Stop syncing" }
         ))) return;
 
-        var data = await send("/products/decline", "Unsyncing…", unsyncButton);
+        var data = await send(
+          "/products/decline",
+          "Unsyncing…",
+          unsyncButton,
+          chosenBySyncState(true)
+        );
 
         if (!data) return;
 
-        window.appToast("Unsynced " + data.declined + " product(s)");
-        // They belong on the other tab now, so go and show them there.
-        window.appNavigate(productsUrl("unsynced"));
+        var unsyncMessage = "Unsynced " + data.declined + " product(s)";
+        if (data.returned) {
+          unsyncMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
+        }
+        window.appToast(unsyncMessage);
+        await refreshProductsLive(true);
       });
 
       if (declineButton) declineButton.addEventListener("click", async function () {
         if (!(await window.appConfirm(
-          "Stop receiving " + chosen().length + " product(s)?\n\n" +
-          "Any existing Shopify copy will become Draft and stop receiving updates.",
+          "Stop receiving " + chosenBySyncState(false).length + " product(s)?\n\n" +
+          "Any existing Shopify copy will become Draft and stop receiving updates. " +
+          "Unsold reserved inventory will return to the source.",
           { confirmLabel: "Decline" }
         ))) return;
 
-        var data = await send("/products/decline", "Declining…", declineButton);
+        var data = await send(
+          "/products/decline",
+          "Declining…",
+          declineButton,
+          chosenBySyncState(false)
+        );
 
         if (!data) return;
 
-        window.appToast("Declined " + data.declined + " product(s)");
-        window.appNavigate(productsUrl());
+        var declineMessage = "Declined " + data.declined + " product(s)";
+        if (data.returned) {
+          declineMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
+        }
+        window.appToast(declineMessage);
+        await refreshProductsLive(true);
       });
 
       // Apply a zero/full allowance immediately, before the first interaction.

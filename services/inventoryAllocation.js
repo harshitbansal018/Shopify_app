@@ -257,16 +257,26 @@ async function setForProduct({ store, connection, product, targets }) {
 
       const delta = target.quantity - Number(before.allocated_quantity || 0);
       let locations = before.location_allocations || [];
+      const item = variant.shopify_inventory_item_id
+        ? live.get(String(variant.shopify_inventory_item_id))
+        : null;
 
-      if (delta > 0) {
-        if (!variant.shopify_inventory_item_id || variant.inventory_tracked === 0) {
+      if (delta !== 0) {
+        // Shopify's live state is authoritative. This also permits an
+        // immediate retry after Track quantity was enabled, without waiting
+        // for the inventory webhook to refresh the local product cache.
+        if (!variant.shopify_inventory_item_id || item?.tracked !== true) {
           const error = new Error(
-            `${variant.title || variant.sku || "This variant"} does not have tracked Shopify inventory.`
+            `${variant.title || variant.sku || "This variant"} does not track inventory ` +
+            `in the source Shopify store. Enable Track quantity, set its stock, ` +
+            `then try again.`
           );
           error.statusCode = 409;
           throw error;
         }
-        const item = live.get(String(variant.shopify_inventory_item_id));
+      }
+
+      if (delta > 0) {
         const additions = planIncrease(item?.inventoryLevels?.nodes || [], delta);
         locations = mergeLocations(locations, additions);
         additions.forEach((entry) => shopifyChanges.push({
@@ -345,8 +355,13 @@ async function setForProduct({ store, connection, product, targets }) {
  * A decrease must reach the destination before its units become sellable at
  * the source again; waiting for a manual sync would create an oversell window.
  */
-async function syncDestination(connection, mapping, sourceProductId) {
-  if (!mapping.accepted_at || !mapping.destination_shopify_product_id) {
+async function syncDestination(
+  connection,
+  mapping,
+  sourceProductId,
+  { forceZero = false } = {}
+) {
+  if ((!mapping.accepted_at && !forceZero) || !mapping.destination_shopify_product_id) {
     return { synced: false };
   }
 
@@ -364,7 +379,7 @@ async function syncDestination(connection, mapping, sourceProductId) {
 
   for (const link of links) {
     const sourceVariantId = Number(link.source_variant_mapping_id);
-    if (!remainingByVariant.has(sourceVariantId)) continue;
+    if (!forceZero && !remainingByVariant.has(sourceVariantId)) continue;
 
     const locationId = locations.get(String(link.source_shopify_variant_id));
     if (!link.destination_inventory_item_id || !locationId) {
@@ -380,14 +395,26 @@ async function syncDestination(connection, mapping, sourceProductId) {
       inventoryItemId:
         `gid://shopify/InventoryItem/${link.destination_inventory_item_id}`,
       locationId,
-      quantity: remainingByVariant.get(sourceVariantId),
+      quantity: forceZero ? 0 : remainingByVariant.get(sourceVariantId),
       // Allocation is this app's source of truth at the destination. Explicit
       // null is the forward-compatible way to opt out of Shopify's CAS check.
       changeFromQuantity: null,
     });
   }
 
-  if (!quantities.length) return { synced: false };
+  if (!quantities.length) {
+    // Returning reserved units to the source is unsafe unless the destination
+    // was definitely zeroed first. A retained Shopify copy with no variant
+    // links cannot be corrected automatically, so stop before releasing it.
+    if (forceZero && remainingByVariant.size) {
+      const error = new Error(
+        "The destination inventory could not be identified. No stock was returned to the source."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    return { synced: false };
+  }
 
   const operationId = randomUUID();
   const data = await shopify.forShop(connection.destination.shop_domain, {
@@ -419,6 +446,14 @@ async function syncDestination(connection, mapping, sourceProductId) {
   return { synced: true, variants: quantities.length };
 }
 
+/**
+ * Unsync keeps the destination product as a reusable Draft copy, but it must
+ * hold no sellable stock before the source reservation is released.
+ */
+async function zeroDestinationInventory(connection, mapping, sourceProductId) {
+  return syncDestination(connection, mapping, sourceProductId, { forceZero: true });
+}
+
 async function releaseRows(store, rows) {
   const byProduct = new Map();
   for (const row of rows) {
@@ -440,6 +475,15 @@ async function releaseRows(store, rows) {
 
 async function releaseConnection(store, connectionId) {
   const rows = await allocationModel.listForConnection(connectionId);
+  if (rows.length) await releaseRows(store, rows);
+  return rows.reduce((sum, row) => sum + row.remaining_quantity, 0);
+}
+
+async function releaseConnectionProduct(store, connectionId, sourceProductId) {
+  const rows = await allocationModel.listForConnectionProduct(
+    connectionId,
+    sourceProductId
+  );
   if (rows.length) await releaseRows(store, rows);
   return rows.reduce((sum, row) => sum + row.remaining_quantity, 0);
 }
@@ -466,6 +510,8 @@ module.exports = {
   remaining,
   setForProduct,
   syncDestination,
+  zeroDestinationInventory,
   releaseConnection,
+  releaseConnectionProduct,
   releaseProduct,
 };

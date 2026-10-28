@@ -123,115 +123,8 @@
           <th class="table__actions-head">Actions</th>
         </tr>
       </thead>
-      <tbody>
-        <% if (!products.length) { %>
-          <tr class="row--empty">
-            <td class="table__empty" colspan="5">
-              <strong>No records found</strong>
-            </td>
-          </tr>
-        <% } else { %>
-        <% products.forEach(function (product) { %>
-          <tr>
-            <td class="table__check">
-              <%# Every row can be ticked: Delete works on any product, and an
-                  existing share may be extended to another destination. %>
-              <input
-                type="checkbox"
-                class="row-check"
-                value="<%= product.id %>"
-                data-allowed="<%= product.allowed ? 1 : 0 %>"
-                data-title="<%= product.title %>"
-                data-synced="<%= product.synced || 0 %>"
-                aria-label="Select <%= product.title %>">
-            </td>
-            <td>
-              <span class="media">
-                <% if (product.image_url) { %>
-                  <img class="media__thumb" src="<%= product.image_url %>"
-                       alt="" loading="lazy" width="40" height="40">
-                <% } else { %>
-                  <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
-                <% } %>
-                <span class="media__body">
-                  <a class="table__title record-link"
-                     href="<%= shopifyAdminUrl(shop, 'products', product.shopify_product_id) %>"
-                     target="_blank" rel="noopener noreferrer">
-                    <%= product.title %>
-                  </a>
-                  <%# Vendor and variant count on one quiet line; the variants
-                      themselves live on the product's own page, behind View. %>
-                  <span class="muted">
-                    <% if (product.vendor) { %><%= product.vendor %> &middot; <% } %><%
-                    %><%= product.variants.length %><%
-                    %><% if (product.variants.length < product.variant_count) { %> of <%= product.variant_count %><% } %>
-                    variant<%= product.variant_count === 1 ? "" : "s" %>
-                  </span>
-                </span>
-              </span>
-            </td>
-            <td>
-              <% var status = String(product.status || "").toLowerCase(); %>
-              <% if (status) { %>
-                <span class="status status--<%= status %>">
-                  <span class="dot" aria-hidden="true"></span><%= status %>
-                </span>
-              <% } else { %>
-                <span class="muted">&mdash;</span>
-              <% } %>
-            </td>
-            <td>
-              <% if (!product.allowed) { %>
-                <span class="muted">Not shared</span>
-              <% } else { %>
-                <% if (product.synced) { %>
-                  <span class="pill pill--active"
-                        title="Live in <%= product.synced %> destination store(s)">
-                    &#10003; <%= product.synced %> synced
-                  </span>
-                <% } %>
-                <% if (product.awaiting) { %>
-                  <%# Offered, but the destination has not ticked it yet --
-                      nothing the source can do about it. %>
-                  <span class="pill pill--pending"
-                        title="Offered, but the destination store has not accepted it yet. Nothing for you to do.">
-                    <%= product.awaiting %> awaiting them
-                  </span>
-                <% } %>
-                <% if (product.pending) { %>
-                  <span class="pill pill--paused"
-                        title="Accepted, and queued to be written to their store on the next sync">
-                    <%= product.pending %> pending
-                  </span>
-                <% } %>
-                <% if (product.failed) { %>
-                  <span class="pill pill--failed" title="<%= product.error_message || "" %>">
-                    <%= product.failed %> failed
-                  </span>
-                <% } %>
-              <% } %>
-            </td>
-            <td class="table__actions">
-              <button
-                class="btn btn--small view-product"
-                type="button"
-                data-product="<%= product.id %>">
-                View
-              </button>
-              <button
-                class="icon-btn icon-btn--danger delete-product"
-                type="button"
-                data-product="<%= product.id %>"
-                data-title="<%= product.title %>"
-                data-synced="<%= product.synced %>"
-                title="Delete"
-                aria-label="Delete <%= product.title %>">
-                <%- include("../partials/icon", { name: "trash" }) %>
-              </button>
-            </td>
-          </tr>
-        <% }); %>
-        <% } %>
+      <tbody id="product-rows">
+        <%- include("partials/productRows", { products: products, shop: shop }) %>
       </tbody>
     </table>
 
@@ -239,14 +132,21 @@
         next to the selection instead of up in the toolbar. %>
     <div class="bulkbar" id="bulkbar" role="region" aria-label="Bulk actions" hidden>
       <span class="bulkbar__count" id="bulk-count">0 selected</span>
-      <button class="bulkbar__btn" type="button" id="allow-button">Allow selected</button>
+      <% if (filter !== "shared") { %>
+        <button class="bulkbar__btn" type="button" id="allow-button">Share selected</button>
+      <% } %>
+      <% if (filter !== "unshared") { %>
+        <button class="bulkbar__btn bulkbar__btn--ghost" type="button" id="unshare-button">Make not shared</button>
+      <% } %>
       <button class="bulkbar__btn bulkbar__btn--danger" type="button" id="bulk-delete">
         <%- include("../partials/icon", { name: "trash" }) %> Delete
       </button>
       <button class="bulkbar__close" type="button" id="bulk-clear" aria-label="Clear selection">&times;</button>
     </div>
 
-    <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+    <div id="products-pager">
+      <%- include("../partials/pager", { pager: pager, noun: "products" }) %>
+    </div>
 
   </main>
 
@@ -277,7 +177,7 @@
       <p class="notice notice--error" id="destination-error" hidden></p>
 
       <s-button slot="primary-action" variant="primary" id="destination-share" disabled>
-        Allow products
+        Share products
       </s-button>
       <s-button slot="secondary-actions" id="destination-cancel">Cancel</s-button>
     </s-modal>
@@ -313,6 +213,7 @@
       var bulkbar = document.getElementById("bulkbar");
       var bulkCount = document.getElementById("bulk-count");
       var allowButton = document.getElementById("allow-button");
+      var unshareButton = document.getElementById("unshare-button");
       var bulkDelete = document.getElementById("bulk-delete");
       var bulkClear = document.getElementById("bulk-clear");
       var checkAll = document.getElementById("check-all");
@@ -335,6 +236,71 @@
         var query = params.toString();
         return query ? "/products?" + query : "/products";
       }
+
+      var productRows = document.getElementById("product-rows");
+      var productsPager = document.getElementById("products-pager");
+      var productLiveVersion = <%- json(
+        typeof liveVersion !== "undefined" ? liveVersion : ""
+      ) %>;
+      var liveRefreshing = false;
+
+      function liveProductsUrl() {
+        var url = new URL(window.location.href);
+        url.pathname = "/products/live";
+        url.searchParams.delete("id_token");
+        return url.pathname + url.search;
+      }
+
+      function updateSourceCounts(counts) {
+        ["all", "shared", "unshared"].forEach(function (key, index) {
+          var node = document.querySelectorAll(".segment__count")[index];
+          if (node && counts && counts[key] !== undefined) {
+            node.textContent = counts[key];
+          }
+        });
+      }
+
+      async function refreshProductsLive(force) {
+        if (liveRefreshing || document.hidden) return false;
+        if (!force && document.querySelector(".is-loading")) return false;
+        liveRefreshing = true;
+
+        try {
+          var response = await window.appFetch(liveProductsUrl(), {
+            background: true
+          });
+          var data = await response.json().catch(function () { return {}; });
+          if (!response.ok || !data.ok) return false;
+
+          updateSourceCounts(data.counts);
+          if (data.version === productLiveVersion) return false;
+          productLiveVersion = data.version;
+          if (productsPager && productsPager.innerHTML.trim() !== data.pager.trim()) {
+            productsPager.innerHTML = data.pager;
+          }
+          if (productRows && productRows.innerHTML.trim() !== data.rows.trim()) {
+            productRows.innerHTML = data.rows;
+            if (checkAll) checkAll.checked = false;
+            refresh();
+            return true;
+          }
+        } catch (_) {
+          // Quiet polling retries on the next interval. Explicit actions still
+          // show their own errors.
+        } finally {
+          liveRefreshing = false;
+        }
+
+        return false;
+      }
+
+      var productLiveTimer = setInterval(function () {
+        refreshProductsLive(false);
+      }, 4000);
+
+      window.addEventListener("pagehide", function () {
+        clearInterval(productLiveTimer);
+      });
 
       var storeFilterControl = document.getElementById("store-filter");
 
@@ -360,9 +326,16 @@
        */
       function selections() {
         return ticked()
+          .filter(function (c) { return Number(c.dataset.allowed) === 0; })
           .map(function (c) {
             return { source_product_id: c.value, variant_ids: null };
           });
+      }
+
+      function sharedProductIds() {
+        return ticked()
+          .filter(function (c) { return Number(c.dataset.allowed) > 0; })
+          .map(function (c) { return Number(c.value); });
       }
 
       function refresh() {
@@ -382,13 +355,21 @@
         bulkbar.hidden = count === 0;
         bulkCount.textContent = count + " selected";
 
-        allowButton.disabled = count === 0;
-        allowButton.textContent = "Allow selected";
-        allowButton.title = "";
+        if (allowButton) {
+          var shareable = selections().length;
+          allowButton.disabled = shareable === 0;
+          allowButton.textContent = "Share selected";
+          allowButton.title = shareable ? "" : "Select a not-shared product";
+        }
+        if (unshareButton) {
+          var shared = sharedProductIds().length;
+          unshareButton.disabled = shared === 0;
+          unshareButton.title = shared ? "" : "Select a shared product";
+        }
       }
 
-      rowChecks().forEach(function (check) {
-        check.addEventListener("change", refresh);
+      if (productRows) productRows.addEventListener("change", function (event) {
+        if (event.target.matches(".row-check")) refresh();
       });
 
       if (checkAll) {
@@ -432,9 +413,7 @@
           }, button);
           if (destinationPicker) window.appClose(destinationPicker);
           window.appToast("Allowed on " + data.destinations + " destination store(s)");
-          // Reload where they were -- same filter, same search. Page 1,
-          // though: newly shared rows may have moved.
-          window.appNavigate(<%- json(pager.href(1)) %>);
+          await refreshProductsLive(true);
         } catch (err) {
           // The last destination may have paused after this page loaded. The
           // server repeats the redirect hint so this stale page follows the
@@ -449,7 +428,7 @@
         }
       }
 
-      allowButton.addEventListener("click", function () {
+      if (allowButton) allowButton.addEventListener("click", function () {
         // Products may be staged before pairing. When there is nowhere to
         // offer them yet, take the merchant straight to the source Stores
         // screen, where the pairing code is generated and connections live.
@@ -467,6 +446,35 @@
         refreshDestinationPicker();
         window.appOpen(destinationPicker);
       });
+
+      if (unshareButton) {
+        unshareButton.addEventListener("click", async function () {
+          var productIds = sharedProductIds();
+          if (!productIds.length) return;
+
+          if (!(await window.appConfirm(
+            "Make " + productIds.length + " product(s) not shared?\n\n" +
+            "Their destination copies will become Draft and stop receiving updates. " +
+            "Unsold reserved inventory will return to the source. You can share them again later.",
+            { confirmLabel: "Make not shared" }
+          ))) return;
+
+          pageError.hidden = true;
+          try {
+            var data = await post("/products/unshare", {
+              product_ids: productIds,
+              connection_ids: currentStore ? [Number(currentStore)] : []
+            }, unshareButton);
+            window.appToast(
+              data.revoked + " share(s) made inactive; " +
+              data.returned + " unit(s) returned"
+            );
+            await refreshProductsLive(true);
+          } catch (err) {
+            fail(pageError, err.message);
+          }
+        });
+      }
 
       destinationChecks().forEach(function (check) {
         check.addEventListener("change", refreshDestinationPicker);
@@ -507,7 +515,8 @@
 
         pageError.hidden = true;
         bulkDelete.disabled = true;
-        allowButton.disabled = true;
+        if (allowButton) allowButton.disabled = true;
+        if (unshareButton) unshareButton.disabled = true;
 
         // One at a time: each delete reaches out to every destination store,
         // and firing them all at once would trip Shopify's rate limits.
@@ -532,16 +541,14 @@
 
       /* ---------------- row actions: view / delete ---------------- */
 
-      Array.prototype.slice.call(document.querySelectorAll(".view-product"))
-        .forEach(function (button) {
-          button.addEventListener("click", function () {
-            window.appNavigate("/products/" + button.dataset.product);
-          });
-        });
+      if (productRows) productRows.addEventListener("click", async function (event) {
+          var button = event.target.closest(".view-product, .delete-product");
+          if (!button || !productRows.contains(button)) return;
 
-      Array.prototype.slice.call(document.querySelectorAll(".delete-product"))
-        .forEach(function (button) {
-          button.addEventListener("click", async function () {
+          if (button.matches(".view-product")) {
+            return window.appNavigate("/products/" + button.dataset.product);
+          }
+
             var synced = Number(button.dataset.synced) || 0;
 
             // This removes the product from OTHER merchants' stores, so say so
@@ -567,12 +574,51 @@
               button.disabled = false;
               fail(pageError, err.message);
             }
-          });
-        });
+      });
 
       /* ---------------- add products (App Bridge resource picker) ---------------- */
 
       var addButton = document.getElementById("add-button");
+      var initialPickerSelections = <%- json(
+        typeof pickerSelections !== "undefined" ? pickerSelections : []
+      ) %>;
+
+      // App Bridge accepts only resource IDs here. Keep variantCount and the
+      // allVariants flag locally so unchanged preselected products can be
+      // removed from the import request after the merchant confirms.
+      var pickerSelectionIds = initialPickerSelections.map(function (product) {
+        var selection = { id: product.id };
+        if (!product.allVariants) selection.variants = product.variants || [];
+        return selection;
+      });
+
+      var initialPickerById = new Map(initialPickerSelections.map(function (product) {
+        return [numericId(product.id), product];
+      }));
+
+      function sortedVariantIds(product) {
+        return (product.variants || []).map(function (variant) {
+          return numericId(variant.id);
+        }).sort();
+      }
+
+      function pickerSelectionChanged(product) {
+        var initial = initialPickerById.get(numericId(product.id));
+        if (!initial) return true;
+
+        var selectedIds = sortedVariantIds(product);
+
+        // A product-level selection can come back either without variant IDs
+        // or with every variant. Both mean the original "all variants" choice.
+        if (initial.allVariants) {
+          return selectedIds.length !== 0 &&
+            selectedIds.length !== Number(initial.variantCount || 0);
+        }
+
+        var initialIds = sortedVariantIds(initial);
+        return initialIds.length !== selectedIds.length ||
+          initialIds.some(function (id, index) { return id !== selectedIds[index]; });
+      }
 
       if (!addButton) return;
 
@@ -595,14 +641,11 @@
           // product with names, images and search. The variant picker renders
           // a flat list with none of that.
           //
-          // Deliberately NOT pre-ticked with what is already staged. Doing so
-          // made the picker hand every staged product back on every Add, and
-          // the server then re-imported the whole catalogue to add one thing.
-          // Opening blank means only what the merchant just picked is sent.
           selected = await window.shopify.resourcePicker({
             type: "product",
             multiple: true,
             action: "add",
+            selectionIds: pickerSelectionIds,
             // Only active products should be available to add. Draft and
             // archived products are not ready to be shared with destinations.
             filter: { draft: false, archived: false }
@@ -614,6 +657,14 @@
         // undefined means the merchant closed it -- a choice, not a failure.
         if (!selected || !selected.length) return;
 
+        // The picker returns preselected products as well as newly selected
+        // ones. Import only additions and variant changes; otherwise adding
+        // one item to a large catalogue would re-fetch every staged product.
+        var changed = selected.filter(pickerSelectionChanged);
+        if (!changed.length) {
+          return window.appToast("No product changes selected.");
+        }
+
         addButton.disabled = true;
         addButton.textContent = "Adding…";
 
@@ -622,7 +673,7 @@
           // were ticked. The server re-reads everything else from Shopify, so
           // nothing the browser says about a title or a price is trusted.
           var data = await post("/products/import", {
-            products: selected.map(function (product) {
+            products: changed.map(function (product) {
               return {
                 id: numericId(product.id),
                 variant_ids: (product.variants || []).map(function (variant) {

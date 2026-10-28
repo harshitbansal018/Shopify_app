@@ -71,7 +71,7 @@
           <button class="code__copy" type="button" id="code-copy">Copy code</button>
 
           <div class="code__timer">
-            <span class="code__meta" id="code-meta"><% if (pairingCode && pairingCode.expiresAt) { %>expires <%= new Date(pairingCode.expiresAt).toISOString().slice(11, 16) %> UTC<% } %></span>
+            <span class="code__meta" id="code-meta"></span>
             <span class="code__left" id="code-left"></span>
           </div>
           <span class="code__bar" aria-hidden="true"><span id="code-bar"></span></span>
@@ -170,6 +170,19 @@
       var expiresAt = <%- json(pairingCode && pairingCode.expiresAt ? new Date(pairingCode.expiresAt).getTime() : null) %>;
 
       /* ---------------- countdown ---------------- */
+      function formatExpiry(value) {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+
+        return "expires " + date.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZoneName: "short"
+        });
+      }
+
+      if (expiresAt) codeMeta.textContent = formatExpiry(expiresAt);
+
       function tick() {
         if (!expiresAt) return;
         var left = expiresAt - Date.now();
@@ -205,7 +218,9 @@
         var checkingConnection = false;
 
         var connectionTimer = setInterval(async function () {
-          if (checkingConnection) return;
+          // Hidden tabs do no useful visual work. Resume on the next interval
+          // after the merchant returns instead of spending background requests.
+          if (document.hidden || checkingConnection) return;
           checkingConnection = true;
 
           try {
@@ -274,11 +289,10 @@
           }
 
           codeValue.textContent = data.code;
-          codeMeta.textContent = "expires " +
-            new Date(data.expiresAt).toISOString().slice(11, 16) + " UTC";
           codeBox.hidden = false;
           codeEmpty.hidden = true;
           expiresAt = new Date(data.expiresAt).getTime();
+          codeMeta.textContent = formatExpiry(expiresAt);
           tick();
           codeButton.textContent = "Generate a new code";
           codeButton.classList.remove("btn--primary");

@@ -389,7 +389,9 @@ const STORE_ROW = {
       "source lists the destination store",
       withCode.includes("dst.myshopify.com")
     );
-    check("source shows the expiry", withCode.includes("10:30"));
+    check("source shows the expiry in the browser's local time",
+      withCode.includes("if (expiresAt) codeMeta.textContent = formatExpiry(expiresAt)") &&
+        /var expiresAt = \d+;/.test(withCode));
 
     // No code yet: the box is hidden rather than showing an empty slot.
     const noCode = await render("source/stores", {
@@ -416,6 +418,10 @@ const STORE_ROW = {
         noCode.includes('window.appNavigate(returnTo || "/stores")') &&
         noCode.includes("status.active > activeConnectionCount")
     );
+    check("pairing-code expiry uses the merchant browser's local time zone",
+      noCode.includes("toLocaleTimeString") &&
+        noCode.includes('timeZoneName: "short"') &&
+        !noCode.includes('slice(11, 16) + " UTC"'));
 
     const waitingReturn = await render("source/stores", {
       ...BASE,
@@ -542,6 +548,13 @@ const STORE_ROW = {
       storeLimitReached.includes('class="blocked-action"') &&
         storeLimitReached.includes('title="Your Free plan allows 1 source store."') &&
         storeLimitReached.includes("btn--blocked"));
+    check("the store limit shows an upgrade notice above the connection area",
+      storeLimitReached.includes("Store connection limit reached") &&
+        storeLimitReached.includes("1 / 1") &&
+        /href="\/plans"[^>]*data-navigate="\/plans"[^>]*>Upgrade plan<\/a>/.test(storeLimitReached) &&
+        storeLimitReached.indexOf("Store connection limit reached") <
+          storeLimitReached.indexOf("Connect a supplier"),
+      "a blocked merchant needs a visible route to Plans, not only a tooltip");
     check(
       "the code form lives in the admin's own dialog, not on the page",
       /<s-modal[\s\S]*id="connect-code"[\s\S]*<\/s-modal>/.test(destinationHtml),
@@ -722,6 +735,14 @@ const STORE_ROW = {
       ],
       connections: [CONN],
       activeConnections: [CONN],
+      pickerSelections: [
+        {
+          id: "gid://shopify/Product/900",
+          variants: [{ id: "gid://shopify/ProductVariant/901" }],
+          allVariants: false,
+          variantCount: 2,
+        },
+      ],
     });
 
     check("source lists every product", sourceHtml.includes("Black Shoes"));
@@ -740,6 +761,13 @@ const STORE_ROW = {
       /type:\s*"product"/.test(sourceHtml),
       "the variant picker shows a flat list with no product titles"
     );
+    check("source products update quietly without a page reload",
+      sourceHtml.includes('url.pathname = "/products/live"') &&
+        sourceHtml.includes("setInterval(function ()") &&
+        sourceHtml.includes("}, 4000)") &&
+        sourceHtml.includes("if (liveRefreshing || document.hidden)") &&
+        sourceHtml.includes("productRows.innerHTML = data.rows") &&
+        sourceHtml.includes("data.version === productLiveVersion"));
 
     // ONE list with a filter over it, not two tabs.
     const SHARED_ROW = {
@@ -762,6 +790,8 @@ const STORE_ROW = {
         });
 
     const all = await sourceList("all", [SOURCE_ROW, SHARED_ROW]);
+    const sharedOnly = await sourceList("shared", [SHARED_ROW]);
+    const unsharedOnly = await sourceList("unshared", [SOURCE_ROW]);
 
     check("there are no tabs any more",
       !all.includes("tabs__tab"),
@@ -776,7 +806,7 @@ const STORE_ROW = {
       "a merchant should know what a filter holds before choosing it");
     check("and marks the one in use",
       /segment__item--on"\s+href="\/products"/.test(all) &&
-        /segment__item--on"\s+href="\/products\?filter=shared"/.test(await sourceList("shared", [SHARED_ROW])),
+        /segment__item--on"\s+href="\/products\?filter=shared"/.test(sharedOnly),
       "otherwise the list and the control disagree");
     check("choosing one is a real navigation",
       /<a class="segment__item[^"]*"\s+href="\/products\?filter=unshared" data-navigate=/.test(all),
@@ -787,11 +817,22 @@ const STORE_ROW = {
     check("a shared one can be ticked too, marked as shared",
       /class="row-check"[^>]*value="12"[^>]*data-allowed="1"/.test(all) &&
         !/class="row-check"[^>]*value="12"[^>]*disabled/.test(all),
-      "Delete works on any product; Allow can extend an existing share");
-    check("Allow can send shared rows to another destination",
-      !all.includes('c.dataset.allowed !== "1"') &&
-        /function selections\(\)[\s\S]*return ticked\(\)[\s\S]*\.map\(/.test(all),
-      "a product shared with one store must still be available to another");
+      "Delete and Make not shared work on shared products");
+    check("bulk actions match the active source filter",
+      all.includes('id="allow-button"') &&
+        all.includes('id="unshare-button"') &&
+        all.includes('id="bulk-delete"') &&
+        !sharedOnly.includes('id="allow-button"') &&
+        sharedOnly.includes('id="unshare-button"') &&
+        sharedOnly.includes('id="bulk-delete"') &&
+        unsharedOnly.includes('id="allow-button"') &&
+        !unsharedOnly.includes('id="unshare-button"') &&
+        unsharedOnly.includes('id="bulk-delete"'));
+    check("Make not shared drafts and stops selected shares",
+      all.includes('post("/products/unshare"') &&
+        all.includes("await refreshProductsLive(true)") &&
+        all.includes("destination copies will become Draft") &&
+        all.includes("Unsold reserved inventory will return to the source"));
 
     const SECOND_CONN = {
       ...CONN,
@@ -888,13 +929,17 @@ const STORE_ROW = {
       emptyShared.includes("No records found") &&
         !emptyShared.includes("Nothing is shared yet"));
 
-    // The picker opens BLANK on purpose. Pre-ticking it with everything
-    // already staged made it hand the whole catalogue back on every Add, and
-    // the server then re-imported all of it to add one product.
     check(
-      "the picker is not pre-ticked",
-      !sourceHtml.includes("selectionIds"),
-      "it would return every staged product and re-import the lot"
+      "already-added products are preselected in the picker",
+      sourceHtml.includes("selectionIds: pickerSelectionIds") &&
+        sourceHtml.includes("gid://shopify/Product/900") &&
+        sourceHtml.includes("gid://shopify/ProductVariant/901")
+    );
+    check(
+      "unchanged preselected products are not re-imported",
+      sourceHtml.includes("selected.filter(pickerSelectionChanged)") &&
+        sourceHtml.includes("No product changes selected.") &&
+        sourceHtml.includes("products: changed.map")
     );
     check("no hand-rolled picker markup remains",
       !sourceHtml.includes('id="picker"'));
@@ -1025,8 +1070,9 @@ const STORE_ROW = {
       "the merchant should land where they can generate a code"
     );
 
-    // Destination: two tabs over one table. "Unsynced" is what a source has
-    // offered; "Synced" is what this store accepted and now holds.
+    // Destination: All combines the two state-specific tabs. "Unsynced" is
+    // what a source has offered; "Synced" is what this store accepted and
+    // now holds.
     const OFFERED = {
       mapping_id: 6,
       destination_shopify_product_id: null,
@@ -1077,7 +1123,7 @@ const STORE_ROW = {
         ...BASE,
         store: { ...STORE_ROW, store_type: "destination" },
         tab,
-        counts: { synced: 1, unsynced: 1 },
+        counts: { all: 2, synced: 1, unsynced: 1 },
         pager: pagerFor(products.length, { params: { tab } }),
         search: "",
         storeFilter: null,
@@ -1088,8 +1134,10 @@ const STORE_ROW = {
     /* ---- Unsynced tab ---- */
     const unsynced = await destination("unsynced", [OFFERED]);
 
-    check("both tabs are shown with their counts",
-      unsynced.includes("Synced (1)") && unsynced.includes("Unsynced (1)"));
+    check("all three tabs are shown with their counts",
+      unsynced.includes("All (2)") &&
+        unsynced.includes("Synced (1)") &&
+        unsynced.includes("Unsynced (1)"));
     check("the open tab is marked",
       /tabs__tab tabs__tab--on"[^>]*data-tab="unsynced"/.test(unsynced),
       "the merchant cannot tell which list they are looking at");
@@ -1104,17 +1152,27 @@ const STORE_ROW = {
     // Sync and Decline sit side by side here, so a shared helper that picked
     // one of them would spin and relabel Sync while Decline was running.
     check("each bulk action reports back on the button that was pressed",
-      unsynced.includes('send("/products/accept", "Syncing…", acceptButton)') &&
-        unsynced.includes('send("/products/decline", "Declining…", declineButton)') &&
-        unsynced.includes('send("/products/decline", "Unsyncing…", unsyncButton)'),
+      /send\(\s*"\/products\/accept",\s*"Syncing[^\"]*",\s*acceptButton/.test(unsynced) &&
+        /send\(\s*"\/products\/decline",\s*"Declining[^\"]*",\s*declineButton/.test(unsynced) &&
+        /send\(\s*"\/products\/decline",\s*"Unsyncing[^\"]*",\s*unsyncButton/.test(unsynced),
       "the spinner and the busy label belong on the button the merchant hit");
     check("and every one of them gets its word back after a failure",
       /declineButton\.textContent = "Decline"/.test(unsynced) &&
-        /acceptButton\.textContent = count/.test(unsynced) &&
-        /unsyncButton\.textContent = count/.test(unsynced),
+        /acceptButton\.textContent = unsyncedCount/.test(unsynced) &&
+        /unsyncButton\.textContent = syncedCount/.test(unsynced),
       "a failed attempt would leave the button reading 'Declining…' for good");
+    check("Decline updates the current tab without reloading it",
+      unsynced.includes("await refreshProductsLive(true)"),
+      "Decline must refresh its existing tab in place");
 
     check("the source store is named", unsynced.includes("Warehouse"));
+    check("destination products update quietly without a page reload",
+      unsynced.includes('url.pathname = "/products/live"') &&
+        unsynced.includes("setInterval(function ()") &&
+        unsynced.includes("}, 4000)") &&
+        unsynced.includes("if (liveRefreshing || document.hidden)") &&
+        unsynced.includes("productRows.innerHTML = data.rows") &&
+        unsynced.includes("data.version === productLiveVersion"));
     check("the product's own state moved next to its name",
       /table__title[\s\S]{0,220}ACTIVE/.test(unsynced),
       "Status now means the sync, so ACTIVE/DRAFT cannot live there too");
@@ -1125,6 +1183,25 @@ const STORE_ROW = {
 
     /* ---- Synced tab ---- */
     const synced = await destination("synced", [ACCEPTED]);
+
+    /* ---- All tab ---- */
+    const allProductsView = await destination("all", [OFFERED, ACCEPTED]);
+
+    check("the All tab combines synced and unsynced products",
+      /tabs__tab tabs__tab--on"[^>]*data-tab="all"/.test(allProductsView) &&
+        (allProductsView.match(/class="awaiting-check"/g) || []).length === 2 &&
+        allProductsView.includes('data-synced="0"') &&
+        allProductsView.includes('data-synced="1"'));
+    check("All offers Sync selected, Unsync selected, and Decline",
+      allProductsView.includes('id="accept-button"') &&
+        allProductsView.includes('id="unsync-button"') &&
+        allProductsView.includes('id="decline-button"') &&
+        !allProductsView.includes('id="sync-button"'));
+    check("All routes each action only to eligible selected products",
+      /acceptButton,[\s\S]{0,80}chosenBySyncState\(false\)/.test(allProductsView) &&
+        /unsyncButton,[\s\S]{0,80}chosenBySyncState\(true\)/.test(allProductsView) &&
+        /declineButton,[\s\S]{0,80}chosenBySyncState\(false\)/.test(allProductsView),
+      "a mixed selection must not sync an already synced product or decline one");
 
     check("the synced tab marks itself",
       /tabs__tab tabs__tab--on"[^>]*data-tab="synced"/.test(synced));
@@ -1138,14 +1215,20 @@ const STORE_ROW = {
       !synced.includes('id="accept-button"'),
       "there is nothing left to accept here");
 
-    /* ---- bulk unsync, beside Sync now ---- */
+    /* ---- bulk unsync, beside Refresh now ---- */
 
     check("the synced tab offers Unsync selected",
       synced.includes('id="unsync-button"'));
-    check("in the selection bar, next to Sync now",
+    check("in the selection bar, next to Refresh now",
       /class="bulkbar"[\s\S]{0,400}id="sync-button"[\s\S]{0,200}id="unsync-button"/
         .test(synced),
       "they are a pair -- refresh these, or stop receiving these");
+    check("the Synced tab calls the update action Refresh",
+      synced.includes('id="sync-button" disabled>Refresh now') &&
+        synced.includes('"Refresh " + syncedCount + " now"') &&
+        synced.includes('syncButton.textContent = "Refreshing…"') &&
+        !allProductsView.includes('id="sync-button"'),
+      "All keeps its existing three actions; only Synced gets Refresh now");
     check("BOTH start disabled",
       /id="unsync-button"[^>]*disabled/.test(synced) &&
         /id="sync-button"[^>]*disabled/.test(synced),
@@ -1208,33 +1291,39 @@ const STORE_ROW = {
         /data-action="sync"[\s\S]{0,100}disabled/.test(noProductSlots));
     check("Sync selected stays disabled when no plan slots remain",
       noProductSlots.includes(
-        "acceptButton.disabled = count === 0 || selectionLimit === 0"
+        "acceptButton.disabled = unsyncedCount === 0 || selectionLimit === 0"
       ));
     check("a server-side plan refusal keeps the row Sync button disabled",
       noProductSlots.includes("selectionLimit = 0") &&
         noProductSlots.includes("pill.disabled = !unsync && selectionLimit === 0") &&
         noProductSlots.includes("Your product plan limit has been reached"));
     check("selection is capped at the remaining plan allowance",
-      unsynced.includes("count >= selectionLimit") &&
-        unsynced.includes("index < selectionLimit"));
+      unsynced.includes("unsyncedCount >= selectionLimit") &&
+        unsynced.includes("unsyncedPicked < selectionLimit"));
     check("the floating action bar does not repeat the plan-limit message",
       !unsynced.includes("selection-limit-note") &&
         !unsynced.includes("Plan selection limit reached"));
 
-    check("Sync now sends what was ticked, not everything",
+    check("Refresh now sends what was ticked, not everything",
       /"\/products\/sync"[\s\S]{0,200}mapping_ids: chosen\(\)/.test(synced),
       "a button that acts on everything when nothing is chosen gets pressed by accident");
+    check("Refresh now leaves its loading state to the shared spinner helper",
+      synced.includes("if (button !== syncButton) button.disabled = true") &&
+        synced.includes("busy: syncButton"));
     check("and is styled as the destructive one",
       /class="bulkbar__btn bulkbar__btn--danger"[^>]*id="unsync-button"/.test(synced));
     check("it posts to decline, which is what clears accepted_at",
       synced.includes('"/products/decline"'));
     check("and explains the reversible Draft lifecycle",
       synced.includes("They will become Draft in Shopify") &&
+        synced.includes("unsold reserved inventory will return to the source") &&
         synced.includes("make them Active") &&
         synced.includes("They are not deleted"),
       "the merchant should know exactly what Unsync and a later Sync do");
-    check("then sends them to the tab they moved to",
-      synced.includes('productsUrl("unsynced")'));
+    check("Unsync reports inventory returned to the source",
+      synced.includes('data.returned + " unsold unit(s) to the source"'));
+    check("then refreshes the current tab without navigation",
+      synced.includes("await refreshProductsLive(true)"));
 
     check("the unsynced tab is not offered it",
       !unsynced.includes('id="unsync-button"'),
@@ -1242,6 +1331,16 @@ const STORE_ROW = {
     check("the sync status is shown",
       /class="pill pill--synced">\s*synced\s*<\/span>/.test(synced));
     check("stock is shown", synced.includes("12 in stock"));
+
+    const destinationLiveRows = await render("destination/partials/productRows", {
+      ...BASE,
+      products: [OFFERED, ACCEPTED],
+      productSelectionLimit: 2,
+    });
+    check("the live destination row fragment keeps sync and unsync controls",
+      destinationLiveRows.includes('data-action="sync"') &&
+        destinationLiveRows.includes('data-action="unsync"') &&
+        destinationLiveRows.includes("Warehouse"));
 
     /* ---- single-product controls live beside View ---- */
     check("an unsynced row has a Sync action",
@@ -1252,8 +1351,8 @@ const STORE_ROW = {
       synced.includes('"/products/decline"') &&
         synced.includes('"/products/accept"'),
       "that is what moves the row back to the Unsynced tab");
-    check("and it says where the row went",
-      synced.includes('productsUrl(unsync ? "unsynced" : "synced")'));
+    check("and it refreshes that row without a page reload",
+      synced.includes("await refreshProductsLive(true)"));
 
     // A product that is gone at the source cannot be synced back, so the pill
     // there stays a label.
@@ -1293,11 +1392,11 @@ const STORE_ROW = {
       !unsynced.includes('id="allow-button"') &&
         !unsynced.includes('id="add-button"') &&
         !unsynced.includes("resourcePicker"));
-    // Sync now refreshes products ALREADY in the store, so it belongs beside
+    // Refresh now updates products ALREADY in the store, so it belongs beside
     // Unsync on the Synced tab. On Unsynced, ticking a row means "accept
     // this", and a second button acting on the same ticks would be two
     // different answers to one selection.
-    check("and no Sync now on the tab where ticks mean accept",
+    check("and no Refresh now on the tab where ticks mean accept",
       !unsynced.includes('id="sync-button"'),
       "Sync and Decline already answer that selection");
 
@@ -1306,7 +1405,7 @@ const STORE_ROW = {
       ...BASE,
       store: { ...STORE_ROW, store_type: "destination" },
       tab: "unsynced",
-      counts: { synced: 0, unsynced: 0 },
+      counts: { all: 0, synced: 0, unsynced: 0 },
       pager: pagerFor(0, { params: { tab: "unsynced" } }),
       search: "",
       storeFilter: null,
@@ -1314,8 +1413,10 @@ const STORE_ROW = {
       connections: [CONN],
     });
 
-    check("an empty tab still shows both tabs",
-      emptyUnsynced.includes("Synced (0)") && emptyUnsynced.includes("Unsynced (0)"),
+    check("an empty tab still shows all three tabs",
+      emptyUnsynced.includes("All (0)") &&
+        emptyUnsynced.includes("Synced (0)") &&
+        emptyUnsynced.includes("Unsynced (0)"),
       "the other tab may still have something");
     check("and uses the standard empty-table message",
       emptyUnsynced.includes("No records found") &&
@@ -1325,8 +1426,9 @@ const STORE_ROW = {
         emptyUnsynced.includes("No records found") &&
         emptyUnsynced.includes('colspan="8"'),
       "the columns must survive, and the row must span all of them");
-    check("with nothing to accept there is no accept button",
-      !emptyUnsynced.includes('id="accept-button"'));
+    check("with nothing to accept the hidden bulk action remains ready for live rows",
+      emptyUnsynced.includes('id="accept-button"') &&
+        /id="bulkbar"[^>]*hidden/.test(emptyUnsynced));
   }
 
   console.log("\nProduct detail");
@@ -1395,7 +1497,7 @@ const STORE_ROW = {
         allocated.includes('data-variant="101"'));
     check("the allocation screen separates sold and remaining stock",
       allocated.includes("Remaining 20") &&
-        allocated.includes("Return unsold"));
+        !allocated.includes("Return unsold"));
     check("inline inventory cannot exceed its current maximum",
       allocated.includes('max="29"') &&
         allocated.includes("Max 29") &&
@@ -1404,6 +1506,11 @@ const STORE_ROW = {
       allocated.includes('addEventListener("wheel"') &&
         allocated.includes("document.activeElement !== input") &&
         allocated.includes("event.deltaY < 0 ? 1 : -1"));
+    check("untracked inventory is stopped before a product is shared",
+      allocated.includes('data-tracked="') &&
+        allocated.includes('input.dataset.tracked === "0"') &&
+        allocated.indexOf('input.dataset.tracked === "0"') <
+          allocated.indexOf('if (isSharing)'));
 
     const unsharedAllocation = await render("source/productDetail", {
       ...BASE,
@@ -1499,10 +1606,10 @@ const STORE_ROW = {
 
     check("the destination sees the variants",
       destinationDetail.includes("SH-S") && destinationDetail.includes("20.00"));
-    check("the destination sees reserved remaining stock and sales",
+    check("the destination sees its stock and sales without allocation wording",
       destinationDetail.includes("4") &&
-        destinationDetail.includes("reserved remaining") &&
-        destinationDetail.includes("2 sold"));
+        destinationDetail.includes("2 sold") &&
+        !destinationDetail.includes("reserved remaining"));
     check("the variant name comes from the source row",
       destinationDetail.includes(">\n                    S\n") ||
         destinationDetail.includes("S<"));
@@ -3133,7 +3240,6 @@ const STORE_ROW = {
     check("the top bar runs for every request, and a request finishing does not stop a page load",
       client.includes("requestsInFlight++") &&
         client.includes("navigating || requestsInFlight > 0"));
-
     // Every screen that makes a request names the button that started it,
     // apart from the store delete, which spins for the whole run of rounds.
     const quiet = walk(VIEWS).filter((file) => {
@@ -3153,6 +3259,10 @@ const STORE_ROW = {
     check("the spinner is drawn in CSS, keeping the button's width",
       /\.is-loading \{[\s\S]{0,200}color: transparent/.test(css) &&
         /\.is-loading::after \{[\s\S]{0,400}animation: spin/.test(css));
+    check("sync and unsync spinners use visible semantic colours",
+      /\.btn--success\.is-loading::after[\s\S]{0,160}--spin: var\(--ok\)/.test(css) &&
+        /\.bulkbar__btn\.is-loading::after[\s\S]{0,160}--spin: var\(--ok\)/.test(css) &&
+        /\.bulkbar__btn--danger\.is-loading::after[\s\S]{0,160}--spin: var\(--danger\)/.test(css));
     check("every disabled native button reveals a red blocked icon only on hover",
       /button:disabled:not\(\.is-loading\):not\(\[data-no-block-icon\]\)::before/.test(css) &&
         /content: "\\2298"[\s\S]{0,300}color: var\(--danger\)[\s\S]{0,100}opacity: 0/.test(css) &&
