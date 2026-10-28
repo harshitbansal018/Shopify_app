@@ -49,6 +49,23 @@
       </div>
     </header>
 
+    <%# A disabled Add store button prevents the action, but the merchant also
+        needs a visible explanation and a direct way to make room. %>
+    <% if (addStoreBlocked) { %>
+      <section class="plan-capacity plan-capacity--full" role="alert">
+        <div class="plan-capacity__usage">
+          <strong><%= addStoreRoom.used %> / <%= addStoreRoom.limit %></strong>
+          <span>active stores</span>
+        </div>
+        <div class="plan-capacity__message">
+          <strong class="plan-capacity__title">Store connection limit reached</strong>
+          <span class="plan-capacity__copy"><%= addStoreRoom.message %></span>
+        </div>
+        <a class="btn btn--primary btn--small plan-capacity__action"
+           href="/plans" data-navigate="/plans">Upgrade plan</a>
+      </section>
+    <% } %>
+
     <%# Mirrors the source's pairing card: what pairing is, and where to start.
         The code itself comes from the source store; it is entered through the
         Add store button above. %>

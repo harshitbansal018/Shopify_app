@@ -25,10 +25,72 @@ const sourceConnectionSettingsModel = require("../models/sourceConnectionSetting
 const shippingPolicyModel = require("../models/shippingPolicyModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
 const inventoryAllocationModel = require("../models/inventoryAllocationModel");
+const crypto = require("crypto");
 const inventoryAllocation = require("../services/inventoryAllocation");
 const productSync = require("../services/productSync");
+const planLimits = require("../services/planLimits");
 const { renderStoreType } = require("./storeController");
 const { paginate } = require("./pagination");
+
+function renderView(res, view, locals) {
+  return new Promise((resolve, reject) => {
+    res.render(view, locals, (error, html) => {
+      if (error) reject(error);
+      else resolve(html);
+    });
+  });
+}
+
+/** Return only the replaceable Products-page regions for quiet live updates. */
+async function renderProductsResponse(req, res, view, locals) {
+  const liveVersion = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({
+      products: locals.products,
+      counts: locals.counts,
+      page: locals.pager && locals.pager.page,
+      pages: locals.pager && locals.pager.pages,
+    }))
+    .digest("hex");
+
+  const versionedLocals = { ...locals, liveVersion };
+  if (!req.productsLive) return res.render(view, versionedLocals);
+
+  // A truthy no-plan snapshot stops the global render wrapper from running
+  // its full orders/emails/sources usage report for this row-only response.
+  let planStatus = { plan: null };
+  let productSelectionLimit = null;
+
+  if (req.store.store_type === "destination") {
+    const capacity = await planLimits.productCapacity(req.store);
+    productSelectionLimit = capacity.remaining;
+  }
+
+  const partial = req.store.store_type === "source"
+    ? "source/partials/productRows"
+    : "destination/partials/productRows";
+  const sharedLocals = {
+    ...versionedLocals,
+    planStatus,
+    productSelectionLimit,
+  };
+  const [rows, pager] = await Promise.all([
+    renderView(res, partial, sharedLocals),
+    renderView(res, "partials/pager", {
+      ...sharedLocals,
+      noun: "products",
+    }),
+  ]);
+
+  return res.json({
+    ok: true,
+    rows,
+    pager,
+    counts: locals.counts,
+    version: liveVersion,
+    productSelectionLimit,
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /* Screen                                                              */
@@ -47,9 +109,9 @@ exports.getProducts = async (req, res) => {
       : "";
 
     if (!isSource) {
-      // A destination opens on its established catalogue. Unsynced remains
-      // available explicitly when the merchant wants to review new offers.
-      const tab = req.query.tab === "unsynced" ? "unsynced" : "synced";
+      // All is the complete catalogue; the other tabs narrow by acceptance.
+      const destinationTabs = ["all", "synced", "unsynced"];
+      const tab = destinationTabs.includes(req.query.tab) ? req.query.tab : "all";
 
       // The store filter: one supplier, or all of them. The id comes from a
       // browser, so it is only ever matched against THIS store's own
@@ -103,7 +165,7 @@ exports.getProducts = async (req, res) => {
             const allocation = byVariant.get(Number(variant.source_variant_mapping_id));
             return allocation
               ? { ...variant, inventory_quantity: allocation.remaining_quantity }
-              : variant;
+              : (reserved.length ? { ...variant, inventory_quantity: 0 } : variant);
           });
 
         return {
@@ -118,7 +180,7 @@ exports.getProducts = async (req, res) => {
         };
       };
 
-      return res.render("destination/products", {
+      return await renderProductsResponse(req, res, "destination/products", {
         shop: req.shop,
         apiKey: process.env.SHOPIFY_API_KEY,
         store: req.store,
@@ -174,13 +236,21 @@ exports.getProducts = async (req, res) => {
       },
     });
 
-    const products = await sourceProductModel.listWithMappingStatus(req.storeId, {
-      filter,
-      search,
-      connectionId: storeFilter,
-      limit: pager.limit,
-      offset: pager.offset,
-    });
+    const [products, pickerSelections] = await Promise.all([
+      sourceProductModel.listWithMappingStatus(req.storeId, {
+        filter,
+        search,
+        connectionId: storeFilter,
+        limit: pager.limit,
+        offset: pager.offset,
+      }),
+      // Independent of pagination: Shopify's picker must know every product
+      // already staged, while the table still reads only one page. The model
+      // returns IDs and counts only, so this stays small for large catalogues.
+      req.productsLive
+        ? Promise.resolve([])
+        : sourceProductModel.listPickerSelections(req.storeId),
+    ]);
 
     const variants = await sourceVariantModel.mapForProducts(
       products.map((product) => product.id)
@@ -200,7 +270,7 @@ exports.getProducts = async (req, res) => {
       };
     };
 
-    res.render("source/products", {
+    return await renderProductsResponse(req, res, "source/products", {
       shop: req.shop,
       apiKey: process.env.SHOPIFY_API_KEY,
       store: req.store,
@@ -210,6 +280,7 @@ exports.getProducts = async (req, res) => {
       search,
       storeFilter,
       products: products.map(withVariants),
+      pickerSelections,
 
       connections,
       // Nothing can be allowed until there is somewhere to send it.
@@ -220,6 +291,11 @@ exports.getProducts = async (req, res) => {
     console.error("Products screen failed:", err.message);
     res.status(500).send("Error loading products");
   }
+};
+
+exports.getProductsLive = async (req, res) => {
+  req.productsLive = true;
+  return exports.getProducts(req, res);
 };
 
 /* ------------------------------------------------------------------ */
@@ -260,7 +336,9 @@ async function recordSelections(storeId, picks, { existingIds = new Set() } = {}
 
     // Use the same definition as the source Products filters: a product is
     // shared when at least one destination mapping exists for it.
-    const mappings = await productMappingModel.listForSourceProduct(cached.id);
+    const mappings = await productMappingModel.listForSourceProduct(cached.id, {
+      includeRevoked: false,
+    });
     if (mappings.length) shared += 1;
     else unshared += 1;
 
@@ -525,7 +603,14 @@ exports.getProduct = async (req, res) => {
               allocated_quantity: allocation.allocated_quantity,
               sold_quantity: allocation.sold_quantity,
             }
-          : variant;
+          : (allocations.length
+              ? {
+                  ...variant,
+                  inventory_quantity: 0,
+                  allocated_quantity: 0,
+                  sold_quantity: 0,
+                }
+              : variant);
       });
 
       return res.render("destination/productDetail", {
@@ -550,7 +635,9 @@ exports.getProduct = async (req, res) => {
     }
 
     const variants = await sourceVariantModel.listForProduct(product.id);
-    const mappings = await productMappingModel.listForSourceProduct(product.id);
+    const mappings = await productMappingModel.listForSourceProduct(product.id, {
+      includeRevoked: false,
+    });
 
     // Once the product is shared the mapping is authoritative -- every
     // connection carries the same selection, so any live one describes it.
@@ -750,7 +837,9 @@ exports.postInventoryAllocation = async (req, res) => {
       return res.status(404).json({ error: "Destination store not found." });
     }
 
-    const mapping = (await productMappingModel.listForSourceProduct(product.id))
+    const mapping = (await productMappingModel.listForSourceProduct(product.id, {
+      includeRevoked: false,
+    }))
       .find((item) => Number(item.connection_id) === connectionId &&
         item.sync_status !== "deleted");
     if (!mapping) {
@@ -764,14 +853,6 @@ exports.postInventoryAllocation = async (req, res) => {
       return res.status(409).json({
         error:
           "Inventory sync is off for this destination. Enable it in the destination Settings first.",
-      });
-    }
-
-    if (!mapping.accepted_at && mapping.destination_shopify_product_id) {
-      return res.status(409).json({
-        error:
-          "This destination has unsynced the product but still keeps its Shopify copy. " +
-          "Remove the destination connection before returning that stock.",
       });
     }
 
@@ -1004,6 +1085,101 @@ exports.postAllow = async (req, res) => {
 };
 
 /**
+ * Source-side withdrawal: keep the staged product and destination copy, but
+ * make that copy Draft, stop future pushes, and return its unsold allocation.
+ */
+exports.postUnshare = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  const productIds = [...new Set(
+    (Array.isArray(req.body.product_ids) ? req.body.product_ids : [])
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0)
+  )];
+  if (!productIds.length) {
+    return res.status(400).json({ error: "Pick at least one product." });
+  }
+
+  try {
+    const connections = await connectionModel.listForSource(req.storeId);
+    const byConnection = new Map(connections.map((connection) => [
+      Number(connection.id), connection,
+    ]));
+    const requested = [...new Set(
+      (Array.isArray(req.body.connection_ids) ? req.body.connection_ids : [])
+        .map(Number)
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )];
+
+    if (requested.some((id) => !byConnection.has(id))) {
+      return res.status(400).json({ error: "That destination store is unavailable." });
+    }
+
+    const connectionScope = requested.length ? new Set(requested) : null;
+    const result = { revoked: 0, drafted: 0, returned: 0, failed: 0, errors: [] };
+
+    for (const productId of productIds) {
+      const product = await sourceProductModel.findById(productId);
+      if (!product || Number(product.store_id) !== Number(req.storeId)) continue;
+
+      const mappings = await productMappingModel.listForSourceProduct(product.id, {
+        includeRevoked: false,
+      });
+
+      for (const mapping of mappings) {
+        const connectionId = Number(mapping.connection_id);
+        if (connectionScope && !connectionScope.has(connectionId)) continue;
+
+        const connection = byConnection.get(connectionId);
+        if (!connection) continue;
+
+        try {
+          if (mapping.destination_shopify_product_id) {
+            if (!connection.destination.is_active) {
+              throw new Error("The destination store is not installed.");
+            }
+            await productSync.setDestinationProductStatus(
+              connection.destination.shop_domain,
+              mapping.destination_shopify_product_id,
+              "DRAFT"
+            );
+            result.drafted += 1;
+          }
+
+          result.returned += await inventoryAllocation.releaseConnectionProduct(
+            req.store,
+            connectionId,
+            product.id
+          );
+          await productMappingModel.markSourceRevoked(mapping.id);
+          result.revoked += 1;
+        } catch (error) {
+          result.failed += 1;
+          result.errors.push(
+            `${connection.destination.shop_domain}: ${error.message}`
+          );
+        }
+      }
+    }
+
+    if (result.failed) {
+      return res.status(502).json({
+        ...result,
+        error:
+          `Made ${result.revoked} share(s) inactive, but ${result.failed} failed. ` +
+          (result.errors[0] || "Try again."),
+      });
+    }
+
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(err.statusCode || 502).json({
+      error: reauthAware(err, "Could not make those products not shared."),
+    });
+  }
+};
+
+/**
  * Push what is pending AND accepted.
  *
  * Only the destination triggers this. The source's job ends at offering: it
@@ -1170,19 +1346,33 @@ exports.postDecline = async (req, res) => {
       ids
     );
 
-    // Draft every existing Shopify copy before updates are stopped. Only after
-    // all remote writes succeed do we clear accepted_at locally; a failed API
-    // call therefore cannot leave a live product unmanaged by this app.
-    for (const mapping of mappings) {
-      if (!mapping.destination_shopify_product_id) continue;
+    let returned = 0;
 
+    // Draft and zero every existing Shopify copy before returning its unsold
+    // reservation to the source. Only after all remote writes succeed do we
+    // clear accepted_at locally. This ordering prevents the same unit becoming
+    // sellable in both stores, even temporarily.
+    for (const mapping of mappings) {
       const connection = connectionById.get(Number(mapping.connection_id));
       if (!connection) continue;
 
-      await productSync.setDestinationProductStatus(
-        connection.destination.shop_domain,
-        mapping.destination_shopify_product_id,
-        "DRAFT"
+      if (mapping.destination_shopify_product_id) {
+        await productSync.setDestinationProductStatus(
+          connection.destination.shop_domain,
+          mapping.destination_shopify_product_id,
+          "DRAFT"
+        );
+        await inventoryAllocation.zeroDestinationInventory(
+          connection,
+          mapping,
+          mapping.source_product_id
+        );
+      }
+
+      returned += await inventoryAllocation.releaseConnectionProduct(
+        connection.source,
+        connection.id,
+        mapping.source_product_id
       );
     }
 
@@ -1191,7 +1381,7 @@ exports.postDecline = async (req, res) => {
       ids
     );
 
-    return res.json({ ok: true, declined });
+    return res.json({ ok: true, declined, returned });
   } catch (err) {
     return res.status(err.statusCode || 502).json({
       error: reauthAware(err, "Could not unsync those products."),

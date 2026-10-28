@@ -75,6 +75,18 @@ console.log("\nChange subscriptions");
     check(`${topic} is registered`, topics.has(topic));
   }
 
+  check("product changes can request a debounced immediate sync",
+    typeof productSync.scheduleAutoSync === "function");
+
+  const webhookController = fs.readFileSync(
+    path.join(SERVER, "controllers/webhookController.js"),
+    "utf8"
+  );
+  check("source product webhooks trigger the debounced sync only when queued",
+    webhookController.includes(
+      "if (result.requeued) productSync.scheduleAutoSync();"
+    ));
+
   const appConfig = fs.readFileSync(
     path.join(SERVER, "shopify.app.toml"),
     "utf8"
@@ -316,17 +328,21 @@ console.log("\nProductSetInput");
 
   const allocatedStock = productSync.buildProductInput(
     product,
-    inventoryVariants.map((variant, index) => ({ ...variant, id: index + 1 })),
+    inventoryVariants.map((variant, index) => ({
+      ...variant,
+      id: index + 1,
+      inventory_quantity: 100,
+    })),
     {},
     null,
     {
       locationId: "gid://shopify/Location/default",
-      allocatedInventory: new Map([[1, 25], [2, 0]]),
+      allocatedInventory: new Map([[1, 10]]),
     }
   );
   check("a destination receives its reserved quantity instead of source stock",
-    allocatedStock.variants[0].inventoryQuantities[0].quantity === 25);
-  check("a fully sold allocation syncs as zero, not as missing",
+    allocatedStock.variants[0].inventoryQuantities[0].quantity === 10);
+  check("allocation mode never falls back to full source stock",
     allocatedStock.variants[1].inventoryQuantities[0].quantity === 0);
 
   // A product with no options must not send an empty array.

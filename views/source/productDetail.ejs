@@ -152,6 +152,8 @@
                         data-connection="<%= inlineDestination.connection.id %>"
                         data-variant="<%= variant.id %>"
                         data-sold="<%= inlineSold %>"
+                        data-current="<%= inlineAllocated %>"
+                        data-tracked="<%= variant.inventory_tracked === 0 ? 0 : 1 %>"
                         <%= inlineInventoryEnabled ? "" : "disabled" %>
                         aria-label="Inventory allotted to <%= inlineDestinationName %> for <%= name %>">
                       <button
@@ -163,6 +165,9 @@
                     </div>
                     <span class="allocation-limit">
                       Remaining <%= inlineRemaining %> &middot; Max <%= inlineMax %>
+                      <% if (variant.inventory_tracked === 0) { %>
+                        &middot; Track quantity is off in source Shopify
+                      <% } %>
                     </span>
                   </td>
                 <% } %>
@@ -196,9 +201,6 @@
             class="allocation-form__actions allocation-controls"
             data-connection="<%= inlineDestination.connection.id %>"
             data-needs-allow="<%= inlineDestination.needsAllow ? 1 : 0 %>">
-            <button class="btn btn--small allocation-return" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
-              Return unsold
-            </button>
             <button class="btn btn--small btn--primary allocation-save" type="button" <%= inlineInventoryEnabled ? "" : "disabled" %>>
               <%= inlineDestination.needsAllow ? "Share & save" : "Save" %>
             </button>
@@ -293,11 +295,18 @@
                               data-connection="<%= connection.id %>"
                               data-variant="<%= variant.id %>"
                               data-sold="<%= sold %>"
+                              data-current="<%= allocated %>"
+                              data-tracked="<%= variant.inventory_tracked === 0 ? 0 : 1 %>"
                               <%= inventoryEnabled ? "" : "disabled" %>
                               aria-label="Reserved total for <%= variantName %> at <%= destinationName %>">
                             <button class="quantity-stepper__button allocation-step" type="button" data-step="1" <%= inventoryEnabled ? "" : "disabled" %>>+</button>
                           </div>
-                          <span class="allocation-limit">Remaining <%= remaining %> &middot; Max <%= maximum %></span>
+                          <span class="allocation-limit">
+                            Remaining <%= remaining %> &middot; Max <%= maximum %>
+                            <% if (variant.inventory_tracked === 0) { %>
+                              &middot; Track quantity is off in source Shopify
+                            <% } %>
+                          </span>
                         </td>
                       </tr>
                     <% }); %>
@@ -307,9 +316,6 @@
                   class="allocation-form__actions allocation-controls"
                   data-connection="<%= connection.id %>"
                   data-needs-allow="<%= destination.needsAllow ? 1 : 0 %>">
-                  <button class="btn btn--small allocation-return" type="button" <%= inventoryEnabled ? "" : "disabled" %>>
-                    Return unsold
-                  </button>
                   <button class="btn btn--small btn--primary allocation-save" type="submit" <%= inventoryEnabled ? "" : "disabled" %>>
                     <%= destination.needsAllow ? "Share & save" : "Save" %>
                   </button>
@@ -426,16 +432,9 @@
         .forEach(function (controls) {
           var connectionId = Number(controls.dataset.connection);
           var save = controls.querySelector(".allocation-save");
-          var returnButton = controls.querySelector(".allocation-return");
           var form = controls.closest("form");
           var inputs = allAllocationInputs.filter(function (input) {
             return Number(input.dataset.connection) === connectionId;
-          });
-
-          returnButton.addEventListener("click", function () {
-            inputs.forEach(function (input) {
-              input.value = input.dataset.sold || "0";
-            });
           });
 
           async function saveAllocation(event) {
@@ -455,6 +454,16 @@
                 fail(
                   "Inventory must be a whole number between " + minimum +
                   " and " + maximum + "."
+                );
+                input.focus();
+                return;
+              }
+
+              if (quantity !== Number(input.dataset.current) &&
+                  input.dataset.tracked === "0") {
+                fail(
+                  "This variant does not track inventory in the source Shopify store. " +
+                  "Enable Track quantity, set its stock, then try again."
                 );
                 input.focus();
                 return;

@@ -89,6 +89,7 @@ exports.productsUpdate = async (req, res) => {
       `products/update ${shop} #${payload.id}: ` +
         `${result.requeued} mapping(s) queued`
     );
+    if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("products/update processing failed:", err.message);
   }
@@ -175,6 +176,7 @@ async function refreshInventoryProduct(req, res, kind) {
       `${kind} ${shop} #${inventoryItemId}: ` +
         `${result.requeued} mapping(s) queued`
     );
+    if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error(`${kind} processing failed:`, err.message);
   }
@@ -213,6 +215,7 @@ exports.collectionsUpdate = async (req, res) => {
         `${result.imported} product(s) refreshed, ` +
         `${result.requeued} mapping(s) queued`
     );
+    if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("collections/update processing failed:", err.message);
   }
@@ -241,6 +244,7 @@ exports.productEvent = async (req, res) => {
       `Product Event ${shop} #${productId}: ` +
         `${result.requeued} mapping(s) queued`
     );
+    if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("Product Event processing failed:", err.message);
   }

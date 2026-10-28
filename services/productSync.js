@@ -1218,9 +1218,17 @@ function buildProductInput(
         ? inventoryLocationIds.get(String(variant.shopify_variant_id)) || null
         : locationId;
 
-      const inventoryQuantity = allocatedInventory instanceof Map &&
-        allocatedInventory.has(Number(variant.id))
-        ? allocatedInventory.get(Number(variant.id))
+      // Once this product has an allocation for the destination, that reserved
+      // pool is the only inventory authority. Never fall back to the source's
+      // full balance for a missing variant row: that could expose 100 units at
+      // the destination when the merchant reserved only 10. A missing row in
+      // allocation mode therefore means zero.
+      const hasAllocatedInventory = allocatedInventory instanceof Map &&
+        allocatedInventory.size > 0;
+      const inventoryQuantity = hasAllocatedInventory
+        ? (allocatedInventory.has(Number(variant.id))
+            ? allocatedInventory.get(Number(variant.id))
+            : 0)
         : variant.inventory_quantity;
 
       if (on("inventory") && inventoryLocationId && variant.inventory_tracked !== 0 &&
@@ -1986,8 +1994,13 @@ async function deleteConnectionProducts(
 const AUTO_SYNC_INTERVAL_MS = Number(
   process.env.AUTO_SYNC_INTERVAL_MS || 60_000
 );
+const AUTO_SYNC_DEBOUNCE_MS = Math.max(
+  0,
+  Number(process.env.AUTO_SYNC_DEBOUNCE_MS || 2_000)
+);
 
 let autoSyncTimer = null;
+let autoSyncDebounceTimer = null;
 let autoSyncRunning = false;
 
 /**
@@ -2037,6 +2050,33 @@ async function runAutoSync() {
   return totals;
 }
 
+/**
+ * Run auto-sync shortly after Shopify finishes sending a burst of webhooks.
+ * Every new event resets the short timer, so a title, variant and inventory
+ * update saved together cause one push rather than three. If the periodic
+ * worker is already busy, retry instead of losing the newly queued change.
+ */
+function scheduleAutoSync(delayMs = AUTO_SYNC_DEBOUNCE_MS) {
+  if (autoSyncDebounceTimer) clearTimeout(autoSyncDebounceTimer);
+
+  const wait = Math.max(0, Number(delayMs) || 0);
+  autoSyncDebounceTimer = setTimeout(async () => {
+    autoSyncDebounceTimer = null;
+
+    try {
+      const result = await runAutoSync();
+      if (result && result.skipped) scheduleAutoSync(wait);
+    } catch (err) {
+      // The minute worker remains the durable fallback. Log this attempt, but
+      // do not build an aggressive retry loop around a Shopify/API failure.
+      console.error("Immediate auto-sync failed:", err.message);
+    }
+  }, wait);
+
+  if (autoSyncDebounceTimer.unref) autoSyncDebounceTimer.unref();
+  return autoSyncDebounceTimer;
+}
+
 /** Start the background push. Safe to call twice; the second call is a no-op. */
 function startAutoSync() {
   if (autoSyncTimer) return autoSyncTimer;
@@ -2059,9 +2099,10 @@ function startAutoSync() {
 }
 
 function stopAutoSync() {
-  if (!autoSyncTimer) return;
-  clearInterval(autoSyncTimer);
+  if (autoSyncTimer) clearInterval(autoSyncTimer);
+  if (autoSyncDebounceTimer) clearTimeout(autoSyncDebounceTimer);
   autoSyncTimer = null;
+  autoSyncDebounceTimer = null;
 }
 
 module.exports = {
@@ -2078,6 +2119,7 @@ module.exports = {
   deleteFromDestinations,
   deleteConnectionProducts,
   runAutoSync,
+  scheduleAutoSync,
   startAutoSync,
   stopAutoSync,
   pushPending,

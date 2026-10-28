@@ -86,6 +86,63 @@ async function listForStore(storeId, { limit = 250, offset = 0 } = {}) {
 }
 
 /**
+ * The minimum data App Bridge needs to preselect products in its picker.
+ *
+ * This deliberately does not read product_data or every variant in the
+ * catalogue. Products selected in full need only their product GID; narrowed
+ * products join only the variant rows named in selected_variant_ids. The
+ * count lets the browser recognise an unchanged "all variants" selection
+ * when Shopify returns every variant after the picker is confirmed.
+ */
+async function listPickerSelections(storeId) {
+  const rows = await query(
+    `SELECT sp.id,
+            sp.shopify_product_id,
+            (sp.selected_variant_ids IS NULL) AS all_variants,
+            (SELECT COUNT(*)
+               FROM source_variant_mappings all_svm
+              WHERE all_svm.source_product_id = sp.id) AS variant_count,
+            selected_svm.shopify_variant_id
+       FROM source_products sp
+       LEFT JOIN source_variant_mappings selected_svm
+         ON selected_svm.source_product_id = sp.id
+        AND sp.selected_variant_ids IS NOT NULL
+        AND JSON_CONTAINS(
+              sp.selected_variant_ids,
+              CAST(selected_svm.id AS CHAR)
+            )
+      WHERE sp.store_id = ?
+      ORDER BY sp.id, selected_svm.id`,
+    [storeId]
+  );
+
+  const selections = new Map();
+
+  for (const row of rows) {
+    const key = String(row.shopify_product_id);
+    let selection = selections.get(key);
+
+    if (!selection) {
+      selection = {
+        id: `gid://shopify/Product/${key}`,
+        variants: [],
+        allVariants: Boolean(row.all_variants),
+        variantCount: Number(row.variant_count || 0),
+      };
+      selections.set(key, selection);
+    }
+
+    if (row.shopify_variant_id !== null && row.shopify_variant_id !== undefined) {
+      selection.variants.push({
+        id: `gid://shopify/ProductVariant/${String(row.shopify_variant_id)}`,
+      });
+    }
+  }
+
+  return [...selections.values()];
+}
+
+/**
  * What a merchant typed in the search box, as SQL.
  *
  * Title, vendor, type, handle and SKU. SKU is the one that earns its keep --
@@ -151,6 +208,7 @@ async function listWithMappingStatus(
 
   const matching = searchClause(search);
   const mappingScope = connectionId ? " AND pm.connection_id = ?" : "";
+  const activeMapping = " AND pm.source_revoked_at IS NULL";
 
   const rows = await query(
     `SELECT sp.id, sp.shopify_product_id, sp.title, sp.handle, sp.vendor,
@@ -172,7 +230,7 @@ async function listWithMappingStatus(
             (SELECT COUNT(*) FROM source_variant_mappings svm
               WHERE svm.source_product_id = sp.id) AS variant_count
        FROM source_products sp
-       LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}
+       LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}${activeMapping}
       WHERE sp.store_id = ?${matching.where}
       GROUP BY sp.id
       ${having}
@@ -226,6 +284,7 @@ async function countsWithMappingStatus(
   // as a broken filter.
   const matching = searchClause(search);
   const mappingScope = connectionId ? " AND pm.connection_id = ?" : "";
+  const activeMapping = " AND pm.source_revoked_at IS NULL";
 
   const rows = await query(
     `SELECT COUNT(*)          AS total,
@@ -233,7 +292,7 @@ async function countsWithMappingStatus(
             SUM(allowed = 0)  AS unshared
        FROM (SELECT sp.id, COUNT(pm.id) AS allowed
                FROM source_products sp
-               LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}
+               LEFT JOIN product_mappings pm ON pm.source_product_id = sp.id${mappingScope}${activeMapping}
               WHERE sp.store_id = ?${matching.where}
               GROUP BY sp.id) grouped`,
     [
@@ -271,10 +330,10 @@ async function listSyncedIntoStore(
   } = {}
 ) {
   const params = [destinationStoreId];
-  let where = "";
+  let where = " AND pm.source_revoked_at IS NULL";
 
-  // Accepted or not is the whole difference between the two tabs: an unsynced
-  // product is one this store has been offered and has not taken yet.
+  // Accepted or not separates the two state-specific tabs. The All tab adds
+  // neither condition and therefore returns both states together.
   if (tab === "synced") where += " AND pm.accepted_at IS NOT NULL";
   if (tab === "unsynced") where += " AND pm.accepted_at IS NULL";
 
@@ -303,6 +362,7 @@ async function listSyncedIntoStore(
   const rows = await query(
     `SELECT pm.id AS mapping_id,
             pm.connection_id,
+            pm.source_product_id,
             pm.destination_shopify_product_id,
             pm.sync_status,
             pm.accepted_at,
@@ -387,13 +447,14 @@ async function countsSyncedIntoStore(
        FROM product_mappings pm
        JOIN store_connections c ON c.id = pm.connection_id
        ${joins}
-      WHERE c.destination_store_id = ?${where}`,
+      WHERE c.destination_store_id = ? AND pm.source_revoked_at IS NULL${where}`,
     params
   );
 
   const row = rows[0] || {};
 
   return {
+    all: Number(row.synced || 0) + Number(row.unsynced || 0),
     synced: Number(row.synced || 0),
     unsynced: Number(row.unsynced || 0),
   };
@@ -420,6 +481,7 @@ async function countsSyncedBySource(destinationStoreId) {
        JOIN store_connections c ON c.id = pm.connection_id
        JOIN stores src         ON src.id = c.source_store_id
       WHERE c.destination_store_id = ?
+        AND pm.source_revoked_at IS NULL
       GROUP BY src.shop_domain, src.store_name`,
     [destinationStoreId]
   );
@@ -617,6 +679,7 @@ module.exports = {
   findByShopifyId,
   findById,
   listForStore,
+  listPickerSelections,
   listWithMappingStatus,
   countsWithMappingStatus,
   listSyncedIntoStore,

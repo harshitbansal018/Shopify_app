@@ -538,6 +538,13 @@ button:disabled:not(.is-loading):not([data-no-block-icon]):hover::before {
   --spin: var(--danger);
 }
 
+/* Sync is the positive action, so its progress ring stays clearly green on
+   the pale success button instead of inheriting the generic white spinner. */
+.btn--success.is-loading::after {
+  --spin-track: rgba(0, 128, 85, 0.22);
+  --spin: var(--ok);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .is-loading::after {
     animation-duration: 1.6s;
@@ -3166,6 +3173,29 @@ s-modal:not(:defined)[open] s-button {
 .bulkbar__btn:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+/* A busy bulk action is working, not unavailable. Keep its spinner at full
+   contrast while appFetch temporarily disables the button. */
+.bulkbar__btn.is-loading:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+/* Bulk Sync uses a green ring; Bulk Unsync keeps the destructive red ring.
+   Unsync temporarily uses a pale background so red remains visible. */
+.bulkbar__btn.is-loading::after {
+  --spin-track: rgba(0, 128, 85, 0.22);
+  --spin: var(--ok);
+}
+
+.bulkbar__btn--danger.is-loading {
+  background: var(--danger-bg);
+}
+
+.bulkbar__btn--danger.is-loading::after {
+  --spin-track: rgba(184, 38, 30, 0.25);
+  --spin: var(--danger);
 }
 
 .bulkbar__close {

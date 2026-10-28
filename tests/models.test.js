@@ -814,6 +814,40 @@ async function cleanup() {
 
     const breakdown = await productMappingModel.statusBreakdown(connection.id);
     check("status breakdown counts", breakdown.synced === 1, JSON.stringify(breakdown));
+
+    await productMappingModel.markSourceRevoked(mapping.id);
+    const revoked = await productMappingModel.findById(mapping.id);
+    check("source withdrawal keeps the destination product link",
+      Boolean(revoked.source_revoked_at) &&
+        revoked.accepted_at === null &&
+        String(revoked.destination_shopify_product_id) === "800001");
+    check("source withdrawal disappears from active connection lists",
+      (await productMappingModel.listForConnection(connection.id)).length === 0 &&
+        (await productMappingModel.listForSourceProduct(sourceProduct.id, {
+          includeRevoked: false,
+        })).length === 0);
+    const withdrawnAtSource = (await sourceProductModel.listWithMappingStatus(source.id))
+      .find((product) => Number(product.id) === Number(sourceProduct.id));
+    check("source withdrawal moves the staged product to Not shared",
+      withdrawnAtSource && withdrawnAtSource.allowed === 0);
+    check("source withdrawal removes the offer from the destination list",
+      (await sourceProductModel.listSyncedIntoStore(destination.id, {
+        mappingId: mapping.id,
+      })).length === 0);
+
+    mapping = await productMappingModel.ensure({
+      connectionId: connection.id,
+      sourceProductId: sourceProduct.id,
+      sourceShopifyProductId: sourceProduct.shopify_product_id,
+    });
+    check("re-sharing reuses the Draft destination copy",
+      mapping.source_revoked_at === null &&
+        mapping.sync_status === "pending" &&
+        String(mapping.destination_shopify_product_id) === "800001");
+    check("re-sharing offers the retained copy to the destination again",
+      (await sourceProductModel.listSyncedIntoStore(destination.id, {
+        mappingId: mapping.id,
+      })).length === 1);
   }
 
   console.log("\ncascade on uninstall-and-purge");
@@ -983,6 +1017,21 @@ async function cleanup() {
           narrowedPick.selected_variant_ids.length === 2,
         JSON.stringify(narrowedPick.selected_variant_ids));
 
+      const pickerSelections = await sourceProductModel.listPickerSelections(store.id);
+      const pickerSelection = pickerSelections.find(
+        (selection) => selection.id === "gid://shopify/Product/6200"
+      );
+      check("the picker preselection query returns only the narrowed variant IDs",
+        pickerSelection &&
+          pickerSelection.allVariants === false &&
+          pickerSelection.variantCount === 3 &&
+          pickerSelection.variants.length === 2 &&
+          pickerSelection.variants.some((variant) =>
+            variant.id === "gid://shopify/ProductVariant/62001") &&
+          pickerSelection.variants.some((variant) =>
+            variant.id === "gid://shopify/ProductVariant/62003"),
+        JSON.stringify(pickerSelection));
+
       // Ticking EVERY variant stores NULL, so one added later still flows.
       const allTicked = await sourceProductModel.setSelectedVariants(
         fresh.id, rows.map((r) => r.id), rows.length
@@ -990,6 +1039,15 @@ async function cleanup() {
       check("ticking every variant stores NULL, not a frozen list",
         allTicked.selected_variant_ids === null,
         JSON.stringify(allTicked.selected_variant_ids));
+
+      const allPickerSelection = (await sourceProductModel.listPickerSelections(store.id))
+        .find((selection) => selection.id === "gid://shopify/Product/6200");
+      check("an all-variant picker selection does not load every variant ID",
+        allPickerSelection &&
+          allPickerSelection.allVariants === true &&
+          allPickerSelection.variantCount === 3 &&
+          allPickerSelection.variants.length === 0,
+        JSON.stringify(allPickerSelection));
 
       // Before it is shared, the list reports the picker's choice.
       await sourceProductModel.setSelectedVariants(
@@ -1137,10 +1195,13 @@ async function cleanup() {
       });
       check("an offset past the end is empty, not an error", past.length === 0);
 
-      /* The destination's two tabs, the same way. */
+      /* The destination's All tab plus the two state-specific tabs. */
       const incomingCounts =
         await sourceProductModel.countsSyncedIntoStore(other.id);
 
+      const allTab = await sourceProductModel.listSyncedIntoStore(other.id, {
+        tab: "all",
+      });
       const syncedTab = await sourceProductModel.listSyncedIntoStore(other.id, {
         tab: "synced",
       });
@@ -1148,6 +1209,10 @@ async function cleanup() {
         tab: "unsynced",
       });
 
+      check("the All tab holds both destination product states",
+        allTab.length === incomingCounts.all &&
+          incomingCounts.all === incomingCounts.synced + incomingCounts.unsynced,
+        `${allTab.length} vs ${incomingCounts.all}`);
       check("the synced tab holds only accepted products",
         syncedTab.length === incomingCounts.synced &&
           syncedTab.every((product) => product.awaiting === false),
@@ -1186,6 +1251,9 @@ async function cleanup() {
       check("an offered product carries its connection for source-owned pricing",
         one && one.connection_id === link.id,
         "without it the destination product page reads default OFF settings");
+      check("an offered product carries its source row for allocated inventory",
+        one && one.source_product_id === cached.id,
+        "without it View falls back to the source balance instead of reserved stock");
       check("and another store cannot see it",
         (await sourceProductModel.findOfferedByMapping(store.id, offered.id)) === null,
         "the destination scope must still hold");

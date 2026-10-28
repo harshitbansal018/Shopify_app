@@ -1,0 +1,95 @@
+<% if (!products.length) { %>
+  <tr class="row--empty">
+    <td class="table__empty" colspan="8">
+      <strong>No records found</strong>
+    </td>
+  </tr>
+<% } else { %>
+<% products.forEach(function (product) { %>
+  <% var rowSynced = product.accepted_at !== null; %>
+  <tr>
+    <td class="table__check">
+      <input
+        type="checkbox"
+        class="awaiting-check"
+        value="<%= product.mapping_id %>"
+        data-synced="<%= rowSynced ? 1 : 0 %>"
+        <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
+        <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+        title="<%= product.sync_status === "deleted"
+          ? "Deleted at the source store"
+          : (!rowSynced && productSelectionLimit === 0
+            ? "Your product plan limit has been reached"
+            : "") %>"
+        aria-label="<%= rowSynced ? "Unsync" : "Sync" %> <%= product.title %>">
+    </td>
+    <td>
+      <span class="media">
+        <% if (product.image_url) { %>
+          <img class="media__thumb" src="<%= product.image_url %>"
+               alt="" loading="lazy" width="40" height="40">
+        <% } else { %>
+          <span class="media__thumb media__thumb--empty" aria-hidden="true"></span>
+        <% } %>
+        <span class="media__body">
+          <% if (product.destination_shopify_product_id) { %>
+            <a class="table__title record-link"
+               href="<%= shopifyAdminUrl(shop, 'products', product.destination_shopify_product_id) %>"
+               target="_blank" rel="noopener noreferrer">
+              <%= product.title %>
+            </a>
+          <% } else { %>
+            <span class="table__title"><%= product.title %></span>
+          <% } %>
+          <span class="muted">
+            <% if (product.status) { %><%= String(product.status).toUpperCase() %><% } else { %>&mdash;<% } %>
+            <% if (product.vendor) { %>&middot; <%= product.vendor %><% } %>
+          </span>
+        </span>
+      </span>
+    </td>
+    <td><%= product.source_store_name || product.source_shop_domain %></td>
+    <td>
+      <span class="<%= product.inventory ? "" : "stock--none" %>">
+        <%= product.inventory %> in stock
+      </span>
+    </td>
+    <td><%= product.offered_variant_count %></td>
+    <td>
+      <% if (product.sync_status === "deleted") { %>
+        <span class="pill pill--failed">deleted</span>
+      <% } else if (!rowSynced) { %>
+        <span class="pill pill--pending">unsynced</span>
+      <% } else { %>
+        <span class="pill pill--<%= product.sync_status %>">
+          <%= product.sync_status %>
+        </span>
+        <% if (product.sync_status === "failed" && product.error_message) { %>
+          <span class="muted"><%= product.error_message %></span>
+        <% } %>
+      <% } %>
+    </td>
+    <td class="table__actions">
+      <button class="btn btn--small view-product" type="button"
+              data-product="<%= product.mapping_id %>">View</button>
+    </td>
+    <td class="table__actions">
+      <% if (product.sync_status !== "deleted") { %>
+        <button
+          class="btn btn--small product-sync-action<%= rowSynced ? " btn--danger" : " btn--success" %>"
+          type="button"
+          data-mapping="<%= product.mapping_id %>"
+          data-action="<%= rowSynced ? "unsync" : "sync" %>"
+          <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+          title="<%= !rowSynced
+            ? (productSelectionLimit === 0
+              ? "Your product plan limit has been reached"
+              : "Sync into this store")
+            : "Stop syncing and move back to Unsynced" %>">
+          <%= rowSynced ? "Unsync" : "Sync" %>
+        </button>
+      <% } %>
+    </td>
+  </tr>
+<% }); %>
+<% } %>
