@@ -21,6 +21,9 @@ const connectionModel = require(path.join(SERVER, "models/connectionModel"));
 const sourceProductModel = require(path.join(SERVER, "models/sourceProductModel"));
 const productMappingModel = require(path.join(SERVER, "models/productMappingModel"));
 const sourceVariantModel = require(path.join(SERVER, "models/sourceVariantModel"));
+const inventoryAllocationModel = require(
+  path.join(SERVER, "models/inventoryAllocationModel")
+);
 const mappingVariantProductModel = require(
   path.join(SERVER, "models/mappingVariantProductModel")
 );
@@ -815,6 +818,40 @@ async function cleanup() {
     const breakdown = await productMappingModel.statusBreakdown(connection.id);
     check("status breakdown counts", breakdown.synced === 1, JSON.stringify(breakdown));
 
+    await inventoryAllocationModel.upsertMany(pool, connection.id, [{
+      sourceVariantId: restored.id,
+      quantity: 10,
+      locations: [{ locationId: "gid://shopify/Location/1", quantity: 10 }],
+    }]);
+    await inventoryAllocationModel.upsertMany(pool, connection.id, [{
+      sourceVariantId: restored.id,
+      quantity: 0,
+      locations: [],
+    }], { preserveResume: true });
+    const remembered = await inventoryAllocationModel.listToResume(
+      connection.id,
+      sourceProduct.id
+    );
+    check("unsync remembers the allocation it released",
+      remembered.length === 1 &&
+        remembered[0].allocated_quantity === 0 &&
+        remembered[0].resume_quantity === 10,
+      JSON.stringify(remembered));
+
+    await inventoryAllocationModel.upsertMany(pool, connection.id, [{
+      sourceVariantId: restored.id,
+      quantity: 10,
+      locations: [{ locationId: "gid://shopify/Location/1", quantity: 10 }],
+    }]);
+    check("restoring or manually editing clears the remembered allocation",
+      (await inventoryAllocationModel.listToResume(
+        connection.id,
+        sourceProduct.id
+      )).length === 0);
+    await query("DELETE FROM inventory_allocations WHERE connection_id = ?", [
+      connection.id,
+    ]);
+
     await productMappingModel.markSourceRevoked(mapping.id);
     const revoked = await productMappingModel.findById(mapping.id);
     check("source withdrawal keeps the destination product link",
@@ -1441,6 +1478,38 @@ async function cleanup() {
 
       check("two variants are linked to start with",
         (await mappingVariantProductModel.countForMapping(offered.id)) === 2);
+
+      // Status changes made by this app echo back through Shopify's webhook.
+      // They must not be mistaken for a merchant manually unsyncing a product.
+      await productMappingModel.expectDestinationStatus(offered.id, "DRAFT");
+      const expectedDraft = await productSync.applyDestinationUpdate(other.id, {
+        id: 8800,
+        status: "draft",
+        variants: [{ id: 91000 }, { id: 91001 }],
+      });
+      check("an app-originated Draft webhook is recognised as expected",
+        expectedDraft.expectedStatus === 1);
+      check("an app-originated Draft does not request a manual unsync",
+        expectedDraft.manualDraftIds.length === 0);
+
+      await productMappingModel.clearExpectedDestinationStatus(offered.id);
+      const manualDraft = await productSync.applyDestinationUpdate(other.id, {
+        id: 8800,
+        status: "draft",
+        variants: [{ id: 91000 }, { id: 91001 }],
+      });
+      check("a merchant-originated Draft requests a manual unsync",
+        manualDraft.manualDraftIds.includes(offered.id));
+
+      await productMappingModel.declineForDestination(other.id, [offered.id]);
+      const manualActive = await productSync.applyDestinationUpdate(other.id, {
+        id: 8800,
+        status: "active",
+        variants: [{ id: 91000 }, { id: 91001 }],
+      });
+      check("a merchant-originated Active requests a manual re-sync",
+        manualActive.manualActiveIds.includes(offered.id));
+      await productMappingModel.acceptForDestination(other.id, [offered.id]);
 
       // They delete ONE variant in their own admin. The webhook arrives with
       // whatever is left.

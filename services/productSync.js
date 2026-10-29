@@ -509,8 +509,25 @@ async function applyDestinationUpdate(storeId, payload) {
   );
 
   let dropped = 0;
+  let expectedStatus = 0;
+  const manualDraftIds = [];
+  const manualActiveIds = [];
+  const destinationStatus = String(payload.status || "").toUpperCase();
 
   for (const mapping of mappings) {
+    if (["ACTIVE", "DRAFT"].includes(destinationStatus)) {
+      if (await productMappingModel.isExpectedDestinationStatus(
+        mapping.id,
+        destinationStatus
+      )) {
+        expectedStatus += 1;
+      } else if (destinationStatus === "DRAFT" && mapping.accepted_at !== null) {
+        manualDraftIds.push(mapping.id);
+      } else if (destinationStatus === "ACTIVE" && mapping.accepted_at === null) {
+        manualActiveIds.push(mapping.id);
+      }
+    }
+
     const links = await mappingVariantProductModel.listForMapping(mapping.id);
 
     for (const link of links) {
@@ -526,7 +543,13 @@ async function applyDestinationUpdate(storeId, payload) {
     }
   }
 
-  return { mappings: mappings.length, dropped };
+  return {
+    mappings: mappings.length,
+    dropped,
+    expectedStatus,
+    manualDraftIds,
+    manualActiveIds,
+  };
 }
 
 /**
@@ -600,7 +623,12 @@ const PRODUCT_SET_MUTATION = `
 `;
 
 /** Change lifecycle state without replacing any product content. */
-async function setDestinationProductStatus(shop, destinationProductId, status) {
+async function setDestinationProductStatus(
+  shop,
+  destinationProductId,
+  status,
+  { mappingId = null } = {}
+) {
   const normalized = String(status || "").toUpperCase();
 
   if (!destinationProductId || !["ACTIVE", "DRAFT"].includes(normalized)) {
@@ -609,20 +637,35 @@ async function setDestinationProductStatus(shop, destinationProductId, status) {
     throw err;
   }
 
-  const data = await shopify.forShop(shop, {
-    query: PRODUCT_SET_MUTATION,
-    variables: {
-      input: {
-        id: `gid://shopify/Product/${destinationProductId}`,
-        status: normalized,
+  if (mappingId) {
+    await productMappingModel.expectDestinationStatus(mappingId, normalized);
+  }
+
+  let data;
+  try {
+    data = await shopify.forShop(shop, {
+      query: PRODUCT_SET_MUTATION,
+      variables: {
+        input: {
+          id: `gid://shopify/Product/${destinationProductId}`,
+          status: normalized,
+        },
+        synchronous: true,
       },
-      synchronous: true,
-    },
-  });
+    });
+  } catch (error) {
+    if (mappingId) {
+      await productMappingModel.clearExpectedDestinationStatus(mappingId);
+    }
+    throw error;
+  }
   const result = data.productSet;
   const userErrors = result?.userErrors || [];
 
   if (userErrors.length) {
+    if (mappingId) {
+      await productMappingModel.clearExpectedDestinationStatus(mappingId);
+    }
     const err = new Error(
       userErrors.map((item) => `${(item.field || []).join(".")}: ${item.message}`).join("; ")
     );
@@ -631,6 +674,9 @@ async function setDestinationProductStatus(shop, destinationProductId, status) {
   }
 
   if (!result?.product) {
+    if (mappingId) {
+      await productMappingModel.clearExpectedDestinationStatus(mappingId);
+    }
     const err = new Error("Shopify did not return the updated destination product");
     err.statusCode = 502;
     throw err;
@@ -1489,15 +1535,30 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
     }
   }
 
-  const data = await shopify.forShop(connection.destination.shop_domain, {
-    query: PRODUCT_SET_MUTATION,
-    variables: { input, synchronous: true },
-  });
+  if (input.status) {
+    await productMappingModel.expectDestinationStatus(mapping.id, input.status);
+  }
+
+  let data;
+  try {
+    data = await shopify.forShop(connection.destination.shop_domain, {
+      query: PRODUCT_SET_MUTATION,
+      variables: { input, synchronous: true },
+    });
+  } catch (error) {
+    if (input.status) {
+      await productMappingModel.clearExpectedDestinationStatus(mapping.id);
+    }
+    throw error;
+  }
 
   const result = data.productSet;
   const userErrors = result?.userErrors || [];
 
   if (userErrors.length) {
+    if (input.status) {
+      await productMappingModel.clearExpectedDestinationStatus(mapping.id);
+    }
     const message = userErrors
       .map((e) => `${(e.field || []).join(".")}: ${e.message}`)
       .join("; ");
@@ -1507,6 +1568,9 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
   }
 
   const destinationProduct = result.product;
+  if (!destinationProduct && input.status) {
+    await productMappingModel.clearExpectedDestinationStatus(mapping.id);
+  }
   const destinationId = numericId(destinationProduct.id);
   const isNewDestinationProduct = !mapping.destination_shopify_product_id;
 

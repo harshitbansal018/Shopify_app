@@ -553,6 +553,48 @@ async function markSkipped(id) {
   );
 }
 
+/** Mark a status webhook as expected because this app initiated the write. */
+async function expectDestinationStatus(id, status, ttlSeconds = 300) {
+  const normalized = String(status || "").toUpperCase();
+  await query(
+    `UPDATE product_mappings
+        SET expected_destination_status = ?,
+            expected_status_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND)
+      WHERE id = ?`,
+    [normalized, Math.max(1, Number(ttlSeconds) || 300), id]
+  );
+}
+
+async function clearExpectedDestinationStatus(id) {
+  await query(
+    `UPDATE product_mappings
+        SET expected_destination_status = NULL,
+            expected_status_expires_at = NULL
+      WHERE id = ?`,
+    [id]
+  );
+}
+
+/** True while duplicate/delayed webhooks still belong to our own write. */
+async function isExpectedDestinationStatus(id, status) {
+  const normalized = String(status || "").toUpperCase();
+  const rows = await query(
+    `SELECT expected_destination_status,
+            expected_status_expires_at >= NOW() AS unexpired
+       FROM product_mappings WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  const row = rows[0];
+  const expected = Boolean(
+    row && row.unexpired && row.expected_destination_status === normalized
+  );
+
+  if (!expected && row?.expected_destination_status) {
+    await clearExpectedDestinationStatus(id);
+  }
+  return expected;
+}
+
 /** Source withdrew this offer; keep its destination id for a later re-share. */
 async function markSourceRevoked(id) {
   await query(
@@ -607,6 +649,9 @@ module.exports = {
   markSynced,
   markFailed,
   markSkipped,
+  expectDestinationStatus,
+  clearExpectedDestinationStatus,
+  isExpectedDestinationStatus,
   markSourceRevoked,
   markDeleted,
 };

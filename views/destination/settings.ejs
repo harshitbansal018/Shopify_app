@@ -203,6 +203,7 @@
                     step="0.01"
                     min="0"
                     max="1000"
+                    onkeydown="if(['e','E','+','-'].includes(event.key)) event.preventDefault();"
                     value="<%= sync.price_markup_percent %>">
                   <span class="input-suffix__unit">%</span>
                 </span>
@@ -445,6 +446,33 @@
             });
 
         });
+
+      /* ---------------- numeric restriction on price margin ---------------- */
+
+      Array.prototype.slice.call(
+        document.querySelectorAll('input[name="price_markup_percent"]')
+      ).forEach(function (input) {
+        input.addEventListener("keydown", function (e) {
+          if (["e", "E", "+", "-"].includes(e.key)) {
+            e.preventDefault();
+          }
+        });
+
+        input.addEventListener("paste", function (e) {
+          var pasteData = (e.clipboardData || window.clipboardData).getData("text");
+          if (!/^\d*\.?\d*$/.test(pasteData.trim())) {
+            e.preventDefault();
+          }
+        });
+
+        input.addEventListener("input", function () {
+          if (this.value !== "") {
+            var val = Number(this.value);
+            if (val > 1000) this.value = "1000";
+            else if (val < 0) this.value = "0";
+          }
+        });
+      });
 
       /* ---------------- email notifications ---------------- */
 

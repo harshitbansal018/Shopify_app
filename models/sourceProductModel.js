@@ -334,8 +334,8 @@ async function listSyncedIntoStore(
 
   // Accepted or not separates the two state-specific tabs. The All tab adds
   // neither condition and therefore returns both states together.
-  if (tab === "synced") where += " AND pm.accepted_at IS NOT NULL";
-  if (tab === "unsynced") where += " AND pm.accepted_at IS NULL";
+  if (tab === "synced") where += " AND pm.accepted_at IS NOT NULL AND pm.sync_status <> 'failed'";
+  if (tab === "unsynced") where += " AND (pm.accepted_at IS NULL OR pm.sync_status = 'failed')";
 
   if (mappingId !== null) {
     where += " AND pm.id = ?";
@@ -409,7 +409,7 @@ async function listSyncedIntoStore(
     offered_variant_count: Number(row.offered_variant_count || 0),
     inventory: Number(row.inventory || 0),
     // The destination has not agreed to this one yet.
-    awaiting: row.accepted_at === null,
+    awaiting: row.accepted_at === null || row.sync_status === "failed",
   }));
 }
 
@@ -442,8 +442,8 @@ async function countsSyncedIntoStore(
   }
 
   const rows = await query(
-    `SELECT SUM(pm.accepted_at IS NOT NULL) AS synced,
-            SUM(pm.accepted_at IS NULL)     AS unsynced
+    `SELECT SUM(pm.accepted_at IS NOT NULL AND pm.sync_status <> 'failed') AS synced,
+            SUM(pm.accepted_at IS NULL OR pm.sync_status = 'failed')     AS unsynced
        FROM product_mappings pm
        JOIN store_connections c ON c.id = pm.connection_id
        ${joins}
@@ -475,8 +475,8 @@ async function countsSyncedBySource(destinationStoreId) {
   const rows = await query(
     `SELECT src.shop_domain AS source_shop_domain,
             src.store_name  AS source_store_name,
-            SUM(pm.accepted_at IS NOT NULL) AS synced,
-            SUM(pm.accepted_at IS NULL)     AS unsynced
+            SUM(pm.accepted_at IS NOT NULL AND pm.sync_status <> 'failed') AS synced,
+            SUM(pm.accepted_at IS NULL OR pm.sync_status = 'failed')     AS unsynced
        FROM product_mappings pm
        JOIN store_connections c ON c.id = pm.connection_id
        JOIN stores src         ON src.id = c.source_store_id

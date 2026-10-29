@@ -25,6 +25,8 @@ check("destination stock sets use Shopify idempotency",
 check("unsync has a dedicated zero-destination step",
   typeof allocation.zeroDestinationInventory === "function" &&
     allocation.zeroDestinationInventory.toString().includes("forceZero: true"));
+check("re-sync has a dedicated remembered-allocation restore step",
+  typeof allocation.restoreConnectionProduct === "function");
 check("inventory levels do not require the read_locations scope",
   allocation.INVENTORY_LEVELS_QUERY.includes("location { id }") &&
     !allocation.INVENTORY_LEVELS_QUERY.includes("isActive") &&

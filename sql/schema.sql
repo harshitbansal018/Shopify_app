@@ -307,3 +307,16 @@ CREATE TABLE IF NOT EXISTS `membership_payments` (
   CONSTRAINT `fk_payment_membership` FOREIGN KEY (`membership_id`) REFERENCES `user_memberships` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_payment_store` FOREIGN KEY (`user_id`) REFERENCES `stores` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+
+CREATE TABLE IF NOT EXISTS `product_activity_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `connection_id` int(11) NOT NULL,
+  `source_product_id` int(11) NOT NULL,
+  `action` enum('synced','unsynced') NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_product_activity_conn` (`connection_id`, `created_at`),
+  CONSTRAINT `fk_product_activity_conn` FOREIGN KEY (`connection_id`) REFERENCES `store_connections` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_product_activity_source_prod` FOREIGN KEY (`source_product_id`) REFERENCES `source_products` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

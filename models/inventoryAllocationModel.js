@@ -19,6 +19,10 @@ function hydrate(row) {
     sold_quantity: sold,
     remaining_quantity: Math.max(allocated - sold, 0),
     location_allocations: parseJson(row.location_allocations, []) || [],
+    resume_quantity:
+      row.resume_quantity === null || row.resume_quantity === undefined
+        ? null
+        : Number(row.resume_quantity),
   };
 }
 
@@ -120,7 +124,12 @@ async function mapForMappings(productMappingIds) {
   return grouped;
 }
 
-async function upsertMany(executor, connectionId, allocations) {
+async function upsertMany(
+  executor,
+  connectionId,
+  allocations,
+  { preserveResume = false } = {}
+) {
   if (!allocations.length) return 0;
 
   const values = allocations.map((allocation) => [
@@ -136,6 +145,9 @@ async function upsertMany(executor, connectionId, allocations) {
         location_allocations)
      VALUES ?
      ON DUPLICATE KEY UPDATE
+       ${preserveResume
+         ? "resume_quantity = COALESCE(resume_quantity, allocated_quantity),"
+         : "resume_quantity = NULL,"}
        allocated_quantity = VALUES(allocated_quantity),
        location_allocations = VALUES(location_allocations),
        updated_at = CURRENT_TIMESTAMP`,
@@ -143,6 +155,20 @@ async function upsertMany(executor, connectionId, allocations) {
   );
 
   return result.affectedRows;
+}
+
+async function listToResume(connectionId, sourceProductId) {
+  const rows = await query(
+    `${WITH_SALES}
+      JOIN source_variant_mappings svm
+        ON svm.id = ia.source_variant_mapping_id
+     WHERE ia.connection_id = ?
+       AND svm.source_product_id = ?
+       AND ia.resume_quantity IS NOT NULL
+     ORDER BY svm.position, svm.id`,
+    [connectionId, sourceProductId]
+  );
+  return rows.map(hydrate);
 }
 
 async function lockedForVariants(executor, connectionId, variantIds) {
@@ -178,6 +204,7 @@ module.exports = {
   remainingMap,
   mapForMappings,
   upsertMany,
+  listToResume,
   lockedForVariants,
   pool,
 };

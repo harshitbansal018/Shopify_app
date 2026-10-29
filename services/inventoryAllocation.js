@@ -194,7 +194,13 @@ async function adjustShopify(shop, changes) {
   }
 }
 
-async function setForProduct({ store, connection, product, targets }) {
+async function setForProduct({
+  store,
+  connection,
+  product,
+  targets,
+  preserveResume = false,
+}) {
   const variants = await sourceVariantModel.listForProduct(product.id);
   const byId = new Map(variants.map((variant) => [Number(variant.id), variant]));
   const cleanTargets = [...new Map((targets || []).map((target) => [
@@ -311,7 +317,7 @@ async function setForProduct({ store, connection, product, targets }) {
     // Shopify error rolls the local transaction back, so no reservation is
     // advertised unless the physical source stock actually moved.
     await adjustShopify(store.shop_domain, shopifyChanges);
-    await allocationModel.upsertMany(db, connection.id, saved);
+    await allocationModel.upsertMany(db, connection.id, saved, { preserveResume });
 
     for (const item of saved) {
       const variant = byId.get(item.sourceVariantId);
@@ -469,8 +475,36 @@ async function releaseRows(store, rows) {
   for (const [productId, targets] of byProduct) {
     const product = { id: productId };
     const connection = { id: rows[0].connection_id };
-    await setForProduct({ store, connection, product, targets });
+    await setForProduct({
+      store,
+      connection,
+      product,
+      targets,
+      preserveResume: true,
+    });
   }
+}
+
+/** Re-reserve the allocation that was released by Unsync. */
+async function restoreConnectionProduct(store, connectionId, sourceProductId) {
+  const rows = await allocationModel.listToResume(connectionId, sourceProductId);
+  if (!rows.length) return { restored: false, quantity: 0 };
+
+  const quantity = rows.reduce(
+    (sum, row) => sum + Math.max(Number(row.resume_quantity || 0) - row.sold_quantity, 0),
+    0
+  );
+  const allocations = await setForProduct({
+    store,
+    connection: { id: connectionId },
+    product: { id: sourceProductId },
+    targets: rows.map((row) => ({
+      variant_id: row.source_variant_mapping_id,
+      quantity: row.resume_quantity,
+    })),
+  });
+
+  return { restored: true, quantity, allocations };
 }
 
 async function releaseConnection(store, connectionId) {
@@ -513,5 +547,6 @@ module.exports = {
   zeroDestinationInventory,
   releaseConnection,
   releaseConnectionProduct,
+  restoreConnectionProduct,
   releaseProduct,
 };
