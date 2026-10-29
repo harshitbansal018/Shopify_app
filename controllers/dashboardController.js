@@ -188,6 +188,9 @@ exports.getDashboard = async (req, res) => {
         req.store.store_type === "destination"
           ? await destinationStats(req.storeId)
           : await sourceStats(req.storeId),
+      billingResult: ["success", "pending", "failed"].includes(req.query.billing)
+        ? req.query.billing
+        : null,
     });
   } catch (err) {
     console.error("Dashboard load failed:", err.message);

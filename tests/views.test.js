@@ -1487,6 +1487,11 @@ const STORE_ROW = {
           allocated_quantity: 25,
           sold_quantity: 5,
           remaining_quantity: 20,
+        }], [102, {
+          allocated_quantity: 0,
+          sold_quantity: 0,
+          remaining_quantity: 0,
+          resume_quantity: 7,
         }]]),
       }],
     });
@@ -1498,6 +1503,9 @@ const STORE_ROW = {
     check("the allocation screen separates sold and remaining stock",
       allocated.includes("Remaining 20") &&
         !allocated.includes("Return unsold"));
+    check("a released allocation shows what re-sync will reserve again",
+      allocated.includes("7 will be reserved again on Sync") &&
+        allocated.includes('value="7"'));
     check("inline inventory cannot exceed its current maximum",
       allocated.includes('max="29"') &&
         allocated.includes("Max 29") &&

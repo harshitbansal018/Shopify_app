@@ -29,7 +29,10 @@
     </header>
 
     <% if (billingResult === "success") { %>
-      <p class="notice notice--success">Your Shopify subscription is active.</p>
+      <div class="notice notice--success notice--dismissible" id="billing-notice">
+        <span>Your Shopify subscription is active.</span>
+        <button class="notice__close" type="button" aria-label="Dismiss notice" onclick="this.closest('.notice').remove();">&times;</button>
+      </div>
     <% } else if (billingResult === "pending") { %>
       <p class="notice notice--warn">Shopify is still confirming this subscription. Refresh this page shortly.</p>
     <% } else if (billingResult === "failed") { %>

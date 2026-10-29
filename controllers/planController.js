@@ -198,9 +198,10 @@ exports.confirmPlan = async (req, res) => {
     }
 
     const result = approved ? "success" : status === "PENDING" ? "pending" : "failed";
+    const targetPath = approved ? "/dashboard" : "/plans";
     const appPath = `https://${store.shop_domain}/admin/apps/${encodeURIComponent(
       process.env.SHOPIFY_API_KEY
-    )}/plans?billing=${result}`;
+    )}${targetPath}?billing=${result}`;
 
     return res.redirect(appPath);
   } catch (err) {

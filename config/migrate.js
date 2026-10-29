@@ -227,6 +227,11 @@ const CREATE_PRODUCT_MAPPINGS = `
     accepted_at DATETIME DEFAULT NULL,
     source_revoked_at DATETIME DEFAULT NULL,
 
+    -- Suppresses the products/update webhook caused by this app's own status
+    -- write. A short expiry prevents a lost webhook leaving it permanent.
+    expected_destination_status VARCHAR(16) DEFAULT NULL,
+    expected_status_expires_at DATETIME DEFAULT NULL,
+
     source_updated_at DATETIME DEFAULT NULL,
     last_synced_at    DATETIME DEFAULT NULL,
     error_message     TEXT DEFAULT NULL,
@@ -316,6 +321,10 @@ const CREATE_INVENTORY_ALLOCATIONS = `
     -- locations; remembering the split lets a reduction return every unit to
     -- the exact location from which it was reserved.
     location_allocations JSON NOT NULL,
+
+    -- Allocation to restore when an unsynced product is accepted again.
+    -- NULL means there is no released reservation waiting to be restored.
+    resume_quantity INT DEFAULT NULL,
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -926,6 +935,35 @@ const CREATE_SOURCE_CONNECTION_SETTINGS = `
 `;
 
 /* ------------------------------------------------------------------ */
+const CREATE_PRODUCT_ACTIVITY_LOGS = `
+  CREATE TABLE IF NOT EXISTS product_activity_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    connection_id INT NOT NULL,
+    source_product_id INT NOT NULL,
+    action ENUM('synced','unsynced') NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_product_activity_conn (connection_id, created_at),
+    CONSTRAINT fk_product_activity_conn
+      FOREIGN KEY (connection_id) REFERENCES store_connections(id) ON DELETE CASCADE,
+    CONSTRAINT fk_product_activity_source_prod
+      FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
+
+async function backfillProductActivityLogs() {
+  const existing = await query("SELECT COUNT(*) AS total FROM product_activity_logs");
+  if (Number(existing[0]?.total || 0) > 0) return;
+
+  await query(
+    `INSERT INTO product_activity_logs (connection_id, source_product_id, action, created_at)
+     SELECT pm.connection_id, pm.source_product_id, 'synced', pm.accepted_at
+       FROM product_mappings pm
+      WHERE pm.accepted_at IS NOT NULL
+        AND pm.sync_status NOT IN ('deleted', 'skipped')`
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* 11. faqs                                                            */
 /* ------------------------------------------------------------------ */
 /*
@@ -1256,6 +1294,25 @@ async function addDestinationAcceptance() {
   }
 }
 
+/** Remember released allocations so a later re-sync can reserve them again. */
+async function addInventoryResumeQuantity() {
+  await safeAlter(
+    "inventory_allocations.resume_quantity",
+    "ALTER TABLE inventory_allocations ADD COLUMN resume_quantity INT DEFAULT NULL AFTER location_allocations"
+  );
+}
+
+async function addExpectedDestinationStatus() {
+  await safeAlter(
+    "product_mappings.expected_destination_status",
+    "ALTER TABLE product_mappings ADD COLUMN expected_destination_status VARCHAR(16) DEFAULT NULL AFTER source_revoked_at"
+  );
+  await safeAlter(
+    "product_mappings.expected_status_expires_at",
+    "ALTER TABLE product_mappings ADD COLUMN expected_status_expires_at DATETIME DEFAULT NULL AFTER expected_destination_status"
+  );
+}
+
 async function runMigrations() {
   // Parents before children -- a foreign key needs its target to exist.
   await query(CREATE_STORES);
@@ -1268,9 +1325,11 @@ async function runMigrations() {
   await addAllowedVariants();
   await addDestinationAcceptance();
   await addSourceRevokedAt();
+  await addExpectedDestinationStatus();
   await query(CREATE_SOURCE_VARIANT_MAPPINGS);
   await addVariantDetailColumns();
   await query(CREATE_INVENTORY_ALLOCATIONS);
+  await addInventoryResumeQuantity();
   await query(CREATE_MAPPING_VARIANT_PRODUCTS);
   await query(CREATE_ORDERS);
   await slimOrdersCustomerColumns();
@@ -1312,6 +1371,8 @@ async function runMigrations() {
   await addStoreOnboarding();
   await query(CREATE_NOTIFICATION_SETTINGS);
   await query(CREATE_EMAIL_OUTBOX);
+  await query(CREATE_PRODUCT_ACTIVITY_LOGS);
+  await backfillProductActivityLogs();
 }
 
 

@@ -177,7 +177,7 @@
               </tr>
             <% } else { %>
             <% products.forEach(function (product) { %>
-              <% var rowSynced = product.accepted_at !== null; %>
+              <% var rowSynced = product.accepted_at !== null && product.sync_status !== "failed"; %>
               <tr>
                 <td class="table__check">
                   <%# One class for both tabs -- what the tick MEANS is decided
@@ -246,15 +246,18 @@
                       control lives in the final Actions column. %>
                   <% if (product.sync_status === "deleted") { %>
                     <span class="pill pill--failed">deleted</span>
+                  <% } else if (product.sync_status === "failed") { %>
+                    <span class="pill pill--failed">failed</span>
+                    <% if (product.error_message) { %>
+                      <span class="muted"><%= product.error_message %></span>
+
+                    <% } %>
                   <% } else if (!rowSynced) { %>
                     <span class="pill pill--pending">unsynced</span>
                   <% } else { %>
                     <span class="pill pill--<%= product.sync_status %>">
                       <%= product.sync_status %>
                     </span>
-                    <% if (product.sync_status === "failed" && product.error_message) { %>
-                      <span class="muted"><%= product.error_message %></span>
-                    <% } %>
                   <% } %>
                 </td>
                 <td class="table__actions">

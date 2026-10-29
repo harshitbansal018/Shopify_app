@@ -113,7 +113,7 @@ async function recentActivity(storeId, side, { limit = 6 } = {}) {
   const other = otherJoin(side);
   const safeLimit = Math.max(1, Math.min(Number(limit) || 6, 20));
 
-  const [orders, cancelled, payments, accepted] = await Promise.all([
+  const [orders, cancelled, payments, productActions] = await Promise.all([
     query(
       `SELECT om.created_at AS at, o.name AS ref, om.line_count AS line_count,
               COALESCE(other.store_name, other.shop_domain) AS store
@@ -151,37 +151,54 @@ async function recentActivity(storeId, side, { limit = 6 } = {}) {
       [storeId, safeLimit]
     ),
     query(
-      `SELECT DATE_FORMAT(pm.accepted_at, '%Y-%m-%d %H:00:00') AS at,
-              COUNT(*) AS products,
+      `SELECT al.created_at AS at,
+              al.action,
+              sp.title,
               COALESCE(other.store_name, other.shop_domain) AS store
-         FROM product_mappings pm
-         JOIN store_connections c ON c.id = pm.connection_id
+         FROM product_activity_logs al
+         JOIN store_connections c ON c.id = al.connection_id
+         JOIN source_products sp ON sp.id = al.source_product_id
          ${other}
         WHERE ${own} = ?
-          AND pm.accepted_at IS NOT NULL
-        GROUP BY DATE_FORMAT(pm.accepted_at, '%Y-%m-%d %H:00:00'), store
-        ORDER BY at DESC
+        ORDER BY al.created_at DESC
         LIMIT ?`,
       [storeId, safeLimit]
-    ),
+    ).catch(async () => {
+      return query(
+        `SELECT pm.accepted_at AS at,
+                'synced' AS action,
+                sp.title,
+                COALESCE(other.store_name, other.shop_domain) AS store
+           FROM product_mappings pm
+           JOIN store_connections c ON c.id = pm.connection_id
+           JOIN source_products sp ON sp.id = pm.source_product_id
+           ${other}
+          WHERE ${own} = ?
+            AND pm.accepted_at IS NOT NULL
+          ORDER BY pm.accepted_at DESC
+          LIMIT ?`,
+        [storeId, safeLimit]
+      );
+    }),
   ]);
 
   const items = [
     ...orders.map((row) => ({
-      kind: "order", at: row.at, ref: row.ref, store: row.store,
+      kind: 'order', at: row.at, ref: row.ref, store: row.store,
       lines: Number(row.line_count || 0),
     })),
     ...cancelled.map((row) => ({
-      kind: "cancelled", at: row.at, ref: row.ref, store: row.store,
+      kind: 'cancelled', at: row.at, ref: row.ref, store: row.store,
     })),
     ...payments.map((row) => ({
-      kind: "payment", at: row.at, store: row.store,
+      kind: 'payment', at: row.at, store: row.store,
       amount: Number(row.amount || 0), currency: row.currency,
     })),
-    // Grouped by the hour: accepting 40 products is one event, not 40.
-    ...accepted.map((row) => ({
-      kind: "accepted", at: row.at, store: row.store,
-      products: Number(row.products || 0),
+    ...productActions.map((row) => ({
+      kind: row.action === 'unsynced' ? 'unsynced' : 'synced',
+      at: row.at,
+      title: row.title || 'Untitled product',
+      store: row.store,
     })),
   ];
 
@@ -191,4 +208,22 @@ async function recentActivity(storeId, side, { limit = 6 } = {}) {
     .slice(0, safeLimit);
 }
 
-module.exports = { salesSeries, recentActivity };
+/** Record product sync / unsync events for the activity feed. */
+async function recordProductActivities(items, action) {
+  const list = Array.isArray(items) ? items : [items];
+  const valid = list.filter((item) => item && item.connection_id && item.source_product_id);
+  if (!valid.length) return;
+
+  for (const item of valid) {
+    try {
+      await query(
+        'INSERT INTO product_activity_logs (connection_id, source_product_id, action, created_at) VALUES (?, ?, ?, NOW())',
+        [item.connection_id, item.source_product_id, action]
+      );
+    } catch (err) {
+      console.warn('Could not log product activity:', err.message);
+    }
+  }
+}
+
+module.exports = { salesSeries, recentActivity, recordProductActivities };

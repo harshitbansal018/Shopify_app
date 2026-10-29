@@ -7,9 +7,188 @@
 const storeModel = require("../models/storeModel");
 const orderModel = require("../models/orderModel");
 const customerModel = require("../models/customerModel");
+const connectionModel = require("../models/connectionModel");
+const productMappingModel = require("../models/productMappingModel");
 const productSync = require("../services/productSync");
+const inventoryAllocation = require("../services/inventoryAllocation");
+const planLimits = require("../services/planLimits");
 const orderSync = require("../services/orderSync");
 const { normalizeShopDomain } = require("../utils/shop");
+
+/**
+ * Safely undo a manual activation that could not be completed.
+ *
+ * Draft first, then zero the destination, then release the source reservation.
+ * If any remote write fails the mapping remains accepted/failed, which is
+ * deliberately safer than making the same units available in both stores.
+ */
+async function rollbackManualActivations(store, mappings, connectionById) {
+  let rolledBack = 0;
+  let failed = 0;
+
+  for (const mapping of mappings) {
+    const connection = connectionById.get(Number(mapping.connection_id));
+    if (!connection) continue;
+
+    try {
+      if (mapping.destination_shopify_product_id) {
+        await productSync.setDestinationProductStatus(
+          connection.destination.shop_domain,
+          mapping.destination_shopify_product_id,
+          "DRAFT",
+          { mappingId: mapping.id }
+        );
+        await inventoryAllocation.zeroDestinationInventory(
+          connection,
+          mapping,
+          mapping.source_product_id
+        );
+      }
+      await inventoryAllocation.releaseConnectionProduct(
+        connection.source,
+        connection.id,
+        mapping.source_product_id
+      );
+      await productMappingModel.declineForDestination(store.id, [mapping.id]);
+      rolledBack += 1;
+    } catch (error) {
+      failed += 1;
+      await productMappingModel.markFailed(mapping.id, error.message);
+    }
+  }
+
+  return { rolledBack, failed };
+}
+
+/** A genuine destination-admin Draft runs the same safe inventory return. */
+async function applyManualDestinationDraft(store, mappingIds) {
+  const connections = await connectionModel.listForDestination(store.id);
+  const connectionById = new Map(
+    connections.map((connection) => [Number(connection.id), connection])
+  );
+  const mappings = await productMappingModel.listForDestinationByIds(
+    store.id,
+    mappingIds
+  );
+  let returned = 0;
+  let declined = 0;
+  let failed = 0;
+
+  for (const mapping of mappings) {
+    if (mapping.accepted_at === null) continue;
+    const connection = connectionById.get(Number(mapping.connection_id));
+    if (!connection) continue;
+
+    try {
+      if (mapping.destination_shopify_product_id) {
+        await inventoryAllocation.zeroDestinationInventory(
+          connection,
+          mapping,
+          mapping.source_product_id
+        );
+      }
+      returned += await inventoryAllocation.releaseConnectionProduct(
+        connection.source,
+        connection.id,
+        mapping.source_product_id
+      );
+      declined += await productMappingModel.declineForDestination(
+        store.id,
+        [mapping.id]
+      );
+    } catch (error) {
+      failed += 1;
+      await productMappingModel.markFailed(mapping.id, error.message);
+    }
+  }
+
+  return { declined, returned, failed };
+}
+
+/** A genuine destination-admin Active restores stock, checks plan, then syncs. */
+async function applyManualDestinationActive(store, mappingIds) {
+  const connections = await connectionModel.listForDestination(store.id);
+  const connectionById = new Map(
+    connections.map((connection) => [Number(connection.id), connection])
+  );
+  const mappings = await productMappingModel.listForDestinationByIds(
+    store.id,
+    mappingIds
+  );
+  try {
+    for (const mapping of mappings) {
+      if (mapping.accepted_at !== null) continue;
+      const connection = connectionById.get(Number(mapping.connection_id));
+      if (!connection) continue;
+      await inventoryAllocation.restoreConnectionProduct(
+        connection.source,
+        connection.id,
+        mapping.source_product_id
+      );
+    }
+
+    const accepted = await planLimits.acceptProducts(
+      store,
+      mappings.map((mapping) => mapping.id)
+    );
+    if (accepted.refused || !accepted.accepted) {
+      await rollbackManualActivations(
+        store,
+        mappings,
+        connectionById
+      );
+      return {
+        synced: 0,
+        failed: mappings.length,
+        error: accepted.message || "This product could not be accepted.",
+      };
+    }
+
+    let synced = 0;
+    require("../models/dashboardModel").recordProductActivities(mappings, "synced");
+    let failed = 0;
+    for (const connection of connections.filter((item) => item.status === "active")) {
+      const result = await productSync.pushPending(connection.id, {
+        forceActiveMappingIds: mappings.map((mapping) => mapping.id),
+      });
+      synced += result.synced;
+      failed += result.failed;
+    }
+
+    // pushPending isolates failures per product. Re-read only this webhook's
+    // mappings so successful products stay active while failed ones are safely
+    // returned to Draft/Unsynced.
+    const refreshed = await productMappingModel.listForDestinationByIds(
+      store.id,
+      mappings.map((mapping) => mapping.id)
+    );
+    const incomplete = refreshed.filter(
+      (mapping) => mapping.sync_status !== "synced"
+    );
+    if (incomplete.length) {
+      await rollbackManualActivations(
+        store,
+        incomplete,
+        connectionById
+      );
+      failed = incomplete.length;
+      synced = Math.max(0, mappings.length - incomplete.length);
+    }
+
+    return { synced, failed };
+  } catch (error) {
+    await rollbackManualActivations(
+      store,
+      mappings,
+      connectionById
+    );
+    return {
+      synced: 0,
+      failed: mappings.length,
+      error: error.message,
+    };
+  }
+}
 
 /* ===================== app/uninstalled ===================== */
 
@@ -74,6 +253,28 @@ exports.productsUpdate = async (req, res) => {
         console.log(
           `products/update ${shop} #${payload.id}: ` +
             `${echo.dropped} variant(s) no longer in the destination store`
+        );
+      }
+      if (echo?.manualDraftIds?.length) {
+        const result = await applyManualDestinationDraft(
+          store,
+          echo.manualDraftIds
+        );
+        console.log(
+          `Manual destination Draft ${shop} #${payload.id}: ` +
+            `${result.declined} unsynced, ${result.returned} unit(s) returned, ` +
+            `${result.failed} failed`
+        );
+      }
+      if (echo?.manualActiveIds?.length) {
+        const result = await applyManualDestinationActive(
+          store,
+          echo.manualActiveIds
+        );
+        console.log(
+          `Manual destination Active ${shop} #${payload.id}: ` +
+            `${result.synced} synced, ${result.failed} failed` +
+            (result.error ? ` (${result.error})` : "")
         );
       }
       return;

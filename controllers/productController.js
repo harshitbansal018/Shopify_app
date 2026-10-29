@@ -23,6 +23,7 @@ const productMappingModel = require("../models/productMappingModel");
 const connectionModel = require("../models/connectionModel");
 const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
 const shippingPolicyModel = require("../models/shippingPolicyModel");
+const dashboardModel = require("../models/dashboardModel");
 const syncSettingsModel = require("../models/syncSettingsModel");
 const inventoryAllocationModel = require("../models/inventoryAllocationModel");
 const crypto = require("crypto");
@@ -1141,7 +1142,8 @@ exports.postUnshare = async (req, res) => {
             await productSync.setDestinationProductStatus(
               connection.destination.shop_domain,
               mapping.destination_shopify_product_id,
-              "DRAFT"
+              "DRAFT",
+              { mappingId: mapping.id }
             );
             result.drafted += 1;
           }
@@ -1253,6 +1255,8 @@ exports.postSync = async (req, res) => {
       });
     }
 
+
+
     return await runSync(
       req,
       res,
@@ -1284,6 +1288,43 @@ exports.postAccept = async (req, res) => {
   }
 
   try {
+    const connections = await connectionModel.listForDestination(req.storeId);
+    const connectionById = new Map(
+      connections.map((connection) => [Number(connection.id), connection])
+    );
+    const mappings = await productMappingModel.listForDestinationByIds(
+      req.storeId,
+      ids
+    );
+    const restored = [];
+
+    // Re-reserve inventory BEFORE acceptance makes these rows visible to the
+    // auto-sync worker. A released product therefore cannot briefly push zero
+    // stock, and insufficient source stock leaves it safely Unsynced.
+    try {
+      for (const mapping of mappings) {
+        const connection = connectionById.get(Number(mapping.connection_id));
+        if (!connection) continue;
+
+        const result = await inventoryAllocation.restoreConnectionProduct(
+          connection.source,
+          connection.id,
+          mapping.source_product_id
+        );
+        if (result.restored) restored.push({ connection, mapping });
+      }
+    } catch (error) {
+      for (const item of restored.reverse()) {
+        await inventoryAllocation.releaseConnectionProduct(
+          item.connection.source,
+          item.connection.id,
+          item.mapping.source_product_id
+        );
+      }
+      error.message = `Could not restore the previous inventory allocation. ${error.message}`;
+      throw error;
+    }
+
     // Scoped to this store inside the model, so a guessed id cannot push a
     // product into someone else's shop -- and held to the plan's product
     // limit in the same transaction, so two tabs cannot both take the last
@@ -1295,6 +1336,13 @@ exports.postAccept = async (req, res) => {
     );
 
     if (result.refused) {
+      for (const item of restored.reverse()) {
+        await inventoryAllocation.releaseConnectionProduct(
+          item.connection.source,
+          item.connection.id,
+          item.mapping.source_product_id
+        );
+      }
       return res.status(409).json({
         error: result.message,
         limit: {
@@ -1306,15 +1354,25 @@ exports.postAccept = async (req, res) => {
     }
 
     if (!result.accepted) {
+      for (const item of restored.reverse()) {
+        await inventoryAllocation.releaseConnectionProduct(
+          item.connection.source,
+          item.connection.id,
+          item.mapping.source_product_id
+        );
+      }
       return res.status(409).json({
         error: "Those products are not waiting for this store.",
       });
     }
 
+
+    dashboardModel.recordProductActivities(mappings, "synced");
+
     return await runSync(
       req,
       res,
-      (await connectionModel.listForDestination(req.storeId)).filter(
+      connections.filter(
         (connection) => connection.status === "active"
       ),
       { forceActiveMappingIds: ids }
@@ -1360,7 +1418,8 @@ exports.postDecline = async (req, res) => {
         await productSync.setDestinationProductStatus(
           connection.destination.shop_domain,
           mapping.destination_shopify_product_id,
-          "DRAFT"
+          "DRAFT",
+          { mappingId: mapping.id }
         );
         await inventoryAllocation.zeroDestinationInventory(
           connection,
@@ -1380,6 +1439,8 @@ exports.postDecline = async (req, res) => {
       req.storeId,
       ids
     );
+
+    dashboardModel.recordProductActivities(mappings, "unsynced");
 
     return res.json({ ok: true, declined, returned });
   } catch (err) {

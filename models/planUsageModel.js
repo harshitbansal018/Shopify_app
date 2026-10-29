@@ -27,7 +27,7 @@ const PRODUCTS_SQL = `
     JOIN store_connections c ON c.id = m.connection_id
    WHERE c.destination_store_id = ?
      AND m.accepted_at IS NOT NULL
-     AND m.sync_status <> 'deleted'`;
+     AND m.sync_status NOT IN ('deleted', 'failed')`;
 
 const SOURCES_SQL = `
   SELECT COUNT(*) AS total
@@ -111,12 +111,12 @@ async function acceptWithinLimit(destinationStoreId, mappingIds, limit) {
     const used = total(countRows);
 
     const [waiting] = await conn.query(
-      `SELECT m.id
+      `SELECT m.id, m.connection_id, m.source_product_id
          FROM product_mappings m
          JOIN store_connections c ON c.id = m.connection_id
         WHERE m.id IN (?)
           AND c.destination_store_id = ?
-          AND m.accepted_at IS NULL
+          AND (m.accepted_at IS NULL OR m.sync_status = 'failed')
           AND m.sync_status <> 'deleted'`,
       [ids, destinationStoreId]
     );
@@ -138,10 +138,12 @@ async function acceptWithinLimit(destinationStoreId, mappingIds, limit) {
 
     const [result] = await conn.query(
       `UPDATE product_mappings
-          SET accepted_at = NOW(), sync_status = 'pending'
+          SET accepted_at = NOW(), sync_status = 'pending', error_message = NULL
         WHERE id IN (?)`,
       [waiting.map((row) => row.id)]
     );
+
+    require("./dashboardModel").recordProductActivities(waiting, "synced");
 
     return { accepted: result.affectedRows, adding, used: used + result.affectedRows, limit };
   });
@@ -217,7 +219,7 @@ async function applyDowngradeChoices(
     // not this store's, or is already unsynced or paused, frees nothing.
     const [products] = unsyncIds.length
       ? await conn.query(
-          `SELECT m.id
+          `SELECT m.id, m.connection_id, m.source_product_id
              FROM product_mappings m
              JOIN store_connections c ON c.id = m.connection_id
             WHERE m.id IN (?)
@@ -253,6 +255,7 @@ async function applyDowngradeChoices(
     }
 
     if (products.length) {
+      require("./dashboardModel").recordProductActivities(products, "unsynced");
       await conn.query(
         `UPDATE product_mappings
             SET accepted_at = NULL, sync_status = 'skipped'

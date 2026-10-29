@@ -5,7 +5,7 @@
   <h2 class="panel__title">Recent activity</h2>
 
   <% if (!dash.activity.length) { %>
-    <p class="panel__copy">Nothing has happened yet. New orders, payments and accepted products show up here.</p>
+    <p class="panel__copy">Nothing has happened yet. New orders, payments and product actions show up here.</p>
   <% } else { %>
     <ul class="feed">
       <% dash.activity.forEach(function (item) { %>
@@ -34,13 +34,31 @@
               <% } %>
               <time><%= dash.ago(item.at) %></time>
             </span>
-          <% } else if (item.kind === "accepted") { %>
+          <% } else if (item.kind === "synced" || item.kind === "accepted") { %>
             <span class="feed__dot feed__dot--ok" aria-hidden="true"><%- include("icon", { name: "check" }) %></span>
             <span class="feed__body">
-              <% if (side === "source") { %>
-                <%= item.store %> accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong>
+              <% if (item.title) { %>
+                <% if (side === "source") { %>
+                  <%= item.store %> synced <strong><%= item.title %></strong>
+                <% } else { %>
+                  You synced <strong><%= item.title %></strong> from <%= item.store %>
+                <% } %>
               <% } else { %>
-                You accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong> from <%= item.store %>
+                <% if (side === "source") { %>
+                  <%= item.store %> accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong>
+                <% } else { %>
+                  You accepted <strong><%= item.products %> product<%= item.products === 1 ? "" : "s" %></strong> from <%= item.store %>
+                <% } %>
+              <% } %>
+              <time><%= dash.ago(item.at) %></time>
+            </span>
+          <% } else if (item.kind === "unsynced") { %>
+            <span class="feed__dot feed__dot--bad" aria-hidden="true">&minus;</span>
+            <span class="feed__body">
+              <% if (side === "source") { %>
+                <%= item.store %> unsynced <strong><%= item.title || "a product" %></strong>
+              <% } else { %>
+                You unsynced <strong><%= item.title || "a product" %></strong> from <%= item.store %>
               <% } %>
               <time><%= dash.ago(item.at) %></time>
             </span>

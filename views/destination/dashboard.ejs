@@ -26,6 +26,13 @@
       </div>
     </header>
 
+    <% if (typeof billingResult !== "undefined" && billingResult === "success") { %>
+      <div class="notice notice--success notice--dismissible" id="billing-notice">
+        <span>Your Shopify subscription is active.</span>
+        <button class="notice__close" type="button" aria-label="Dismiss notice" onclick="this.closest('.notice').remove();">&times;</button>
+      </div>
+    <% } %>
+
     <% var dash = {}; %>
     <%- include("../partials/dashHelpers", { dash: dash }) %>
 
@@ -295,6 +302,24 @@
 
   </main>
 
+  <script>
+    (function () {
+      var notice = document.getElementById("billing-notice");
+      if (notice) {
+        var closeBtn = notice.querySelector(".notice__close");
+        if (closeBtn) {
+          closeBtn.addEventListener("click", function () {
+            notice.remove();
+            if (window.history && window.history.replaceState) {
+              var url = new URL(window.location.href);
+              url.searchParams.delete("billing");
+              window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ""));
+            }
+          });
+        }
+      }
+    })();
+  </script>
 </body>
 
 </html>
