@@ -84,6 +84,9 @@ function hydrate(row) {
   });
 
   // Deliberately outside TOGGLES -- see OFF_BY_DEFAULT below.
+  settings.title = true;
+  settings.variant_inventory_tracking = true;
+
   settings.collections = Boolean(row.sync_collections);
 
   return settings;
@@ -175,6 +178,8 @@ async function save(connectionId, input = {}) {
   TOGGLES.forEach((field) => {
     values[`sync_${field}`] = input[field] === false ? 0 : 1;
   });
+  values.sync_title = 1;
+  values.sync_variant_inventory_tracking = 1;
 
   // The other way round from TOGGLES: only an explicit true switches these
   // on. A field the app has always copied is safe to default ON; one that
