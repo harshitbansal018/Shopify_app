@@ -40,9 +40,9 @@ async function sourceStats(storeId) {
         domain: connection.destination.shop_domain,
         name:
           connection.destination.store_name || connection.destination.shop_domain,
-        status: connection.status,
+        status: (!connection.destination || connection.destination.is_active === false) ? "inactive" : connection.status,
         active:
-          connection.status === "active" && connection.destination.is_active,
+          connection.status === "active" && (!connection.destination || connection.destination.is_active !== false),
         synced: status.synced,
         unsynced: status.pending + status.failed + status.skipped + status.deleted,
       };
@@ -102,8 +102,8 @@ async function destinationStats(storeId) {
     bySource.set(connection.source.shop_domain, {
       domain: connection.source.shop_domain,
       name: connection.source.store_name || connection.source.shop_domain,
-      status: connection.status,
-      active: connection.status === "active" && connection.source.is_active,
+      status: (!connection.source || connection.source.is_active === false) ? "inactive" : connection.status,
+      active: connection.status === "active" && (!connection.source || connection.source.is_active !== false),
       synced: 0,
       unsynced: 0,
     });
@@ -134,7 +134,7 @@ async function destinationStats(storeId) {
     cards: {
       synced: counts.synced,
       unsynced: counts.unsynced,
-      stores: connections.filter((c) => c.status === "active").length,
+      stores: connections.filter((c) => c.status === "active" && (!c.source || c.source.is_active !== false)).length,
     },
     // Biggest first: a bar chart sorted by size is readable, one in insertion
     // order is not. Ties fall back to the name so the order does not shuffle

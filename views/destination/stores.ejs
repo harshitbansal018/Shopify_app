@@ -98,13 +98,13 @@
       <header class="linked__head">
         <h2 class="linked__title">
           Connected Source Stores
-          <span class="segment__count"><%= connections.length %></span>
         </h2>
       </header>
 
       <table class="table">
         <thead>
           <tr>
+            <th class="table__sr">Sr No</th>
             <th>Store</th>
             <th>Status</th>
             <th>Sync</th>
@@ -115,14 +115,15 @@
         <tbody>
           <% if (!connections.length) { %>
             <tr class="row--empty">
-              <td class="table__empty" colspan="5">
+              <td class="table__empty" colspan="6">
                 <strong>No records found</strong>
               </td>
             </tr>
           <% } else { %>
-          <% connections.forEach(function (connection) { %>
+          <% connections.forEach(function (connection, index) { %>
             <% var other = connection.source; %>
             <tr>
+              <td class="table__sr"><%= index + 1 %></td>
               <% var otherName = other.store_name || other.shop_domain; %>
               <td>
                 <span class="media">
@@ -134,7 +135,8 @@
                 </span>
               </td>
               <td>
-                <span class="pill pill--<%= connection.status %>"><%= connection.status %></span>
+                <% var connActive = connection.status === "active" && (!other || other.is_active !== false); %>
+                <span class="pill pill--<%= connActive ? connection.status : "inactive" %>"><%= connActive ? connection.status : "inactive" %></span>
                 <%# A downgrade pauses stores rather than deleting them, so
                     the way back is here: its products never left. %>
                 <% if (connection.status === "paused") { %>

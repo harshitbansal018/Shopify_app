@@ -495,7 +495,13 @@
                         return Number(input.dataset.variant);
                       })
                     }],
-                    connection_ids: [connectionId]
+                    connection_ids: [connectionId],
+                    allocations: inputs.map(function (input) {
+                      return {
+                        variant_id: Number(input.dataset.variant),
+                        quantity: Number(input.value)
+                      };
+                    })
                   },
                   save
                 );

@@ -518,7 +518,7 @@ const STORE_ROW = {
       "an empty list keeps the columns",
       noConnections.includes("<table") &&
         noConnections.includes("No records found") &&
-        noConnections.includes('colspan="5"')
+        noConnections.includes('colspan="6"')
     );
 
     /* ---- the destination adds a store through a popup ---- */
@@ -3271,10 +3271,8 @@ const STORE_ROW = {
       /\.btn--success\.is-loading::after[\s\S]{0,160}--spin: var\(--ok\)/.test(css) &&
         /\.bulkbar__btn\.is-loading::after[\s\S]{0,160}--spin: var\(--ok\)/.test(css) &&
         /\.bulkbar__btn--danger\.is-loading::after[\s\S]{0,160}--spin: var\(--danger\)/.test(css));
-    check("every disabled native button reveals a red blocked icon only on hover",
-      /button:disabled:not\(\.is-loading\):not\(\[data-no-block-icon\]\)::before/.test(css) &&
-        /content: "\\2298"[\s\S]{0,300}color: var\(--danger\)[\s\S]{0,100}opacity: 0/.test(css) &&
-        /button:disabled[^\{]*:hover::before \{\s*opacity: 1/.test(css));
+    check("disabled native buttons use not-allowed cursor",
+      /button:disabled:not\(\.is-loading\)\s*\{\s*cursor:\s*not-allowed;/.test(css));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

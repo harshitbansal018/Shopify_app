@@ -193,13 +193,16 @@
                     class="awaiting-check"
                     value="<%= product.mapping_id %>"
                     data-synced="<%= rowSynced ? 1 : 0 %>"
-                    <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
-                    <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+                    <% if (product.sync_status === "deleted" || (!rowSynced && product.source_is_active === false)) { %>disabled data-unavailable="1"<% } %>
+                    <%= !rowSynced && (productSelectionLimit === 0 || product.source_is_active === false) ? "disabled" : "" %>
+                    data-source-active="<%= product.source_is_active === false ? 0 : 1 %>"
                     title="<%= product.sync_status === "deleted"
                       ? "Deleted at the source store"
-                      : (!rowSynced && productSelectionLimit === 0
-                        ? "Your product plan limit has been reached"
-                        : "") %>"
+                      : (!rowSynced && product.source_is_active === false
+                        ? "Source store is inactive"
+                        : (!rowSynced && productSelectionLimit === 0
+                          ? "Your product plan limit has been reached"
+                          : "")) %>"
                     aria-label="<%= rowSynced ? "Unsync" : "Sync" %> <%= product.title %>">
                 </td>
                 <td>
@@ -275,11 +278,14 @@
                       type="button"
                       data-mapping="<%= product.mapping_id %>"
                       data-action="<%= rowSynced ? "unsync" : "sync" %>"
-                      <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+                      <%= !rowSynced && (productSelectionLimit === 0 || product.source_is_active === false) ? "disabled" : "" %>
+                      data-source-active="<%= product.source_is_active === false ? 0 : 1 %>"
                       title="<%= !rowSynced
-                        ? (productSelectionLimit === 0
-                          ? "Your product plan limit has been reached"
-                          : "Sync into this store")
+                        ? (product.source_is_active === false
+                          ? "Source store is inactive"
+                          : (productSelectionLimit === 0
+                            ? "Your product plan limit has been reached"
+                            : "Sync into this store"))
                         : "Stop syncing and move back to Unsynced" %>">
                       <%= rowSynced ? "Unsync" : "Sync" %>
                     </button>
@@ -429,10 +435,13 @@
           Array.prototype.slice.call(
             document.querySelectorAll('.product-sync-action[data-action="sync"]')
           ).forEach(function (button) {
-            button.disabled = selectionLimit === 0;
-            button.title = selectionLimit === 0
+            var inactive = button.dataset.sourceActive === "0";
+            button.disabled = inactive || selectionLimit === 0;
+            button.title = inactive
+              ? "Source store is inactive"
+              : (selectionLimit === 0
               ? "Your product plan limit has been reached"
-              : "Sync into this store";
+              : "Sync into this store");
           });
           if (data.version === productLiveVersion) {
             refresh();
