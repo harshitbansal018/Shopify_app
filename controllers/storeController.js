@@ -584,13 +584,26 @@ exports.postSettings = async (req, res) => {
     }
 
     const wanted = req.body.settings || {};
-    const margin = wanted.price_markup_percent === undefined
-      ? 0
-      : Number(wanted.price_markup_percent);
+    const rawMargin = wanted.price_markup_percent;
+    const marginStr = rawMargin !== undefined && rawMargin !== null ? String(rawMargin).trim() : "";
+
+    if (rawMargin === undefined || marginStr === "") {
+      return res.status(400).json({
+        error: "Price margin is required.",
+      });
+    }
+
+    const margin = Number(marginStr);
 
     if (!Number.isFinite(margin) || margin < 0) {
       return res.status(400).json({
         error: "Price margin must be 0% or greater.",
+      });
+    }
+
+    if (margin > 1000) {
+      return res.status(400).json({
+        error: "Price margin cannot exceed 1000%.",
       });
     }
 

@@ -215,6 +215,79 @@ exports.appUninstalled = async (req, res) => {
     // Connections and mappings are deliberately kept so a reinstall resumes.
     await storeModel.markUninstalled(shop);
 
+    // If source uninstalls: move destination products to Unsynced, draft copies & release reservations.
+    // If destination uninstalls: move source products to Unshared & release reservations.
+    if (store.store_type === "source") {
+      const connections = await connectionModel.listForSource(store.id);
+      for (const connection of connections) {
+        try {
+          const mappings = await productMappingModel.listForConnection(connection.id, {
+            limit: 10000,
+            acceptedOnly: true,
+          });
+          for (const mapping of mappings) {
+            try {
+              if (mapping.destination_shopify_product_id && connection.destination.is_active) {
+                await productSync.setDestinationProductStatus(
+                  connection.destination.shop_domain,
+                  mapping.destination_shopify_product_id,
+                  "DRAFT",
+                  { mappingId: mapping.id }
+                );
+                await inventoryAllocation.zeroDestinationInventory(
+                  connection,
+                  mapping,
+                  mapping.source_product_id
+                );
+              }
+              await inventoryAllocation.releaseConnectionProduct(
+                store,
+                connection.id,
+                mapping.source_product_id
+              );
+            } catch (pErr) {
+              console.warn("Uninstall product draft/release failed:", pErr.message);
+            }
+          }
+          if (mappings.length) {
+            await productMappingModel.declineForDestination(
+              connection.destination_store_id,
+              mappings.map((m) => m.id)
+            );
+            require("../models/dashboardModel").recordProductActivities(mappings, "unsynced");
+          }
+        } catch (cErr) {
+          console.warn("Processing uninstalled source connection failed:", cErr.message);
+        }
+      }
+    } else if (store.store_type === "destination") {
+      const connections = await connectionModel.listForDestination(store.id);
+      for (const connection of connections) {
+        try {
+          const mappings = await productMappingModel.listForConnection(connection.id, {
+            limit: 10000,
+          });
+          for (const mapping of mappings) {
+            try {
+              await inventoryAllocation.releaseConnectionProduct(
+                connection.source,
+                connection.id,
+                mapping.source_product_id
+              );
+              await productMappingModel.markSourceRevoked(mapping.id);
+            } catch (pErr) {
+              console.warn("Uninstall unshare/release failed:", pErr.message);
+            }
+          }
+          if (mappings.length) {
+            require("../models/dashboardModel").recordProductActivities(mappings, "unsynced");
+          }
+        } catch (cErr) {
+          console.warn("Processing uninstalled destination connection failed:", cErr.message);
+        }
+      }
+    }
+
     console.log("App uninstalled for", shop);
   } catch (err) {
     console.error("Uninstall webhook processing failed:", err.message);

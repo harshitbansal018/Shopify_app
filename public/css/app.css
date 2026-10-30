@@ -408,29 +408,10 @@ body {
   cursor: default;
 }
 
-/* Every unavailable native action reveals the same red circle-slash on hover.
-   It stays hidden otherwise, and loading is deliberately excluded: a working
-   button should show its spinner, not look permanently blocked. */
-button:disabled:not(.is-loading):not([data-no-block-icon]) {
+/* Unavailable native action cursor. Loading is deliberately excluded: a working
+   button should show its spinner, not look blocked. */
+button:disabled:not(.is-loading) {
   cursor: not-allowed;
-}
-
-button:disabled:not(.is-loading):not([data-no-block-icon])::before {
-  content: "\2298";
-  display: inline-block;
-  flex: none;
-  margin-right: 0.3rem;
-  font-family: Arial, sans-serif;
-  font-size: 1em;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--danger);
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-button:disabled:not(.is-loading):not([data-no-block-icon]):hover::before {
-  opacity: 1;
 }
 
 /* A plan-limited action remains visible. The wrapper provides a hover/focus
@@ -1276,7 +1257,8 @@ s-modal:not(:defined)[open] s-button {
   border-color: var(--waiting-line);
 }
 
-.pill--disconnected {
+.pill--disconnected,
+.pill--inactive {
   color: var(--muted);
   background: var(--line-soft);
 }
@@ -3809,6 +3791,7 @@ s-modal:not(:defined)[open] s-button {
 
 /* 6. Top sellers: rank, thumbnail, units bar. */
 .table .table__rank { width: 3rem; }
+.table .table__sr { width: 4.5rem; color: var(--muted); }
 
 .rank {
   display: inline-grid;

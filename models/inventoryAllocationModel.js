@@ -68,6 +68,28 @@ async function listForProduct(sourceProductId) {
   return rows.map(hydrate);
 }
 
+async function mapAllocatedForProducts(sourceProductIds) {
+  const ids = [...new Set((sourceProductIds || []).map(Number).filter(Boolean))];
+  const grouped = new Map();
+  if (!ids.length) return grouped;
+
+  const rows = await query(
+    `SELECT svm.source_product_id,
+            COALESCE(SUM(ia.allocated_quantity), 0) AS total_allocated
+       FROM inventory_allocations ia
+       JOIN source_variant_mappings svm ON svm.id = ia.source_variant_mapping_id
+      WHERE svm.source_product_id IN (?)
+      GROUP BY svm.source_product_id`,
+    [ids]
+  );
+
+  rows.forEach((row) => {
+    grouped.set(Number(row.source_product_id), Number(row.total_allocated || 0));
+  });
+
+  return grouped;
+}
+
 async function listForConnection(connectionId) {
   const rows = await query(
     `${WITH_SALES}
@@ -200,6 +222,7 @@ module.exports = {
   hydrate,
   listForConnectionProduct,
   listForProduct,
+  mapAllocatedForProducts,
   listForConnection,
   remainingMap,
   mapForMappings,

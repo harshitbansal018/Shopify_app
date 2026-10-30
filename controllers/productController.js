@@ -253,21 +253,25 @@ exports.getProducts = async (req, res) => {
         : sourceProductModel.listPickerSelections(req.storeId),
     ]);
 
-    const variants = await sourceVariantModel.mapForProducts(
-      products.map((product) => product.id)
-    );
+    const productIds = products.map((product) => product.id);
+    const [variants, allocatedMap] = await Promise.all([
+      sourceVariantModel.mapForProducts(productIds),
+      inventoryAllocationModel.mapAllocatedForProducts(productIds),
+    ]);
 
     // effective, not allowed: before a product is shared there is no mapping,
     // and what counts is the choice made in the picker when it was added.
     const withVariants = (product) => {
       const all = variants.get(product.id) || [];
       const picked = product.effective_variant_ids; // null = every variant
+      const allocated = allocatedMap.get(product.id) || 0;
 
       return {
         ...product,
         variants: picked
           ? all.filter((variant) => picked.indexOf(variant.id) !== -1)
           : all,
+        allocated_inventory: allocated,
       };
     };
 
@@ -1062,6 +1066,25 @@ exports.postAllow = async (req, res) => {
       const allowedVariantIds =
         requested && requested.length < own.size ? requested : null;
 
+      // Check allocated inventory for this product
+      const postedAllocations = Array.isArray(req.body.allocations)
+        ? req.body.allocations
+        : (Array.isArray(selection.allocations) ? selection.allocations : null);
+
+      let totalAllocated = 0;
+      if (postedAllocations && postedAllocations.length) {
+        totalAllocated = postedAllocations.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+      } else {
+        const existingAllocations = await inventoryAllocationModel.listForProduct(product.id);
+        totalAllocated = existingAllocations.reduce((sum, a) => sum + (Number(a.allocated_quantity) || 0), 0);
+      }
+
+      if (totalAllocated <= 0) {
+        return res.status(400).json({
+          error: "Allocate the inventory for this product.",
+        });
+      }
+
       for (const connection of connections) {
         await productMappingModel.ensure({
           connectionId: connection.id,
@@ -1296,6 +1319,17 @@ exports.postAccept = async (req, res) => {
       req.storeId,
       ids
     );
+
+    if (mappings.some((m) => {
+      const c = connectionById.get(Number(m.connection_id));
+      return c && c.source && c.source.is_active === false;
+    })) {
+      return res.status(409).json({
+        error: "Cannot sync products from an inactive or uninstalled source store.",
+      });
+    }
+
+
     const restored = [];
 
     // Re-reserve inventory BEFORE acceptance makes these rows visible to the

@@ -391,6 +391,7 @@ async function listSyncedIntoStore(
               AS inventory,
             src.shop_domain AS source_shop_domain,
             src.store_name  AS source_store_name,
+            src.is_active   AS source_is_active,
             (SELECT COUNT(*) FROM mapping_variant_products mvp
               WHERE mvp.product_mapping_id = pm.id) AS variant_count
        FROM product_mappings pm

@@ -14,13 +14,16 @@
         class="awaiting-check"
         value="<%= product.mapping_id %>"
         data-synced="<%= rowSynced ? 1 : 0 %>"
-        <% if (product.sync_status === "deleted") { %>disabled data-unavailable="1"<% } %>
-        <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+        <% if (product.sync_status === "deleted" || (!rowSynced && product.source_is_active === false)) { %>disabled data-unavailable="1"<% } %>
+        <%= !rowSynced && (productSelectionLimit === 0 || product.source_is_active === false) ? "disabled" : "" %>
+        data-source-active="<%= product.source_is_active === false ? 0 : 1 %>"
         title="<%= product.sync_status === "deleted"
           ? "Deleted at the source store"
-          : (!rowSynced && productSelectionLimit === 0
-            ? "Your product plan limit has been reached"
-            : "") %>"
+          : (!rowSynced && product.source_is_active === false
+            ? "Source store is inactive"
+            : (!rowSynced && productSelectionLimit === 0
+              ? "Your product plan limit has been reached"
+              : "")) %>"
         aria-label="<%= rowSynced ? "Unsync" : "Sync" %> <%= product.title %>">
     </td>
     <td>
@@ -82,11 +85,14 @@
           type="button"
           data-mapping="<%= product.mapping_id %>"
           data-action="<%= rowSynced ? "unsync" : "sync" %>"
-          <%= !rowSynced && productSelectionLimit === 0 ? "disabled" : "" %>
+          <%= !rowSynced && (productSelectionLimit === 0 || product.source_is_active === false) ? "disabled" : "" %>
+          data-source-active="<%= product.source_is_active === false ? 0 : 1 %>"
           title="<%= !rowSynced
-            ? (productSelectionLimit === 0
-              ? "Your product plan limit has been reached"
-              : "Sync into this store")
+            ? (product.source_is_active === false
+              ? "Source store is inactive"
+              : (productSelectionLimit === 0
+                ? "Your product plan limit has been reached"
+                : "Sync into this store"))
             : "Stop syncing and move back to Unsynced" %>">
           <%= rowSynced ? "Unsync" : "Sync" %>
         </button>

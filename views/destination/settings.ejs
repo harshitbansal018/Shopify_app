@@ -331,8 +331,19 @@
       var pageError = document.getElementById("page-error");
 
       function fail(message) {
-        pageError.textContent = message;
-        pageError.hidden = false;
+        if (pageError) pageError.hidden = true;
+        var errs = document.querySelectorAll(".notice--error");
+        for (var i = 0; i < errs.length; i++) {
+          errs[i].hidden = true;
+        }
+
+        if (window.shopify && window.shopify.toast) {
+          window.shopify.toast.show(message, { isError: true });
+        } else if (typeof window.appToast === "function") {
+          window.appToast(message);
+        } else {
+          alert(message);
+        }
       }
 
       /* ---------------- switching store ----------------
@@ -400,18 +411,35 @@
                   settings[input.name] = input.checked;
                 });
 
-              settings.price_markup_percent = Number(
-                panel.querySelector('input[name="price_markup_percent"]').value
-              );
+              var marginInput = panel.querySelector('input[name="price_markup_percent"]');
+              var marginVal = marginInput ? marginInput.value.trim() : "";
 
-              if (!Number.isFinite(settings.price_markup_percent) ||
-                  settings.price_markup_percent < 0) {
-                fail("Price margin must be 0% or greater.");
-                panel.querySelector('input[name="price_markup_percent"]').focus();
+              if (marginVal === "") {
+                fail("Price margin is required.");
+                if (marginInput) marginInput.focus();
                 button.disabled = false;
                 button.textContent = "Save";
                 return;
               }
+
+              var marginNum = Number(marginVal);
+              if (!Number.isFinite(marginNum) || marginNum < 0) {
+                fail("Price margin must be 0% or greater.");
+                if (marginInput) marginInput.focus();
+                button.disabled = false;
+                button.textContent = "Save";
+                return;
+              }
+
+              if (marginNum > 1000) {
+                fail("Price margin cannot exceed 1000%.");
+                if (marginInput) marginInput.focus();
+                button.disabled = false;
+                button.textContent = "Save";
+                return;
+              }
+
+              settings.price_markup_percent = marginNum;
 
               // The screen has no master variants switch any more, so say so
               // rather than leaning on the model's "a missing key means on"

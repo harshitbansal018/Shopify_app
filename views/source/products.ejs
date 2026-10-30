@@ -374,7 +374,9 @@
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
-          rowChecks().forEach(function (c) { c.checked = checkAll.checked; });
+          rowChecks().forEach(function (c) {
+            if (!c.disabled) c.checked = checkAll.checked;
+          });
           refresh();
         });
       }
@@ -437,6 +439,18 @@
           return window.appNavigate("/stores?returnTo=" + returnTo);
         }
 
+        var unallocated = ticked().filter(function (c) {
+          return Number(c.dataset.allowed) === 0 &&
+            Number(c.dataset.allocated || 0) <= 0;
+        });
+        if (unallocated.length > 0) {
+          fail(pageError, "Allocate the inventory for this product.");
+          if (typeof window.appToast === "function") {
+            window.appToast("Allocate the inventory for this product.");
+          }
+          return;
+        }
+
         if (activeDestinationIds.length === 1) {
           return allowToDestinations(activeDestinationIds, allowButton);
         }
@@ -482,6 +496,18 @@
 
       if (destinationShare) {
         destinationShare.addEventListener("click", function () {
+          var unallocated = ticked().filter(function (c) {
+            return Number(c.dataset.allowed) === 0 &&
+              Number(c.dataset.allocated || 0) <= 0;
+          });
+          if (unallocated.length > 0) {
+            if (destinationError) fail(destinationError, "Allocate the inventory for this product.");
+            fail(pageError, "Allocate the inventory for this product.");
+            if (typeof window.appToast === "function") {
+              window.appToast("Allocate the inventory for this product.");
+            }
+            return;
+          }
           var connectionIds = chosenDestinationIds();
           if (connectionIds.length) {
             allowToDestinations(connectionIds, destinationShare);

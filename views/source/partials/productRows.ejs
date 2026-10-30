@@ -15,6 +15,7 @@
         data-allowed="<%= product.allowed ? 1 : 0 %>"
         data-title="<%= product.title %>"
         data-synced="<%= product.synced || 0 %>"
+        data-allocated="<%= typeof product.allocated_inventory !== "undefined" ? product.allocated_inventory : "" %>"
         aria-label="Select <%= product.title %>">
     </td>
     <td>
