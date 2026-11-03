@@ -456,6 +456,16 @@
             if (checkAll) checkAll.checked = false;
             bindViewButtons();
             bindSyncActions();
+            // Re-apply saved cross-page selection after live row refresh.
+            (function () {
+              var saved = loadDestSelection();
+              if (saved.length) {
+                var savedSet = new Set(saved);
+                checks().forEach(function (c) {
+                  if (savedSet.has(c.value)) c.checked = true;
+                });
+              }
+            })();
             refresh();
             return true;
           }
@@ -488,6 +498,7 @@
           // search stay; the page number does not -- a new filter is a new
           // list, and page 3 of it is probably empty.
           currentStore = storeFilter.value;
+          clearDestSelection();
           window.appNavigate(productsUrl(<%- json(tab) %>));
         });
       }
@@ -504,6 +515,7 @@
             // other tab, still looking for this".
             // The search and the store filter come along: switching tabs
             // mid-search means "the other tab, still looking for this".
+            clearDestSelection();
             window.appNavigate(productsUrl(button.dataset.tab));
           });
         });
@@ -551,6 +563,7 @@
             if (!response.ok) throw requestFailed(data);
 
             window.appToast(data.synced + " updated, " + data.failed + " failed");
+            clearDestSelection();
             await refreshProductsLive(true);
           } catch (err) {
             refresh();
@@ -652,18 +665,57 @@
         );
       }
 
+      /* ── Cross-page additive selection ──────────────────────────────────────
+         Stored as [{id, synced}] so off-page items are included in bulk
+         actions even when their rows are not rendered on this page.
+      ─────────────────────────────────────────────────────────────────────── */
+      var DEST_SELECTION_KEY = "dest_product_selection";
+
+      function loadDestSelection() {
+        try {
+          var raw = sessionStorage.getItem(DEST_SELECTION_KEY);
+          return raw ? JSON.parse(raw) : [];
+        } catch (_) { return []; }
+      }
+
+      /** All selected entries across every page (visible + off-page). */
+      function globalDestSelection() {
+        var visibleIds = new Set(checks().map(function (c) { return c.value; }));
+        var offPage = loadDestSelection().filter(function (x) {
+          var xId = typeof x === "object" && x ? x.id : x;
+          return !visibleIds.has(String(xId));
+        }).map(function (x) {
+          if (typeof x === "object" && x) return x;
+          return { id: String(x), synced: 0 };
+        });
+        var thisPage = checks().filter(function (c) { return c.checked; }).map(function (c) {
+          return { id: String(c.value), synced: c.dataset.synced === "1" ? 1 : 0 };
+        });
+        return offPage.concat(thisPage);
+      }
+
+      /**
+       * Rebuild: keep off-page saved entries, replace this page's entries
+       * with their current checked state.
+       */
+      function saveDestSelection() {
+        try {
+          sessionStorage.setItem(DEST_SELECTION_KEY, JSON.stringify(globalDestSelection()));
+        } catch (_) {}
+      }
+
+      function clearDestSelection() {
+        try { sessionStorage.removeItem(DEST_SELECTION_KEY); } catch (_) {}
+      }
+
       function chosen() {
-        return checks()
-          .filter(function (c) { return c.checked; })
-          .map(function (c) { return c.value; });
+        return globalDestSelection().map(function (x) { return x.id; });
       }
 
       function chosenBySyncState(synced) {
-        return checks()
-          .filter(function (c) {
-            return c.checked && (c.dataset.synced === "1") === synced;
-          })
-          .map(function (c) { return c.value; });
+        return globalDestSelection()
+          .filter(function (x) { return Boolean(x.synced) === synced; })
+          .map(function (x) { return x.id; });
       }
 
       var bulkbar = document.getElementById("bulkbar");
@@ -671,9 +723,10 @@
       var bulkClear = document.getElementById("bulk-clear");
 
       function refresh() {
-        var count = chosen().length;
-        var unsyncedCount = chosenBySyncState(false).length;
-        var syncedCount = chosenBySyncState(true).length;
+        var allSelected = globalDestSelection();
+        var count = allSelected.length;
+        var unsyncedCount = allSelected.filter(function (x) { return !x.synced; }).length;
+        var syncedCount = allSelected.filter(function (x) { return Boolean(x.synced); }).length;
 
         if (acceptButton && selectionLimit !== null) {
           checks().forEach(function (c) {
@@ -684,16 +737,17 @@
               ? "You have selected all products available on your plan"
               : "";
           });
-
         }
 
         checks().forEach(function (c) {
           c.closest("tr").classList.toggle("is-selected", c.checked);
         });
+
         if (bulkbar) {
           bulkbar.hidden = count === 0;
           bulkCount.textContent = count + " selected";
         }
+
         if (checkAll) {
           var syncedAvailable = checks().filter(function (c) {
             return c.dataset.synced === "1";
@@ -702,8 +756,9 @@
           var all = syncedAvailable + (selectionLimit === null
             ? unsyncedAvailable
             : Math.min(unsyncedAvailable, selectionLimit));
-          checkAll.checked = count > 0 && count === all;
-          checkAll.indeterminate = count > 0 && count < all;
+          var visiblePicked = checks().filter(function (c) { return c.checked; }).length;
+          checkAll.checked = visiblePicked > 0 && visiblePicked === all;
+          checkAll.indeterminate = visiblePicked > 0 && visiblePicked < all;
           checkAll.disabled = all === 0;
         }
 
@@ -742,13 +797,30 @@
         if (declineButton) declineButton.textContent = "Decline";
       }
 
+      // Restore saved selection on page load.
+      (function restoreDestSelection() {
+        var saved = loadDestSelection();
+        if (!saved.length) return;
+        var savedSet = new Set(saved.map(function (x) {
+          return String(typeof x === "object" && x ? x.id : x);
+        }));
+        checks().forEach(function (c) {
+          if (savedSet.has(String(c.value))) c.checked = true;
+        });
+        refresh();
+      })();
+
       if (productRows) productRows.addEventListener("change", function (event) {
-        if (event.target.matches(".awaiting-check")) refresh();
+        if (event.target.matches(".awaiting-check")) {
+          refresh();
+          saveDestSelection();
+        }
       });
 
       if (checkAll) {
         checkAll.addEventListener("change", function () {
-          var unsyncedPicked = 0;
+          var allSelected = globalDestSelection();
+          var unsyncedPicked = allSelected.filter(function (x) { return !x.synced; }).length;
           checks().forEach(function (c) {
             var isSynced = c.dataset.synced === "1";
             var hasRoom = selectionLimit === null || unsyncedPicked < selectionLimit;
@@ -756,12 +828,14 @@
             if (c.checked && !isSynced) unsyncedPicked++;
           });
           refresh();
+          saveDestSelection();
         });
       }
 
       if (bulkClear) {
         bulkClear.addEventListener("click", function () {
           checks().forEach(function (c) { c.checked = false; });
+          clearDestSelection();
           refresh();
         });
       }
@@ -815,6 +889,7 @@
         if (!data) return;
 
         window.appToast(data.synced + " synced, " + data.failed + " failed");
+        clearDestSelection();
         await refreshProductsLive(true);
       });
 
@@ -849,6 +924,7 @@
           unsyncMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
         }
         window.appToast(unsyncMessage);
+        clearDestSelection();
         await refreshProductsLive(true);
       });
 
@@ -874,6 +950,7 @@
           declineMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
         }
         window.appToast(declineMessage);
+        clearDestSelection();
         await refreshProductsLive(true);
       });
 
