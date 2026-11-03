@@ -1,6 +1,19 @@
 // Subscription plans are owned by a destination store.  The imported schemas
 // call that owner `user_id`; in this app it is the installed store's id.
 const { query, withTransaction } = require("../config/db");
+const { parseJson } = require("./helpers");
+
+async function applyPlanChoices(connection, storeId, plan, choices) {
+  const limits = limitsOf(plan);
+  const result = await require("./planUsageModel").applyDowngradeChoices(storeId, {
+    ...choices, productLimit: limits.products, sourceLimit: limits.sources, connection,
+  });
+  if (!result.ok) {
+    const error = new Error("Your store's usage changed. Return to Plans and choose enough products and stores before confirming the downgrade.");
+    error.statusCode = 409;
+    throw error;
+  }
+}
 
 async function listActive() {
   return query(
@@ -45,10 +58,11 @@ async function currentPaidChargeForStore(storeId) {
 
 /** Record a dummy successful subscription selection. Real billing can replace
  * the payment insert later without changing the page or membership history. */
-async function selectForStore(storeId, planId) {
+async function selectForStore(storeId, planId, choices = {}) {
   return withTransaction(async (connection) => {
+    await connection.query("SELECT id FROM stores WHERE id = ? FOR UPDATE", [storeId]);
     const [plans] = await connection.query(
-      "SELECT id FROM plans WHERE id = ? AND is_active = 1 FOR UPDATE",
+      "SELECT * FROM plans WHERE id = ? AND is_active = 1 FOR UPDATE",
       [planId]
     );
 
@@ -57,6 +71,9 @@ async function selectForStore(storeId, planId) {
       error.statusCode = 404;
       throw error;
     }
+
+    // Internal callers without choices retain the existing administrative API.
+    if (Object.keys(choices).length) await applyPlanChoices(connection, storeId, plans[0], choices);
 
     await connection.query(
       "UPDATE user_memberships SET status = 0 WHERE user_id = ? AND status = 1",
@@ -80,7 +97,7 @@ async function selectForStore(storeId, planId) {
   });
 }
 
-async function startPaidPurchase(storeId, planId, chargeId) {
+async function startPaidPurchase(storeId, planId, chargeId, choices = {}) {
   return withTransaction(async (connection) => {
     const [membership] = await connection.query(
       `INSERT INTO user_memberships (user_id, membership_id, status, created_at, updated_at)
@@ -90,9 +107,9 @@ async function startPaidPurchase(storeId, planId, chargeId) {
 
     await connection.query(
       `INSERT INTO membership_payments
-        (membership_id, user_id, api_client_id, charge_id, date_add, date_update, status)
-       VALUES (?, ?, NULL, ?, NOW(), NOW(), 1)`,
-      [membership.insertId, storeId, chargeId]
+        (membership_id, user_id, api_client_id, charge_id, downgrade_choices, date_add, date_update, status)
+       VALUES (?, ?, NULL, ?, ?, NOW(), NOW(), 1)`,
+      [membership.insertId, storeId, chargeId, JSON.stringify(choices)]
     );
 
     return membership.insertId;
@@ -114,8 +131,9 @@ async function pendingChargeForStorePlan(storeId, planId) {
 
 async function finishPaidPurchase(storeId, planId, chargeId, approved) {
   return withTransaction(async (connection) => {
+    await connection.query("SELECT id FROM stores WHERE id = ? FOR UPDATE", [storeId]);
     const [rows] = await connection.query(
-      `SELECT pay.id AS payment_id, pay.membership_id, member.membership_id AS plan_id
+      `SELECT pay.id AS payment_id, pay.membership_id, pay.status, pay.downgrade_choices, member.membership_id AS plan_id
          FROM membership_payments pay
          JOIN user_memberships member ON member.id = pay.membership_id
         WHERE pay.user_id = ? AND pay.charge_id = ?
@@ -126,8 +144,12 @@ async function finishPaidPurchase(storeId, planId, chargeId, approved) {
 
     const purchase = rows[0];
     if (!purchase || Number(purchase.plan_id) !== Number(planId)) return false;
+    if (Number(purchase.status) !== 1) return approved && Number(purchase.status) === 2;
 
     if (approved) {
+      const [plans] = await connection.query("SELECT * FROM plans WHERE id = ? AND is_active = 1 FOR UPDATE", [planId]);
+      if (!plans[0]) throw new Error("The selected plan is no longer available.");
+      await applyPlanChoices(connection, storeId, plans[0], parseJson(purchase.downgrade_choices, {}) || {});
       await connection.query(
         "UPDATE user_memberships SET status = 0, updated_at = NOW() WHERE user_id = ? AND status = 1",
         [storeId]

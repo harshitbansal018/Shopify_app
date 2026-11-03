@@ -405,12 +405,16 @@ exports.postCancel = async (req, res) => {
       return res.status(409).json({ error: "This order is already cancelled." });
     }
 
-    await orderMappingModel.markCancelledBySource(
+    const standing = (await orderShipmentModel.listForMapping(mapping.id))
+      .some((shipment) => shipment.push_status !== "cancelled");
+    if (standing) {
+      return res.status(409).json({ error: "This order has shipments. Undo them before cancelling, or contact the destination merchant to review the remaining items." });
+    }
+
+    const queued = await orderMappingModel.cancelAndQueue(
       mapping.id,
       req.body.reason || null
     );
-
-    const queued = await orderMappingModel.queueCancellation(mapping.id);
 
     // Make the destination Shopify Admin reflect this source action now. If
     // Shopify rejects or throttles it, cancel_status becomes failed and the
@@ -435,11 +439,13 @@ exports.postCancel = async (req, res) => {
       ok: true,
       queued: Boolean(queued),
       destinationUpdated: after.cancel_status === "cancelled",
+      manualReview: after.cancel_status === "manual_review",
       destinationError:
-        after.cancel_status === "failed" ? after.cancel_error : null,
+        ["failed", "manual_review"].includes(after.cancel_status) ? after.cancel_error : null,
     });
   } catch (err) {
     console.error("Cancelling an order failed:", err.message);
+    if (err.statusCode === 409) return res.status(409).json({ error: err.message });
     return res.status(500).json({ error: "Could not cancel that order." });
   }
 };

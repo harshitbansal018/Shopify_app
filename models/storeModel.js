@@ -342,6 +342,16 @@ async function setEmail(id, email) {
 }
 
 /**
+ * The merchant's explicit notification email.
+ */
+async function setNotificationEmail(id, email) {
+  await query("UPDATE stores SET notification_email = ? WHERE id = ?", [
+    email ? String(email).trim().slice(0, 255) : null,
+    id,
+  ]);
+}
+
+/**
  * Stop opening the app on the setup screen.
  *
  * Set when the merchant finishes setup, and equally when they skip it -- the
@@ -360,6 +370,7 @@ async function markOnboarded(id) {
 
 module.exports = {
   setEmail,
+  setNotificationEmail,
   markOnboarded,
   ROLES,
   findByDomain,

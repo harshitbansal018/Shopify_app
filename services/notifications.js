@@ -8,8 +8,7 @@
 //   orderCancelled()   the source said it cannot supply an order
 //   paymentRecorded()  the destination recorded paying the source
 //
-// Each one reads the connection's switches (set by the DESTINATION, for both
-// stores -- see models/notificationSettingsModel.js), checks the destination's
+// Each one reads the recipient's connection switches, checks the destination's
 // plan still has emails left this billing month (services/planLimits.js),
 // writes the emails into email_outbox, and returns. Nothing is sent inline:
 // the background round below does that, so a slow mail server can never hold
@@ -92,6 +91,7 @@ async function gatedEnqueue({
   connectionId,
   destinationStoreId,
   recipientStoreId,
+  toEmail = null,
   kind,
   dedupeKey,
   email,
@@ -102,6 +102,7 @@ async function gatedEnqueue({
     await emailOutboxModel.enqueue({
       connectionId,
       recipientStoreId,
+      toEmail,
       kind,
       dedupeKey,
       ...email,
@@ -118,6 +119,7 @@ async function gatedEnqueue({
   return emailOutboxModel.enqueue({
     connectionId,
     recipientStoreId,
+    toEmail,
     kind,
     dedupeKey,
     ...email,
@@ -125,11 +127,12 @@ async function gatedEnqueue({
 }
 
 /** An order-event email: the mapping says which destination's plan pays. */
-function queue(mapping, recipientStoreId, kind, dedupeKey, email) {
+function queue(mapping, recipientStoreId, kind, dedupeKey, email, toEmail = null) {
   return gatedEnqueue({
     connectionId: mapping.connection_id,
     destinationStoreId: mapping.destination_store_id,
     recipientStoreId,
+    toEmail,
     kind,
     dedupeKey,
     email,
@@ -159,7 +162,8 @@ function orderCreated(mapping) {
       mapping.source_store_id,
       "order_created",
       `order_created:${mapping.id}`,
-      templates.orderCreated(mapping)
+      templates.orderCreated(mapping),
+      settings.email_to_order_created || null
     );
 
     return { queued: queued ? 1 : 0 };
@@ -228,22 +232,41 @@ function orderFulfilled(mappingId, shipmentId = null) {
       };
     }
 
-    const queued = await queue(
-      mapping,
-      mapping.destination_store_id,
-      settings.order_updates ? "order_shipped" : "payout_destination",
-      `order_fulfilled:${mapping.id}:${shipment.id}`,
-      templates.orderFulfilled(
-        { ...mapping, source_tracking: shipment.tracking },
-        {
+    const updatesEmail = settings.email_to_order_updates || null;
+    const payoutEmail = settings.email_to_payout_destination || null;
+    // Keep one combined email for a shared inbox. Different recipients get
+    // only the notification they subscribed to, with separate dedupe keys.
+    const separate = settings.order_updates && wantsOwed &&
+      (updatesEmail || "").toLowerCase() !== (payoutEmail || "").toLowerCase();
+    const deliveries = separate
+      ? [
+          { shipped: true, owed: null, toEmail: updatesEmail, suffix: "" },
+          { shipped: false, owed, toEmail: payoutEmail, suffix: ":payout_destination" },
+        ]
+      : [{
           shipped: settings.order_updates,
-          partial: !complete,
           owed,
-        }
-      )
-    );
+          toEmail: settings.order_updates ? updatesEmail : payoutEmail,
+          suffix: "",
+        }];
 
-    return { queued: queued ? 1 : 0 };
+    let queued = 0;
+    for (const delivery of deliveries) {
+      const added = await queue(
+        mapping,
+        mapping.destination_store_id,
+        delivery.shipped ? "order_shipped" : "payout_destination",
+        `order_fulfilled:${mapping.id}:${shipment.id}${delivery.suffix}`,
+        templates.orderFulfilled(
+          { ...mapping, source_tracking: shipment.tracking },
+          { shipped: delivery.shipped, partial: !complete, owed: delivery.owed }
+        ),
+        delivery.toEmail
+      );
+      if (added) queued++;
+    }
+
+    return { queued };
   });
 }
 /** The source cannot supply an order; the destination is told. */
@@ -263,7 +286,8 @@ function orderCancelled(mappingId) {
       mapping.destination_store_id,
       "order_cancelled",
       `order_cancelled:${mapping.id}`,
-      templates.orderCancelled(mapping)
+      templates.orderCancelled(mapping),
+      settings.email_to_order_updates || null
     );
 
     return { queued: queued ? 1 : 0 };
@@ -301,6 +325,7 @@ function paymentRecorded(paymentId) {
       connectionId: connection.id,
       destinationStoreId: connection.destination.id,
       recipientStoreId: connection.source.id,
+      toEmail: settings.email_to_payout_source || null,
       kind: "payment_settled",
       dedupeKey: `payment_settled:${payment.id}`,
       email: templates.paymentSettled({
@@ -338,6 +363,7 @@ async function addressFor(storeId) {
   const store = await storeModel.findById(storeId);
 
   if (!store) return { email: null, reason: "The store no longer exists." };
+  if (store.notification_email) return { email: store.notification_email };
   if (store.email) return { email: store.email };
 
   if (!store.is_active || !store.access_token) {
@@ -370,7 +396,9 @@ async function sendOne(row) {
   if (!(await emailOutboxModel.claim(row.id))) return "taken";
 
   try {
-    const { email, reason } = await addressFor(row.recipient_store_id);
+    const { email, reason } = row.to_email
+      ? { email: row.to_email, reason: null }
+      : await addressFor(row.recipient_store_id);
 
     if (!email) {
       await emailOutboxModel.markSkipped(row.id, reason);

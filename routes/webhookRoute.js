@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { verifyWebhook } = require("../middleware/verifyWebhook");
-const webhookController = require("../controllers/webhookController");
+const { receive } = require("../services/webhookInbox");
 
 // Raw body is required to compute the HMAC; it must not be JSON-parsed first.
 const rawBody = express.raw({ type: "*/*", limit: "2mb" });
@@ -11,7 +11,7 @@ router.post(
   "/app/uninstalled",
   rawBody,
   verifyWebhook,
-  webhookController.appUninstalled
+  receive("appUninstalled")
 );
 
 /* Product changes at a source store. */
@@ -19,49 +19,49 @@ router.post(
   "/products/update",
   rawBody,
   verifyWebhook,
-  webhookController.productsUpdate
+  receive("productsUpdate")
 );
 
 router.post(
   "/products/delete",
   rawBody,
   verifyWebhook,
-  webhookController.productsDelete
+  receive("productsDelete")
 );
 
 router.post(
   "/inventory-items/update",
   rawBody,
   verifyWebhook,
-  webhookController.inventoryItemUpdate
+  receive("inventoryItemUpdate")
 );
 
 router.post(
   "/inventory-levels/update",
   rawBody,
   verifyWebhook,
-  webhookController.inventoryLevelUpdate
+  receive("inventoryLevelUpdate")
 );
 
 router.post(
   "/inventory-levels/connect",
   rawBody,
   verifyWebhook,
-  webhookController.inventoryLevelConnect
+  receive("inventoryLevelConnect")
 );
 
 router.post(
   "/inventory-levels/disconnect",
   rawBody,
   verifyWebhook,
-  webhookController.inventoryLevelDisconnect
+  receive("inventoryLevelDisconnect")
 );
 
 router.post(
   "/collections/update",
   rawBody,
   verifyWebhook,
-  webhookController.collectionsUpdate
+  receive("collectionsUpdate")
 );
 
 // Shopify Product Events are configured in shopify.app.toml rather than via
@@ -70,7 +70,7 @@ router.post(
   "/events/product",
   rawBody,
   verifyWebhook,
-  webhookController.productEvent
+  receive("productEvent")
 );
 
 /* Sales. Both cache the order; only orders/create queues it for the source. */
@@ -78,19 +78,19 @@ router.post(
   "/orders/create",
   rawBody,
   verifyWebhook,
-  webhookController.ordersCreate
+  receive("ordersCreate")
 );
 
 router.post(
   "/orders/updated",
   rawBody,
   verifyWebhook,
-  webhookController.ordersUpdated
+  receive("ordersUpdated")
 );
 
 /* Mandatory privacy webhooks, configured in the Partner Dashboard. */
-router.post("/customers/data_request",rawBody,verifyWebhook,webhookController.customersDataRequest);
-router.post("/customers/redact",rawBody,verifyWebhook,webhookController.customersRedact);
-router.post("/shop/redact",rawBody,verifyWebhook,webhookController.shopRedact);
+router.post("/customers/data_request",rawBody,verifyWebhook,receive("customersDataRequest"));
+router.post("/customers/redact",rawBody,verifyWebhook,receive("customersRedact"));
+router.post("/shop/redact",rawBody,verifyWebhook,receive("shopRedact"));
 
 module.exports = router;

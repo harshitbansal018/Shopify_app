@@ -131,6 +131,67 @@
           </footer>
         </fieldset>
       </section>
+
+      <section class="panel notify" id="source-notify-panel" data-connection="<%= current.id %>">
+        <header class="settings__head">
+          <div class="settings__who">
+            <span class="settings__eyebrow">Email notifications for</span>
+            <h2 class="settings__store"><%= current.destination.store_name || current.destination.shop_domain %></h2>
+          </div>
+        </header>
+
+        <fieldset class="settings__controls" <%= current.status !== "active" ? "disabled" : "" %>>
+          <div class="settings__group">
+            <p class="settings__hint" style="margin-bottom: 16px;">
+              Choose which notifications you receive for orders and settlements from this destination store. Tick a box to turn an email on and optionally set where it goes. Leave the email empty to send to the store owner.
+            </p>
+
+            <div class="notify__list">
+              <% (typeof emails !== "undefined" ? emails : []).forEach(function (email) {
+                var isChecked = (typeof notifications !== "undefined" && notifications && notifications[email.key]);
+                var emailVal = (typeof notifications !== "undefined" && notifications && notifications['email_to_' + email.key]) || '';
+              %>
+                <div class="notify__item" style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <label style="display: inline-flex; align-items: center; gap: 10px; margin: 0; cursor: pointer;">
+                      <input
+                        type="checkbox"
+                        name="<%= email.key %>"
+                        class="notify-row-toggle"
+                        data-target="source-email-wrapper-<%= email.key %>"
+                        <%= isChecked ? "checked" : "" %>>
+                      <span class="notify__label" style="font-weight: 600;">
+                        <%= email.key === "order_created" ? "Order created" : email.label %>
+                      </span>
+                    </label>
+
+                    <div id="source-email-wrapper-<%= email.key %>" class="notify-email-row" style="display: <%= isChecked ? 'inline-flex' : 'none' %>; align-items: center; gap: 8px;">
+                      <label style="margin: 0; font-size: 12px; color: var(--p-color-text-subdued); white-space: nowrap;">Send to:</label>
+                      <input
+                        class="field__input field__input--compact"
+                        type="email"
+                        name="email_to_<%= email.key %>"
+                        style="width: 250px;"
+                        placeholder="<%= (typeof store !== 'undefined' && store && (store.notification_email || store.email)) ? (store.notification_email || store.email) : 'store-owner@email.com' %>"
+                        value="<%= emailVal %>">
+                    </div>
+                  </div>
+
+                  <span class="notify__hint" style="margin-left: 26px; margin-top: -2px;">
+                    <%= email.key === "order_created"
+                      ? "Emails you when this destination store sells your products, so you know there is an order to ship."
+                      : email.hint %> (Leave email empty to send to store owner).
+                  </span>
+                </div>
+              <% }); %>
+            </div>
+          </div>
+
+          <footer class="settings__foot">
+            <button class="btn btn--primary" id="save-source-notifications" type="button">Save notifications</button>
+          </footer>
+        </fieldset>
+      </section>
     <% } %>
   </main>
 
@@ -154,6 +215,70 @@
       syncTaxes.addEventListener("change", showTaxRate);
       showMode();
       showTaxRate();
+
+      var notifyPanel = document.getElementById("source-notify-panel");
+      var saveNotifyBtn = document.getElementById("save-source-notifications");
+
+      if (notifyPanel) {
+        notifyPanel.querySelectorAll(".notify-row-toggle").forEach(function (chk) {
+          chk.addEventListener("change", function () {
+            var targetWrapper = document.getElementById(chk.dataset.target);
+            if (targetWrapper) {
+              targetWrapper.style.display = chk.checked ? "inline-flex" : "none";
+              if (chk.checked) {
+                var inp = targetWrapper.querySelector('input[type="email"]');
+                if (inp) inp.focus();
+              }
+            }
+          });
+        });
+      }
+
+      if (notifyPanel && saveNotifyBtn) {
+        saveNotifyBtn.addEventListener("click", async function () {
+          var errorBox = document.getElementById("shipping-error");
+          errorBox.hidden = true;
+          saveNotifyBtn.disabled = true;
+          saveNotifyBtn.textContent = "Saving…";
+
+          var notifications = {};
+          var emailsTo = {};
+
+          Array.prototype.slice.call(
+            notifyPanel.querySelectorAll('.notify-row-toggle')
+          ).forEach(function (input) {
+            notifications[input.name] = input.checked;
+            if (input.checked) {
+              var emailInp = notifyPanel.querySelector('input[name="email_to_' + input.name + '"]');
+              emailsTo['email_to_' + input.name] = emailInp ? emailInp.value.trim() : null;
+            } else {
+              emailsTo['email_to_' + input.name] = null;
+            }
+          });
+
+          try {
+            var response = await window.appFetch("/settings/source-notifications", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                connection_id: notifyPanel.dataset.connection,
+                notifications: notifications,
+                emails_to: emailsTo
+              }),
+              busy: saveNotifyBtn
+            });
+            var data = await response.json().catch(function () { return {}; });
+            if (!response.ok) throw new Error(data.error || "Request failed");
+            window.appToast("Notification settings saved");
+          } catch (err) {
+            errorBox.textContent = err.message;
+            errorBox.hidden = false;
+          } finally {
+            saveNotifyBtn.disabled = false;
+            saveNotifyBtn.textContent = "Save notifications";
+          }
+        });
+      }
 
       document.getElementById("save-shipping").addEventListener("click", async function (event) {
         var button = event.currentTarget;

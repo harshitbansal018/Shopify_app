@@ -455,6 +455,22 @@ exports.getSettings = async (req, res) => {
     if (!req.store.store_type) return renderStoreType(req, res);
     if (!destinationOnly(req, res)) return;
 
+    if (req.store && !req.store.email && req.store.access_token) {
+      try {
+        const shopify = require("../services/shopify");
+        const data = await shopify.forShop(req.store.shop_domain, {
+          query: "query ShopEmail { shop { email } }",
+        });
+        const email = String((data && data.shop && data.shop.email) || "").trim();
+        if (email) {
+          await storeModel.setEmail(req.store.id, email);
+          req.store.email = email;
+        }
+      } catch (err) {
+        // Shopify lookup is best-effort
+      }
+    }
+
     // All of them, for the dropdown; settings for just the one on screen.
     const connections = await connectionModel.listForDestination(req.storeId);
     const current = pickConnection(connections, req.query.connection);
@@ -496,7 +512,7 @@ exports.getSettings = async (req, res) => {
       notifications,
       sourceSettings,
       shippingPolicy,
-      emails: notificationSettingsModel.EMAILS,
+      emails: notificationSettingsModel.EMAILS.filter((e) => e.to === "destination"),
       productFields: syncSettingsModel.PRODUCT_FIELDS,
       variantFields: syncSettingsModel.VARIANT_FIELDS,
       labels: FIELD_LABELS,
@@ -516,8 +532,7 @@ exports.getSettings = async (req, res) => {
  * product on the connection so a changed sync field reaches the store, and
  * turning an email on or off changes nothing about any product.
  *
- * Destination-only, including the switches for emails that go to the SOURCE.
- * That is the product decision: the destination runs these settings for both.
+ * Destination-only; each store manages the emails it receives.
  */
 exports.postNotifications = async (req, res) => {
   if (!destinationOnly(req, res)) return;
@@ -541,13 +556,23 @@ exports.postNotifications = async (req, res) => {
       });
     }
 
+    const notificationEmail = req.body.notification_email === undefined
+      ? undefined
+      : notificationSettingsModel.normalizeEmail(req.body.notification_email);
+
     const saved = await notificationSettingsModel.save(
       connectionId,
-      req.body.notifications || {}
+      req.body.notifications || {}, req.body.emails_to || {},
+      { recipientRole: "destination" }
     );
+
+    if (notificationEmail !== undefined) {
+      await storeModel.setNotificationEmail(req.storeId, notificationEmail);
+    }
 
     return res.json({ ok: true, notifications: saved });
   } catch (err) {
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
     console.error("Saving email settings failed:", err.message);
     return res.status(500).json({ error: "Could not save those email settings." });
   }

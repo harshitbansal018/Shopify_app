@@ -149,6 +149,9 @@ const PORT = process.env.PORT || 3000;
   // Sends queued notification emails. Its own loop, so a slow or unreachable
   // mail server never holds up an order or a product push.
   require("./services/notifications").startOutbox();
+  // Deliveries have already been persisted before Shopify receives HTTP 200.
+  // Resume pending work and retry transient processing failures after restart.
+  require("./services/webhookInbox").start();
 
   // Existing installations do not revisit OAuth when a new webhook topic is
   // added. Reconcile them on boot so inventory updates start flowing without

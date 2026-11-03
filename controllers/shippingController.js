@@ -3,6 +3,8 @@ const productMappingModel = require("../models/productMappingModel");
 const shippingPolicyModel = require("../models/shippingPolicyModel");
 const sourceConnectionSettingsModel = require("../models/sourceConnectionSettingsModel");
 const shippingSync = require("../services/shippingSync");
+const notificationSettingsModel = require("../models/notificationSettingsModel");
+const storeModel = require("../models/storeModel");
 
 function sourceOnly(req, res) {
   if (req.store.store_type !== "source") {
@@ -24,16 +26,33 @@ exports.getShipping = async (req, res) => {
   if (!sourceOnly(req, res)) return;
 
   try {
+    if (req.store && !req.store.email && req.store.access_token) {
+      try {
+        const shopify = require("../services/shopify");
+        const data = await shopify.forShop(req.store.shop_domain, {
+          query: "query ShopEmail { shop { email } }",
+        });
+        const email = String((data && data.shop && data.shop.email) || "").trim();
+        if (email) {
+          await storeModel.setEmail(req.store.id, email);
+          req.store.email = email;
+        }
+      } catch (err) {
+        // Shopify lookup is best-effort
+      }
+    }
+
     const connections = await connectionModel.listForSource(req.storeId);
     const current = pickConnection(connections, req.query.connection);
-    const [policy, sourceSettings] = current
+    const [policy, sourceSettings, notifications] = current
       ? await Promise.all([
           shippingPolicyModel.forConnection(current.id, {
             currency: current.destination.currency,
           }),
           sourceConnectionSettingsModel.forConnection(current.id),
+          notificationSettingsModel.forConnection(current.id),
         ])
-      : [null, null];
+      : [null, null, null];
 
     res.render("source/shipping", {
       shop: req.shop,
@@ -43,6 +62,8 @@ exports.getShipping = async (req, res) => {
       current,
       policy,
       sourceSettings,
+      notifications,
+      emails: notificationSettingsModel.EMAILS.filter((e) => e.to === "source"),
     });
   } catch (error) {
     console.error("Shipping settings screen failed:", error.message);
@@ -100,5 +121,46 @@ exports.postShipping = async (req, res) => {
     }
     console.error("Saving shipping settings failed:", error.message);
     return res.status(500).json({ error: "Could not save shipping settings." });
+  }
+};
+
+exports.postSourceNotifications = async (req, res) => {
+  if (!sourceOnly(req, res)) return;
+
+  const connectionId = Number(req.body.connection_id);
+
+  try {
+    const mine = await connectionModel.listForSource(req.storeId);
+    const connection = mine.find((item) => item.id === connectionId);
+
+    if (!connection) {
+      return res.status(404).json({ error: "Connection not found." });
+    }
+
+    if (connection.status !== "active") {
+      return res.status(409).json({
+        error: "This destination store is paused. Resume it before changing settings.",
+      });
+    }
+
+    const notificationEmail = req.body.notification_email === undefined
+      ? undefined
+      : notificationSettingsModel.normalizeEmail(req.body.notification_email);
+
+    const saved = await notificationSettingsModel.save(
+      connectionId,
+      req.body.notifications || {}, req.body.emails_to || {},
+      { recipientRole: "source" }
+    );
+
+    if (notificationEmail !== undefined) {
+      await storeModel.setNotificationEmail(req.storeId, notificationEmail);
+    }
+
+    return res.json({ ok: true, notifications: saved, notification_email: notificationEmail });
+  } catch (err) {
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    console.error("Saving source email settings failed:", err.message);
+    return res.status(500).json({ error: "Could not save those email settings." });
   }
 };

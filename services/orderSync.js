@@ -127,22 +127,51 @@ async function queueForSources(destinationStoreId, order) {
   let queued = 0;
 
   for (const [connectionId, group] of byConnection) {
+    const existing = await orderMappingModel.findByPair(connectionId, order.id);
+    const savedTerms = existing && existing.supplier_terms_snapshot;
+    const [currentPolicy, currentSettings] = await Promise.all([
+      shippingPolicyModel.forConnection(connectionId, { currency: order.currency || null }),
+      sourceConnectionSettingsModel.forConnection(connectionId),
+    ]);
+    // Existing orders retain their supplier terms. A genuinely new line takes
+    // its price when first seen; quantity edits use that line's saved price.
+    const terms = savedTerms || {
+      prices: {},
+      policy: existing ? (existing.shipping_policy_snapshot || { mode: "disabled" }) : currentPolicy,
+      settings: existing ? {
+        sync_taxes: existing.source_tax_total != null,
+        tax_rate_percent: Number(existing.source_products_total) > 0
+          ? Number(existing.source_tax_total || 0) / Number(existing.source_products_total) * 100 : 0,
+      } : currentSettings,
+    };
+    const currentSubtotal = group.reduce((sum, line) => sum + (money(line.source_price) || 0) * line.quantity, 0);
+    // Older records have only an aggregate supplier amount. Preserve it when
+    // establishing their first snapshot; exact historical unit prices were
+    // never stored, so allocate that recorded amount across the existing lines.
+    const legacySubtotal = existing && !savedTerms && group.length === existing.line_count
+      ? money(existing.source_products_total ?? (Number(existing.source_total) - Number(existing.source_shipping_total || 0) - Number(existing.source_tax_total || 0)))
+      : null;
+    const legacyUnits = group.reduce((sum, line) => sum + Number(line.quantity), 0);
+    for (const line of group) {
+      const key = String(line.line_id);
+      if (!Object.hasOwn(terms.prices, key)) {
+        terms.prices[key] = legacySubtotal !== null
+          ? (currentSubtotal > 0 ? Number(line.source_price || 0) * legacySubtotal / currentSubtotal : legacySubtotal / (legacyUnits || 1))
+          : (money(line.source_price) || 0);
+      }
+    }
     // Totals for the row, so a screen can show what the shopper paid beside
     // what the source is owed without re-reading every line.
     const sourceTotal = group.reduce(
-      (sum, line) => sum + (money(line.source_price) || 0) * line.quantity,
+      (sum, line) => sum + terms.prices[String(line.line_id)] * line.quantity,
       0
     );
     const destinationTotal = group.reduce(
       (sum, line) => sum + (money(line.destination_price) || 0) * line.quantity,
       0
     );
-    const [policy, sourceSettings] = await Promise.all([
-      shippingPolicyModel.forConnection(connectionId, {
-        currency: order.currency || null,
-      }),
-      sourceConnectionSettingsModel.forConnection(connectionId),
-    ]);
+    const policy = terms.policy;
+    const sourceSettings = terms.settings;
     // This is already included in each synced unit price; it is recorded here
     // only to explain the supplier's landed amount, not as checkout shipping.
     const shippingTotal = shippingChargeForPolicy(policy, group);
@@ -156,6 +185,7 @@ async function queueForSources(destinationStoreId, order) {
       // This app-side supplier amount is deliberately separate from the tax
       // Shopify calculates for the retail customer at destination checkout.
       sourceTaxTotal,
+      supplierTermsSnapshot: terms,
       customerProductsTotal: money(destinationTotal),
       // Shopify can discount/merge checkout shipping and tax. Until its order
       // allocation identifies this profile, do not pretend the nominal source
@@ -658,6 +688,18 @@ const ORDER_CANCEL_MUTATION = `
   }
 `;
 
+const CANCELLATION_ORDER_QUERY = `
+  query CancellationOrder($id: ID!) {
+    order(id: $id) {
+      id cancelledAt
+      lineItems(first: 250) {
+        nodes { id currentQuantity }
+        pageInfo { hasNextPage }
+      }
+    }
+  }
+`;
+
 /**
  * Cancel the destination's own order because the source says it cannot ship.
  *
@@ -666,18 +708,55 @@ const ORDER_CANCEL_MUTATION = `
  * than the write.
  *
  * Shopify runs this as a background job, so a clean return means "accepted",
- * not "done". The destination's own orders/updated webhook is what confirms
- * it happened, which is also what keeps the two in step.
+ * not "done". Later worker rounds poll the destination order and only mark
+ * completion when Shopify reports that it is cancelled.
  *
  * Irreversible, so it is guarded twice: queueCancellation only fires on
  * 'none', and the attempt counter stops a loop.
  */
 async function cancelOne(mapping) {
+  let submitted = false;
   try {
+    const orderId = `gid://shopify/Order/${mapping.destination_shopify_order_id}`;
+    const current = await shopifyRequest.forShop(mapping.destination_shop_domain, {
+      query: CANCELLATION_ORDER_QUERY, variables: { id: orderId },
+    });
+    const order = current.order;
+    if (!order) throw new Error("The destination order could not be found.");
+    if (order.cancelledAt) {
+      await orderMappingModel.markCancelSent(mapping.id);
+      return { ok: true };
+    }
+    // A returned job only acknowledges the request. Keep polling the order;
+    // do not resubmit the irreversible mutation while Shopify is processing it.
+    if (mapping.cancel_status === "processing") {
+      const requested = new Date(mapping.cancel_requested_at).getTime();
+      if (Number.isFinite(requested) && Date.now() - requested > 24 * 60 * 60 * 1000) {
+        await orderMappingModel.markCancelReview(mapping.id, "Shopify has not confirmed cancellation. Review the cancellation job and refund in Shopify before retrying.");
+        return { ok: false, review: true };
+      }
+      return { ok: false, pending: true };
+    }
+
+    const owned = await orderLineItemModel.destinationLinesForConnection(mapping.destination_order_id, mapping.connection_id);
+    const ownedIds = new Set(owned.map((line) => String(line.shopify_line_item_id)));
+    const activeLines = order.lineItems?.nodes?.filter((line) => Number(line.currentQuantity) > 0) || [];
+    const shipments = await orderShipmentModel.listForMapping(mapping.id);
+    if (!activeLines.length || order.lineItems?.pageInfo?.hasNextPage ||
+        activeLines.some((line) => !ownedIds.has(numericId(line.id))) ||
+        shipments.some((shipment) => shipment.push_status !== "cancelled")) {
+      const reason = "This order contains other items or a shipment. Review and refund only this supplier's unshipped items in Shopify; the full order has not been cancelled.";
+      await orderMappingModel.markCancelReview(mapping.id, reason);
+      return { ok: false, review: true, reason };
+    }
+    // Persist an uncertain request before sending it: if Shopify accepts it
+    // but the connection drops, later rounds poll instead of refunding twice.
+    await orderMappingModel.markCancelProcessing(mapping.id, null);
+    submitted = true;
     const data = await shopifyRequest.forShop(mapping.destination_shop_domain, {
       query: ORDER_CANCEL_MUTATION,
       variables: {
-        orderId: `gid://shopify/Order/${mapping.destination_shopify_order_id}`,
+        orderId,
         // OTHER, not CUSTOMER: the shopper did not cancel this, the supplier
         // did, and recording it as the customer's doing would be a lie in the
         // destination's own reporting.
@@ -703,9 +782,13 @@ async function cancelOne(mapping) {
       return { ok: false, reason };
     }
 
-    await orderMappingModel.markCancelSent(mapping.id);
-    return { ok: true };
+    if (!result.job?.id) throw new Error("Shopify did not acknowledge the cancellation job.");
+    await orderMappingModel.markCancelProcessing(mapping.id, result.job.id);
+    return { ok: false, pending: true };
   } catch (err) {
+    // A transient polling failure must retain the job state so the next round
+    // continues polling rather than issuing another cancellation request.
+    if (submitted || mapping.cancel_status === "processing") return { ok: false, pending: true, reason: err.message };
     await orderMappingModel.markCancelFailed(mapping.id, err.message);
     return { ok: false, reason: err.message };
   }
@@ -720,7 +803,7 @@ async function pushCancellations({ limit = 50 } = {}) {
     const result = await cancelOne(mapping);
 
     if (result.ok) totals.cancelled += 1;
-    else totals.failed += 1;
+    else if (!result.pending && !result.review) totals.failed += 1;
   }
 
   return totals;

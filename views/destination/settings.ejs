@@ -277,9 +277,7 @@
 
           <div class="settings__group">
             <p class="settings__hint">
-              You decide every email on this connection &mdash; including the
-              ones that go to the source store. Each one says whose inbox it
-              lands in.
+              Choose which notifications you receive for orders and fulfilment from this source store. Tick a box to turn an email on and optionally set where it goes. Leave the email empty to send to the store owner.
             </p>
 
             <%# The plan's allowance is for the whole store, every supplier
@@ -292,26 +290,47 @@
             <% } %>
 
             <div class="notify__list">
-              <% emails.forEach(function (email) { %>
-                <label class="notify__item">
-                  <input
-                    type="checkbox"
-                    name="<%= email.key %>"
-                    <%= notifications[email.key] ? "checked" : "" %>>
-                  <span class="notify__text">
-                    <span class="notify__label">
-                      <%= email.label %>
-                      <%# Named, not just "source": the destination is choosing
-                          for someone else's inbox, so say whose. %>
-                      <span class="notify__to notify__to--<%= email.to %>">
-                        to <%= email.to === "source"
-                          ? (connection.source.store_name || connection.source.shop_domain)
-                          : "you" %>
+              <% emails.forEach(function (email) {
+                var isChecked = notifications[email.key];
+                var emailVal = (typeof notifications !== 'undefined' && notifications && notifications['email_to_' + email.key]) || '';
+              %>
+                <div class="notify__item" style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <label style="display: inline-flex; align-items: center; gap: 10px; margin: 0; cursor: pointer;">
+                      <input
+                        type="checkbox"
+                        name="<%= email.key %>"
+                        class="notify-row-toggle"
+                        data-target="dest-email-wrapper-<%= email.key %>"
+                        <%= isChecked ? "checked" : "" %>>
+                      <span class="notify__label" style="font-weight: 600;">
+                        <%= email.label %>
+                        <%# Named, not just "source": the destination is choosing
+                            for someone else's inbox, so say whose. %>
+                        <span class="notify__to notify__to--<%= email.to %>">
+                          to <%= email.to === "source"
+                            ? (connection.source.store_name || connection.source.shop_domain)
+                            : "you" %>
+                        </span>
                       </span>
-                    </span>
-                    <span class="notify__hint"><%= email.hint %></span>
+                    </label>
+
+                    <div id="dest-email-wrapper-<%= email.key %>" class="notify-email-row" style="display: <%= isChecked ? 'inline-flex' : 'none' %>; align-items: center; gap: 8px;">
+                      <label style="margin: 0; font-size: 12px; color: var(--p-color-text-subdued); white-space: nowrap;">Send to:</label>
+                      <input
+                        class="field__input field__input--compact"
+                        type="email"
+                        name="email_to_<%= email.key %>"
+                        style="width: 250px;"
+                        placeholder="<%= (typeof store !== 'undefined' && store && (store.notification_email || store.email)) ? (store.notification_email || store.email) : 'store-owner@email.com' %>"
+                        value="<%= emailVal %>">
+                    </div>
+                  </div>
+
+                  <span class="notify__hint" style="margin-left: 26px; margin-top: -2px;">
+                    <%= email.hint %> (Leave email empty to send to store owner).
                   </span>
-                </label>
+                </div>
               <% }); %>
             </div>
           </div>
@@ -512,6 +531,19 @@
       var notifyPanel = document.querySelector(".notify");
 
       if (notifyPanel) {
+        notifyPanel.querySelectorAll(".notify-row-toggle").forEach(function (chk) {
+          chk.addEventListener("change", function () {
+            var targetWrapper = document.getElementById(chk.dataset.target);
+            if (targetWrapper) {
+              targetWrapper.style.display = chk.checked ? "inline-flex" : "none";
+              if (chk.checked) {
+                var inp = targetWrapper.querySelector('input[type="email"]');
+                if (inp) inp.focus();
+              }
+            }
+          });
+        });
+
         notifyPanel.querySelector(".save-notifications")
           .addEventListener("click", async function (event) {
             var button = event.currentTarget;
@@ -523,11 +555,18 @@
             // Every switch by name, ticked or not. An unticked box has to be
             // sent as false: the server reads a missing key as "on".
             var notifications = {};
+            var emailsTo = {};
 
             Array.prototype.slice.call(
-              notifyPanel.querySelectorAll('input[type="checkbox"]')
+              notifyPanel.querySelectorAll('.notify-row-toggle')
             ).forEach(function (input) {
               notifications[input.name] = input.checked;
+              if (input.checked) {
+                var emailInp = notifyPanel.querySelector('input[name="email_to_' + input.name + '"]');
+                emailsTo['email_to_' + input.name] = emailInp ? emailInp.value.trim() : null;
+              } else {
+                emailsTo['email_to_' + input.name] = null;
+              }
             });
 
             try {
@@ -536,7 +575,8 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   connection_id: notifyPanel.dataset.connection,
-                  notifications: notifications
+                  notifications: notifications,
+                  emails_to: emailsTo
                 }),
                 busy: button
               });

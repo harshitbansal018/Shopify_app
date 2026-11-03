@@ -453,7 +453,7 @@ async function downgradeOptions(store, fit, targetPlan) {
  * All or nothing: the model re-counts inside a lock and refuses choices that
  * would not be enough, with `error` saying how many more are needed.
  */
-async function applyDowngrade(store, targetPlan, { unsync = [], pause = [] }) {
+async function applyDowngrade(store, targetPlan, { unsync = [], pause = [], dryRun = false }) {
   const limits = planModel.limitsOf(targetPlan);
 
   const result = await usageModel.applyDowngradeChoices(store.id, {
@@ -461,6 +461,7 @@ async function applyDowngrade(store, targetPlan, { unsync = [], pause = [] }) {
     pause,
     productLimit: limits.products,
     sourceLimit: limits.sources,
+    dryRun,
   });
 
   if (!result.ok) {

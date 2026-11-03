@@ -16,7 +16,7 @@ const {
   postSettings,
   postNotifications,
 } = require("../controllers/storeController");
-const { getShipping, postShipping } = require("../controllers/shippingController");
+const { getShipping, postShipping, postSourceNotifications } = require("../controllers/shippingController");
 
 // Every route here is behind a verified session token, so req.storeId is the
 // only store this request may touch.
@@ -37,6 +37,7 @@ router.post("/settings", (req, res) =>
 // One connection's email switches. Separate from /settings because saving
 // them must not re-queue every product the way a sync change does.
 router.post("/settings/notifications", postNotifications);
+router.post("/settings/source-notifications", postSourceNotifications);
 // Backward compatibility for old bookmarks and already-rendered clients.
 // New UI lives under /settings; the POST remains valid during deployments.
 router.get("/shipping", (req, res) => {

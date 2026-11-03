@@ -38,7 +38,7 @@
       </span>
     </header>
 
-    <% if (order.cancel_status === "failed" && order.cancel_error) { %>
+    <% if (["failed", "manual_review"].includes(order.cancel_status) && order.cancel_error) { %>
       <p class="notice notice--error">
         The supplier cannot supply this, but your order could not be cancelled
         automatically &mdash; <%= order.cancel_error %>
@@ -227,7 +227,7 @@
                   It is spelled out because it moves the shopper's money. %>
               <% if (order.cancel_status === "cancelled") { %>
                 cancelled and refunded, because the source cancelled theirs
-              <% } else if (order.cancel_status === "failed") { %>
+              <% } else if (["failed", "manual_review"].includes(order.cancel_status)) { %>
                 could not be cancelled &mdash; <%= order.cancel_error %>
               <% } else { %>
                 being cancelled and refunded&hellip;

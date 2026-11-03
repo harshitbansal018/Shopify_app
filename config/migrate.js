@@ -102,6 +102,8 @@ const CREATE_STORES = `
     -- NULL means the role has not been decided yet.
     store_type    ENUM('source','destination') DEFAULT NULL,
     currency      VARCHAR(8) DEFAULT NULL,
+    email         VARCHAR(255) DEFAULT NULL,
+    notification_email VARCHAR(255) DEFAULT NULL,
 
     is_active     TINYINT(1) NOT NULL DEFAULT 1,
     installed_at  DATETIME DEFAULT NULL,
@@ -1341,6 +1343,7 @@ async function runMigrations() {
   await query(CREATE_PLANS);
   await query(CREATE_USER_MEMBERSHIPS);
   await query(CREATE_MEMBERSHIP_PAYMENTS);
+  await safeAlter("membership_payments.downgrade_choices", "ALTER TABLE membership_payments ADD COLUMN downgrade_choices JSON DEFAULT NULL");
   await seedPlans();
   // After store_connections: the foreign key needs its target to exist.
   await query(CREATE_SYNC_SETTINGS);
@@ -1356,6 +1359,13 @@ async function runMigrations() {
   await query(CREATE_ORDER_MAPPINGS);
   await addOrderShippingAccounting();
   await addSourceOrderStatus();
+  await safeAlter("order_mappings.supplier_terms_snapshot", "ALTER TABLE order_mappings ADD COLUMN supplier_terms_snapshot JSON DEFAULT NULL");
+  await safeAlter("order_mappings.cancel_job_id", "ALTER TABLE order_mappings ADD COLUMN cancel_job_id VARCHAR(255) DEFAULT NULL");
+  await safeAlter("order_mappings.cancel_requested_at", "ALTER TABLE order_mappings ADD COLUMN cancel_requested_at DATETIME DEFAULT NULL");
+  const cancelColumns = await query("SHOW COLUMNS FROM order_mappings LIKE 'cancel_status'");
+  if (!String(cancelColumns[0]?.Type || "").includes("manual_review")) {
+    await query("ALTER TABLE order_mappings MODIFY COLUMN cancel_status ENUM('none','pending','processing','manual_review','cancelled','failed') NOT NULL DEFAULT 'none'");
+  }
   await dropOrderPushColumns();
   await dropSourceOrderSettings();
   // After order_mappings and order_line_items: it points at both.
@@ -1370,10 +1380,32 @@ async function runMigrations() {
   await addStoreEmail();
   await addStoreOnboarding();
   await query(CREATE_NOTIFICATION_SETTINGS);
+  await addNotificationCustomEmails();
   await query(CREATE_EMAIL_OUTBOX);
   await query(CREATE_PRODUCT_ACTIVITY_LOGS);
   await backfillProductActivityLogs();
+  await query(CREATE_WEBHOOK_INBOX);
+  await safeAlter("webhook_inbox.idx_webhook_shop_status", "ALTER TABLE webhook_inbox ADD INDEX idx_webhook_shop_status (shop_domain, status, id)");
 }
+
+const CREATE_WEBHOOK_INBOX = `
+  CREATE TABLE IF NOT EXISTS webhook_inbox (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    dedupe_key CHAR(64) NOT NULL,
+    handler VARCHAR(64) NOT NULL,
+    shop_domain VARCHAR(255) NOT NULL,
+    topic VARCHAR(128) DEFAULT NULL,
+    payload JSON DEFAULT NULL,
+    status ENUM('pending','processing','completed') NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claimed_at DATETIME DEFAULT NULL,
+    error VARCHAR(512) DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_webhook_delivery (dedupe_key),
+    KEY idx_webhook_work (status, available_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`;
 
 
 /* ------------------------------------------------------------------ */
@@ -1503,6 +1535,10 @@ async function addStoreEmail() {
     "stores.email",
     "ALTER TABLE stores ADD COLUMN email VARCHAR(255) DEFAULT NULL"
   );
+  await safeAlter(
+    "stores.notification_email",
+    "ALTER TABLE stores ADD COLUMN notification_email VARCHAR(255) DEFAULT NULL"
+  );
 }
 
 /**
@@ -1516,6 +1552,26 @@ async function addStoreEmail() {
  * NULL means the app still opens on setup. A date means it opens on the
  * dashboard, whether the steps were finished or skipped.
  */
+
+async function addNotificationCustomEmails() {
+  await safeAlter(
+    "notification_settings.email_to_order_created",
+    "ALTER TABLE notification_settings ADD COLUMN email_to_order_created VARCHAR(255) DEFAULT NULL"
+  );
+  await safeAlter(
+    "notification_settings.email_to_order_updates",
+    "ALTER TABLE notification_settings ADD COLUMN email_to_order_updates VARCHAR(255) DEFAULT NULL"
+  );
+  await safeAlter(
+    "notification_settings.email_to_payout_destination",
+    "ALTER TABLE notification_settings ADD COLUMN email_to_payout_destination VARCHAR(255) DEFAULT NULL"
+  );
+  await safeAlter(
+    "notification_settings.email_to_payout_source",
+    "ALTER TABLE notification_settings ADD COLUMN email_to_payout_source VARCHAR(255) DEFAULT NULL"
+  );
+}
+
 async function addStoreOnboarding() {
   // Backfilled the first time the column appears, and only then -- which is
   // why this asks rather than leaning on safeAlter swallowing a duplicate.
@@ -1640,6 +1696,11 @@ const CREATE_NOTIFICATION_SETTINGS = `
     -- To the SOURCE: a payment the destination has recorded to it -- the
     -- settlement. (Named from when it went out on every fulfilment.)
     email_payout_source       TINYINT(1) NOT NULL DEFAULT 1,
+
+    email_to_order_created       VARCHAR(255) DEFAULT NULL,
+    email_to_order_updates       VARCHAR(255) DEFAULT NULL,
+    email_to_payout_destination  VARCHAR(255) DEFAULT NULL,
+    email_to_payout_source       VARCHAR(255) DEFAULT NULL,
 
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 

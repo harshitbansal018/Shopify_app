@@ -19,7 +19,10 @@ const dbPath = require.resolve(path.join(SERVER, "config/db.js"));
 const state = { shopStatus: 1, queries: [] };
 
 const fakeDb = {
-  pool: { query: async () => [[], []] },
+  pool: { query: async (sql, params) => {
+    state.queries.push([sql.replace(/\s+/g, " ").trim().slice(0, 60), params]);
+    return [[], []];
+  } },
   async query(sql, params) {
     state.queries.push([sql.replace(/\s+/g, " ").trim().slice(0, 60), params]);
 
@@ -160,10 +163,10 @@ function check(name, condition, detail) {
     check("valid HMAC -> 200", res.status === 200, `got ${res.status}`);
 
     await new Promise((r) => setTimeout(r, 60));
-    const sawStatusUpdate = state.queries.some(([sql]) =>
-      /UPDATE stores SET is_active = 0/.test(sql)
+    const savedDelivery = state.queries.some(([sql]) =>
+      /INSERT INTO webhook_inbox/.test(sql)
     );
-    check("valid HMAC deactivates the store", sawStatusUpdate,
+    check("valid HMAC saves a durable delivery before acknowledging", savedDelivery,
       JSON.stringify(state.queries.map((q) => q[0])));
 
     // Shopify Events sign the same raw body but their headers omit the X-
