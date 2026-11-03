@@ -281,6 +281,16 @@
           if (productRows && productRows.innerHTML.trim() !== data.rows.trim()) {
             productRows.innerHTML = data.rows;
             if (checkAll) checkAll.checked = false;
+            // Re-apply saved cross-page selection after live row refresh.
+            (function () {
+              var saved = loadSelection();
+              if (saved.length) {
+                var savedSet = new Set(saved.map(function (x) { return x.id || x; }));
+                rowChecks().forEach(function (c) {
+                  if (savedSet.has(c.value)) c.checked = true;
+                });
+              }
+            })();
             refresh();
             return true;
           }
@@ -306,6 +316,7 @@
 
       if (storeFilterControl) {
         storeFilterControl.addEventListener("change", function () {
+          clearSelection();
           currentStore = storeFilterControl.value;
           window.appNavigate(productsUrl(currentFilter));
         });
@@ -319,41 +330,80 @@
         return rowChecks().filter(function (c) { return c.checked; });
       }
 
+      /* ── Cross-page selection store ───────────────────────────────────────
+         Stored as [{id, allowed, synced}] so off-page items can participate
+         in bulk actions even when their checkboxes are not rendered.
+      ─────────────────────────────────────────────────────────────────────── */
+      var SELECTION_KEY = "source_product_selection";
+
+      function loadSelection() {
+        try {
+          var raw = sessionStorage.getItem(SELECTION_KEY);
+          return raw ? JSON.parse(raw) : [];
+        } catch (_) { return []; }
+      }
+
       /**
-       * One entry per ticked product. Already-shared products stay eligible so
-       * they can be offered to a newly connected destination later. The
-       * server's per-connection upsert keeps an existing share idempotent.
+       * Rebuild the global selection: keep off-page entries, replace entries
+       * for products that ARE on this page with their current checked state.
+       */
+      function saveSelection() {
+        var visibleIds = new Set(rowChecks().map(function (c) { return c.value; }));
+        var offPage = loadSelection().filter(function (x) { return !visibleIds.has(x.id); });
+        var thisPage = ticked().map(function (c) {
+          return { id: c.value, allowed: Number(c.dataset.allowed || 0), synced: Number(c.dataset.synced || 0), allocated: Number(c.dataset.allocated || 0) };
+        });
+        try { sessionStorage.setItem(SELECTION_KEY, JSON.stringify(offPage.concat(thisPage))); } catch (_) {}
+      }
+
+      function clearSelection() {
+        try { sessionStorage.removeItem(SELECTION_KEY); } catch (_) {}
+      }
+
+      /** All selected entries across every page (visible + off-page). */
+      function globalSelection() {
+        var visibleIds = new Set(rowChecks().map(function (c) { return c.value; }));
+        var offPage = loadSelection().filter(function (x) { return !visibleIds.has(x.id); });
+        var thisPage = ticked().map(function (c) {
+          return { id: c.value, allowed: Number(c.dataset.allowed || 0), synced: Number(c.dataset.synced || 0), allocated: Number(c.dataset.allocated || 0) };
+        });
+        return offPage.concat(thisPage);
+      }
+
+      /**
+       * One entry per selected product across ALL pages. Already-shared
+       * products stay eligible so they can be offered to new destinations.
        */
       function selections() {
-        return ticked()
-          .filter(function (c) { return Number(c.dataset.allowed) === 0; })
-          .map(function (c) {
-            return { source_product_id: c.value, variant_ids: null };
-          });
+        return globalSelection()
+          .filter(function (x) { return x.allowed === 0; })
+          .map(function (x) { return { source_product_id: x.id, variant_ids: null }; });
       }
 
       function sharedProductIds() {
-        return ticked()
-          .filter(function (c) { return Number(c.dataset.allowed) > 0; })
-          .map(function (c) { return Number(c.value); });
+        return globalSelection()
+          .filter(function (x) { return x.allowed > 0; })
+          .map(function (x) { return Number(x.id); });
       }
 
-      function refresh() {
+            function refresh() {
         var checks = rowChecks();
-        var count = 0;
+        var visibleCount = 0;
 
         checks.forEach(function (c) {
           c.closest("tr").classList.toggle("is-selected", c.checked);
-          if (c.checked) count++;
+          if (c.checked) visibleCount++;
         });
 
         if (checkAll) {
-          checkAll.checked = count > 0 && count === checks.length;
-          checkAll.indeterminate = count > 0 && count < checks.length;
+          checkAll.checked = visibleCount > 0 && visibleCount === checks.length;
+          checkAll.indeterminate = visibleCount > 0 && visibleCount < checks.length;
         }
 
-        bulkbar.hidden = count === 0;
-        bulkCount.textContent = count + " selected";
+        // Total includes items selected on other pages.
+        var total = globalSelection().length;
+        bulkbar.hidden = total === 0;
+        bulkCount.textContent = total + " selected";
 
         if (allowButton) {
           var shareable = selections().length;
@@ -368,8 +418,19 @@
         }
       }
 
+      // Restore any saved cross-page selection on page load.
+      (function restoreSelection() {
+        var saved = loadSelection();
+        if (!saved.length) return;
+        var savedSet = new Set(saved.map(function (x) { return x.id; }));
+        rowChecks().forEach(function (c) {
+          if (savedSet.has(c.value)) c.checked = true;
+        });
+        refresh();
+      })();
+
       if (productRows) productRows.addEventListener("change", function (event) {
-        if (event.target.matches(".row-check")) refresh();
+        if (event.target.matches(".row-check")) { refresh(); saveSelection(); }
       });
 
       if (checkAll) {
@@ -378,11 +439,13 @@
             if (!c.disabled) c.checked = checkAll.checked;
           });
           refresh();
+          saveSelection();
         });
       }
 
       bulkClear.addEventListener("click", function () {
         rowChecks().forEach(function (c) { c.checked = false; });
+        clearSelection();
         refresh();
       });
 
@@ -415,6 +478,7 @@
           }, button);
           if (destinationPicker) window.appClose(destinationPicker);
           window.appToast("Allowed on " + data.destinations + " destination store(s)");
+          clearSelection();
           await refreshProductsLive(true);
         } catch (err) {
           // The last destination may have paused after this page loaded. The
@@ -439,9 +503,9 @@
           return window.appNavigate("/stores?returnTo=" + returnTo);
         }
 
-        var unallocated = ticked().filter(function (c) {
-          return Number(c.dataset.allowed) === 0 &&
-            Number(c.dataset.allocated || 0) <= 0;
+        var unallocated = globalSelection().filter(function (x) {
+          return Number(x.allowed) === 0 &&
+            Number(x.allocated || 0) <= 0;
         });
         if (unallocated.length > 0) {
           fail(pageError, "Allocate the inventory for this product.");
@@ -479,6 +543,7 @@
               product_ids: productIds,
               connection_ids: currentStore ? [Number(currentStore)] : []
             }, unshareButton);
+            clearSelection();
             window.appToast(
               data.revoked + " share(s) made inactive; " +
               data.returned + " unit(s) returned"
@@ -496,10 +561,10 @@
 
       if (destinationShare) {
         destinationShare.addEventListener("click", function () {
-          var unallocated = ticked().filter(function (c) {
-            return Number(c.dataset.allowed) === 0 &&
-              Number(c.dataset.allocated || 0) <= 0;
-          });
+          var unallocated = globalSelection().filter(function (x) {
+          return Number(x.allowed) === 0 &&
+            Number(x.allocated || 0) <= 0;
+        });
           if (unallocated.length > 0) {
             if (destinationError) fail(destinationError, "Allocate the inventory for this product.");
             fail(pageError, "Allocate the inventory for this product.");
@@ -522,15 +587,15 @@
       }
 
       bulkDelete.addEventListener("click", async function () {
-        var rows = ticked();
-        if (!rows.length) return;
+        var items = globalSelection();
+        if (!items.length) return;
 
-        var synced = rows.filter(function (c) { return Number(c.dataset.synced) > 0; }).length;
+        var synced = items.filter(function (x) { return Number(x.synced) > 0; }).length;
 
         // This removes products from OTHER merchants' stores, so say so in as
         // many words before doing it.
         if (!(await window.appConfirm(
-          "Delete " + rows.length + " product(s)?\n\n" +
+          "Delete " + items.length + " product(s)?\n\n" +
           (synced
             ? synced + " of them are live in destination stores and will be " +
               "PERMANENTLY DELETED there, along with their variants and images.\n\n"
@@ -548,13 +613,14 @@
         // and firing them all at once would trip Shopify's rate limits.
         var done = 0;
         try {
-          for (var i = 0; i < rows.length; i++) {
-            await post("/products/" + rows[i].value + "/delete", {}, bulkDelete);
+          for (var i = 0; i < items.length; i++) {
+            await post("/products/" + items[i].id + "/delete", {}, bulkDelete);
             done++;
           }
+          clearSelection();
           window.appToast("Deleted " + done + " product(s)");
         } catch (err) {
-          window.appToast("Deleted " + done + " of " + rows.length + " product(s)");
+          window.appToast("Deleted " + done + " of " + items.length + " product(s)");
           fail(pageError, err.message);
         }
         window.appNavigate(<%- json(pager.href(1)) %>);

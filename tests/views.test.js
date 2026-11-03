@@ -1800,6 +1800,9 @@ const STORE_ROW = {
     check("title cannot be turned off",
       /name="title"[^>]*disabled/.test(allOn),
       "productSet cannot create a product without one");
+    check("variant inventory tracking cannot be turned off",
+      /name="variant_inventory_tracking"[^>]*disabled/.test(allOn) &&
+        /<label class="toggles__item">[\s\S]*?name="variant_inventory_tracking"[^>]*disabled[\s\S]*?<span class="tag">always<\/span>/.test(allOn));
 
     check("the price margin is shown", allOn.includes('name="price_markup_percent"'));
     check("the price margin input rejects negative values",

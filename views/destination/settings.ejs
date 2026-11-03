@@ -186,8 +186,12 @@
                   <input
                     type="checkbox"
                     name="<%= field %>"
-                    <%= sync[field] ? "checked" : "" %>>
+                    <%= (field === "variant_inventory_tracking" || sync[field]) ? "checked" : "" %>
+                    <%= field === "variant_inventory_tracking" ? "disabled" : "" %>>
                   <span><%= labels[field] || field %></span>
+                  <% if (field === "variant_inventory_tracking") { %>
+                    <span class="tag">always</span>
+                  <% } %>
                 </label>
               <% }); %>
             </div>
@@ -445,6 +449,7 @@
               // rather than leaning on the model's "a missing key means on"
               // rule to decide it.
               settings.variants = true;
+              settings.variant_inventory_tracking = true;
 
               try {
                 var response = await window.appFetch("/settings", {

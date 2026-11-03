@@ -584,6 +584,7 @@ exports.postSettings = async (req, res) => {
     }
 
     const wanted = req.body.settings || {};
+    wanted.variant_inventory_tracking = true;
     const rawMargin = wanted.price_markup_percent;
     const marginStr = rawMargin !== undefined && rawMargin !== null ? String(rawMargin).trim() : "";
 
