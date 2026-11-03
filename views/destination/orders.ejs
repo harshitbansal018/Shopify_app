@@ -103,7 +103,7 @@
                   <span class="pill pill--failed">supplier cannot supply</span>
                   <% if (order.cancel_status === "cancelled") { %>
                     <span class="muted">your order was cancelled and refunded</span>
-                  <% } else if (order.cancel_status === "failed") { %>
+                    <% } else if (["failed", "manual_review"].includes(order.cancel_status)) { %>
                     <span class="muted"><%= order.cancel_error %></span>
                   <% } else { %>
                     <span class="muted">cancelling your order&hellip;</span>

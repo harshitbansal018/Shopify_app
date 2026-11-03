@@ -1,9 +1,9 @@
 // controllers/webhookController.js
 //
 // Every handler here runs behind middleware/verifyWebhook, so the request is
-// proven to come from Shopify before any of this executes. Handlers reply 200
-// first and do their bookkeeping afterwards -- Shopify retries on anything
-// that is slow or non-200.
+// proven to come from Shopify before any of this executes. HTTP routes save
+// deliveries in webhook_inbox before acknowledging them. The inbox worker
+// invokes these handlers and retries their failures after a process restart.
 const storeModel = require("../models/storeModel");
 const orderModel = require("../models/orderModel");
 const customerModel = require("../models/customerModel");
@@ -291,6 +291,7 @@ exports.appUninstalled = async (req, res) => {
     console.log("App uninstalled for", shop);
   } catch (err) {
     console.error("Uninstall webhook processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -366,6 +367,7 @@ exports.productsUpdate = async (req, res) => {
     if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("products/update processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -413,6 +415,7 @@ exports.productsDelete = async (req, res) => {
     );
   } catch (err) {
     console.error("products/delete processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -453,6 +456,7 @@ async function refreshInventoryProduct(req, res, kind) {
     if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error(`${kind} processing failed:`, err.message);
+    if (req.webhookQueued) throw err;
   }
 }
 
@@ -492,6 +496,7 @@ exports.collectionsUpdate = async (req, res) => {
     if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("collections/update processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -521,6 +526,7 @@ exports.productEvent = async (req, res) => {
     if (result.requeued) productSync.scheduleAutoSync();
   } catch (err) {
     console.error("Product Event processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -569,6 +575,7 @@ exports.ordersCreate = async (req, res) => {
     );
   } catch (err) {
     console.error("orders/create processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -613,6 +620,7 @@ exports.ordersUpdated = async (req, res) => {
     await orderSync.queueForSources(store.id, order);
   } catch (err) {
     console.error("orders/updated processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -676,6 +684,7 @@ exports.customersDataRequest = async (req, res) => {
     );
   } catch (err) {
     console.error("customers/data_request failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -716,6 +725,7 @@ exports.customersRedact = async (req, res) => {
     );
   } catch (err) {
     console.error("customers/redact failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };
 
@@ -738,5 +748,6 @@ exports.shopRedact = async (req, res) => {
     console.log("shop/redact completed for", shop);
   } catch (err) {
     console.error("shop/redact processing failed:", err.message);
+    if (req.webhookQueued) throw err;
   }
 };

@@ -30,6 +30,24 @@ Shopify checkout remains responsible for calculating retail tax.
 
 Only run one application instance. Product and order background workers run inside the Node process, so PM2 cluster mode or multiple instances would run the workers more than once.
 
+Webhook requests are saved in `webhook_inbox` before returning success. The
+background worker retries failed deliveries with backoff and resumes unfinished
+work after restart. Completed deliveries keep their deduplication key but clear
+their payload. A database outage returns HTTP 503 so Shopify can retry delivery.
+
+Supplier unit prices, shipping and tax terms are saved on each order. Later
+catalogue changes do not reprice existing lines; quantity edits use the saved
+price, and new lines take their price when first received. Older orders without
+unit snapshots retain their recorded supplier subtotal, allocated across their
+existing lines when the first snapshot is created.
+
+A supplier cancellation only cancels the full Shopify order when all remaining
+items belong to that supplier and no shipments are standing. Mixed orders are
+flagged for the destination merchant to review and refund the affected items in
+Shopify. Accepted cancellation jobs remain pending until Shopify confirms the
+order is cancelled. Paid plan downgrade choices are saved while awaiting billing
+approval and applied together with the local plan activation in one transaction.
+
 ## First-time production deployment
 
 ### 1. Connect to the server

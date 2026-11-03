@@ -199,12 +199,12 @@ async function resumeWithinLimit(destinationStoreId, connectionId, limit) {
  */
 async function applyDowngradeChoices(
   destinationStoreId,
-  { unsync = [], pause = [], productLimit = null, sourceLimit = null }
+  { unsync = [], pause = [], productLimit = null, sourceLimit = null, dryRun = false, connection = null }
 ) {
   const unsyncIds = idList(unsync);
   const pauseIds = idList(pause);
 
-  return withTransaction(async (conn) => {
+  const apply = async (conn) => {
     await conn.query(LOCK_STORE, [destinationStoreId]);
 
     const [productRows] = await conn.query(PRODUCTS_SQL, [destinationStoreId]);
@@ -248,14 +248,16 @@ async function applyDowngradeChoices(
       };
     }
 
-    if (sources.length) {
+    if (sources.length && !dryRun) {
       await conn.query("UPDATE store_connections SET status = 'paused' WHERE id IN (?)", [
         sources.map((row) => row.id),
       ]);
     }
 
-    if (products.length) {
-      require("./dashboardModel").recordProductActivities(products, "unsynced");
+    if (products.length && !dryRun) {
+      for (const item of products) {
+        await conn.query("INSERT INTO product_activity_logs (connection_id, source_product_id, action) VALUES (?, ?, 'unsynced')", [item.connection_id, item.source_product_id]);
+      }
       await conn.query(
         `UPDATE product_mappings
             SET accepted_at = NULL, sync_status = 'skipped'
@@ -271,7 +273,8 @@ async function applyDowngradeChoices(
       needProducts,
       needSources,
     };
-  });
+  };
+  return connection ? apply(connection) : withTransaction(apply);
 }
 
 /** The products a downgrade can unsync: everything accepted into the store. */

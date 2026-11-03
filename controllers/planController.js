@@ -81,8 +81,9 @@ function idList(value) {
  * A plan the store does not fit in -- more products, or more active source
  * stores, than it allows -- answers 409 with the lists to choose from, until
  * the merchant sends back which products to unsync and which stores to pause.
- * Those are applied FIRST, then the plan changes: a downgrade never leaves the
- * store over its new limits, and nothing goes without the merchant picking it.
+ * Choices are validated first and saved with a pending paid purchase. After
+ * approval, the choices and local plan activation commit in one transaction;
+ * failed or declined purchases never pause stores or unsync products.
  *
  * Orders and emails need no choice: a new plan starts a new billing month, so
  * both begin again from zero.
@@ -102,10 +103,10 @@ exports.postSelectPlan = async (req, res) => {
     }
 
     const fit = await planLimits.fitCheck(req.store, plan);
+    const choices = { unsync: idList(req.body.unsync_mapping_ids), pause: idList(req.body.pause_connection_ids) };
 
     if (!fit.fits) {
-      const unsync = idList(req.body.unsync_mapping_ids);
-      const pause = idList(req.body.pause_connection_ids);
+      const { unsync, pause } = choices;
 
       if (!unsync.length && !pause.length) {
         return res.status(409).json({
@@ -114,7 +115,7 @@ exports.postSelectPlan = async (req, res) => {
         });
       }
 
-      const made = await planLimits.applyDowngrade(req.store, plan, { unsync, pause });
+      const made = await planLimits.applyDowngrade(req.store, plan, { unsync, pause, dryRun: true });
 
       if (!made.ok) {
         return res.status(409).json({
@@ -126,23 +127,18 @@ exports.postSelectPlan = async (req, res) => {
           ),
         });
       }
-
-      console.log(
-        `${req.shop} made room for ${plan.name}: ` +
-          `${made.unsynced} product(s) unsynced, ${made.paused} store(s) paused`
-      );
     }
 
     if (Number(plan.price) === 0) {
       const paidCharge = await planModel.currentPaidChargeForStore(req.storeId);
       if (paidCharge) await billing.cancelSubscription(req.store, paidCharge);
-      await planModel.selectForStore(req.storeId, planId);
+      await planModel.selectForStore(req.storeId, planId, choices);
       return res.json({ ok: true, active: true });
     }
 
     const test = await dummyShopModel.isDummyShop(req.shop);
     const purchase = await billing.createSubscription(req.store, plan, { test });
-    await planModel.startPaidPurchase(req.storeId, plan.id, purchase.chargeId);
+    await planModel.startPaidPurchase(req.storeId, plan.id, purchase.chargeId, choices);
 
     return res.json({
       ok: true,
@@ -206,6 +202,7 @@ exports.confirmPlan = async (req, res) => {
     return res.redirect(appPath);
   } catch (err) {
     console.error("Billing confirmation failed:", err.message);
+    if (err.statusCode === 409) return res.status(409).send(err.message);
     return res.status(500).send("Could not confirm the Shopify subscription.");
   }
 };

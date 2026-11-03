@@ -2,11 +2,8 @@
 //
 // `notification_settings` -- which emails one connection sends, and to whom.
 //
-// Decided entirely by the DESTINATION store, including the two emails that go
-// to the source: that is the product decision, and the settings screen exists
-// only on the destination side. One row per connection, so each supplier
-// relationship has its own switches -- a destination working with two sources
-// decides for each separately, and only ever about its OWN orders.
+// Each store controls the emails it receives. One row per connection, so
+// each supplier relationship has its own switches and recipient addresses.
 //
 // Every switch defaults to ON. A connection nobody has configured should still
 // tell the source it has an order to ship.
@@ -15,9 +12,7 @@ const { query, pool } = require("../config/db");
 /**
  * Every email, in the order the settings screen lists them.
  *
- * `to` is who RECEIVES it, which the screen shows beside each switch: the
- * destination is deciding on the source's behalf for two of these, and it
- * should never be unclear which inbox a tick affects.
+ * `to` identifies the recipient and the role allowed to edit that setting.
  */
 const EMAILS = [
   {
@@ -69,6 +64,7 @@ function hydrate(row) {
 
   KEYS.forEach((key) => {
     settings[key] = Boolean(row[column(key)]);
+    settings[`email_to_${key}`] = row[`email_to_${key}`] || null;
   });
 
   return settings;
@@ -80,6 +76,7 @@ function defaults(connectionId = null) {
 
   KEYS.forEach((key) => {
     settings[key] = true;
+    settings[`email_to_${key}`] = null;
   });
 
   return settings;
@@ -103,23 +100,56 @@ async function forConnection(connectionId) {
 /**
  * Save one connection's switches.
  *
- * Only an explicit `false` turns an email off. A key missing from the payload
- * stays ON, so an email added to the list later is sent to everyone rather
- * than silently switched off for every connection saved before it existed.
+ * Reject invalid recipients before any settings are written. Empty addresses
+ * clear an override and restore delivery to the store's default inbox.
  */
-async function save(connectionId, input = {}) {
-  const columns = KEYS.map(column);
-  const values = KEYS.map((key) => (input[key] === false ? 0 : 1));
+function normalizeEmail(value) {
+  if (value === null || value === "") return null;
+  if (typeof value === "string") {
+    const email = value.trim();
+    if (!email) return null;
+    if (email.length <= 254 && /^[^\s@<>,;:"\\]+@[^\s@<>,;:"\\]+\.[^\s@<>,;:"\\]+$/.test(email)) {
+      return email;
+    }
+  }
+  const error = new Error("Enter a valid email address (maximum 254 characters).");
+  error.statusCode = 400;
+  throw error;
+}
+
+/**
+ * Update only the supplied columns, so simultaneous saves from the two stores
+ * cannot overwrite each other's settings. HTTP callers must provide their role.
+ * Unscoped internal callers may still reset all switches with an empty input.
+ */
+async function save(connectionId, input = {}, emailsTo = {}, { recipientRole = null } = {}) {
+  const allCols = [];
+  const allVals = [];
+  const reset = !recipientRole && Object.keys(input).length === 0 && Object.keys(emailsTo).length === 0;
+
+  EMAILS.filter((email) => !recipientRole || email.to === recipientRole).forEach(({ key }) => {
+    if (reset || Object.hasOwn(input, key)) {
+      allCols.push(column(key));
+      allVals.push(input[key] === false || input[key] === 0 || input[key] === "0" ? 0 : 1);
+    }
+    const fieldKey = `email_to_${key}`;
+    if (Object.hasOwn(emailsTo, fieldKey) || Object.hasOwn(input, fieldKey)) {
+      allCols.push(fieldKey);
+      allVals.push(normalizeEmail(Object.hasOwn(emailsTo, fieldKey) ? emailsTo[fieldKey] : input[fieldKey]));
+    }
+  });
+
+  if (!allCols.length) return forConnection(connectionId);
 
   await pool.query(
-    `INSERT INTO notification_settings (connection_id, ${columns.join(", ")})
-     VALUES (?, ${columns.map(() => "?").join(", ")})
+    `INSERT INTO notification_settings (connection_id, ${allCols.join(", ")})
+     VALUES (?, ${allCols.map(() => "?").join(", ")})
      ON DUPLICATE KEY UPDATE
-       ${columns.map((name) => `${name} = VALUES(${name})`).join(",\n       ")}`,
-    [connectionId, ...values]
+       ${allCols.map((name) => `${name} = VALUES(${name})`).join(",\n       ")}`,
+    [connectionId, ...allVals]
   );
 
   return forConnection(connectionId);
 }
 
-module.exports = { EMAILS, KEYS, defaults, forConnection, save };
+module.exports = { EMAILS, KEYS, defaults, forConnection, save, normalizeEmail };

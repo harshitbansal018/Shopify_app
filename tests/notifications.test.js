@@ -1,9 +1,7 @@
 /* Notification emails, end to end against the real database.
  *
- * The destination decides every email on a connection -- including the two
- * that land in the SOURCE's inbox -- so the switches are what this guards
- * hardest: an email that goes out when it is switched off, or to the wrong
- * store, is the bug a merchant notices.
+ * Each store decides the emails it receives on a connection. An email that
+ * goes out when switched off, or to the wrong store, must be caught here.
  *
  * The source's money email is the SETTLEMENT: sent when the destination
  * records a payment, built only from the source's own prices. Nothing about
@@ -152,7 +150,7 @@ async function newSale(destination, connection, { sourceTotal = 20 } = {}) {
 
     /* ---------------- the switches ---------------- */
 
-    console.log("\nSwitches, set by the destination");
+    console.log("\nConnection email switches");
     {
       const fresh = await notificationSettingsModel.forConnection(connection.id);
 
@@ -585,8 +583,7 @@ async function newSale(destination, connection, { sourceTotal = 20 } = {}) {
         },
         fromSource
       );
-      check("the source store cannot change them", fromSource.code === 403,
-        "the destination decides every email, the source's included");
+      check("the source cannot use the destination endpoint", fromSource.code === 403);
 
       const own = fakeRes();
       await storeController.postNotifications(
@@ -595,13 +592,14 @@ async function newSale(destination, connection, { sourceTotal = 20 } = {}) {
           storeId: destination.id,
           body: {
             connection_id: String(connection.id),
-            notifications: { payout_source: false },
+            notifications: { payout_source: false, order_updates: false },
           },
         },
         own
       );
-      check("the destination can",
-        own.code === 200 && own.body.notifications.payout_source === false,
+      check("the destination can change only its own email switches",
+        own.code === 200 && own.body.notifications.order_updates === false &&
+          own.body.notifications.payout_source === true,
         JSON.stringify(own.body));
     }
 

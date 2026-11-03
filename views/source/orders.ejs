@@ -120,7 +120,7 @@
                   <span class="muted">
                     <% if (order.cancel_status === "cancelled") { %>
                       the buyer was refunded
-                    <% } else if (order.cancel_status === "failed") { %>
+                    <% } else if (["failed", "manual_review"].includes(order.cancel_status)) { %>
                       <%= order.cancel_error %>
                     <% } else { %>
                       refunding the buyer&hellip;

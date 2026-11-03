@@ -114,7 +114,10 @@ async function registerWebhooks(shop, accessToken = null) {
 async function reconcileWebhooks() {
   const stores = await require("../models/storeModel").listAll();
   const active = stores.filter(
-    (store) => store.is_active && store.access_token && store.shop_domain
+    (store) =>
+      store.is_active &&
+      store.access_token &&
+      store.shop_domain
   );
 
   const results = await Promise.allSettled(

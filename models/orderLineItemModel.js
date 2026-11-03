@@ -164,7 +164,11 @@ async function sourceLinesForOrder(orderId) {
             li.requires_shipping,
             pm.connection_id,
             svm.shopify_variant_id AS source_shopify_variant_id,
-            svm.price  AS source_price,
+            COALESCE(
+              CAST(JSON_UNQUOTE(JSON_EXTRACT(om.supplier_terms_snapshot,
+                CONCAT('$.prices."', li.id, '"'))) AS DECIMAL(20,6)),
+              svm.price
+            ) AS source_price,
             svm.sku    AS source_sku,
             svm.title  AS source_variant_title,
             sp.title   AS source_product_title,
@@ -175,6 +179,7 @@ async function sourceLinesForOrder(orderId) {
        JOIN product_mappings pm          ON pm.id  = mvp.product_mapping_id
        JOIN source_variant_mappings svm  ON svm.id = mvp.source_variant_mapping_id
        JOIN source_products sp           ON sp.id  = svm.source_product_id
+       LEFT JOIN order_mappings om ON om.connection_id = pm.connection_id AND om.destination_order_id = li.order_id
       WHERE li.order_id = ?
       ORDER BY li.id`,
     [orderId]

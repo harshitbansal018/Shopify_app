@@ -221,7 +221,7 @@
                   store. That is not obvious from this side, so it is said. %>
               <% if (order.cancel_status === "cancelled") { %>
                 cancelled and refunded too
-              <% } else if (order.cancel_status === "failed") { %>
+              <% } else if (["failed", "manual_review"].includes(order.cancel_status)) { %>
                 could not be cancelled &mdash; <%= order.cancel_error %>
               <% } else { %>
                 being cancelled and refunded&hellip;
@@ -522,8 +522,8 @@
           // This one spends someone else's money, so it says so plainly.
           if (!(await window.appConfirm(
             "Cancel this order?\n\n" +
-            "The buyer's order will be CANCELLED and REFUNDED, and they will " +
-            "be emailed about it. This cannot be undone.",
+            "Your items will be marked as unavailable. If this order contains only your unshipped items, " +
+            "the buyer's order will be cancelled and refunded. Mixed orders require the destination merchant to review a partial refund in Shopify.",
             { confirmLabel: "Cancel order", cancelLabel: "Keep order", destructive: true }
           ))) return;
 
@@ -532,7 +532,9 @@
           if (!data) return;
 
           window.appToast(
-            data.destinationUpdated
+              data.manualReview
+                ? "Supplier cancellation recorded; the destination merchant must review the refund in Shopify"
+                : data.destinationUpdated
               ? "The buyer's order cancellation was sent"
               : "Cancellation saved; destination update will retry automatically"
           );

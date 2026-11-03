@@ -19,7 +19,7 @@
 //                               reaches the destination's real Shopify order,
 //                               because a shopper must not stay charged for
 //                               goods nobody will send.
-const { query, pool } = require("../config/db");
+const { query, pool, withTransaction } = require("../config/db");
 const { parseJson, toJsonColumn } = require("./helpers");
 
 /** What the source has done with the sale. Drives the tabs on both screens. */
@@ -33,6 +33,7 @@ function hydrate(row) {
     source_tracking: parseJson(row.source_tracking, []) || [],
     shipping_address: parseJson(row.shipping_address, null),
     shipping_policy_snapshot: parseJson(row.shipping_policy_snapshot, null),
+    supplier_terms_snapshot: parseJson(row.supplier_terms_snapshot, null),
   };
 }
 
@@ -86,8 +87,8 @@ async function claim(connectionId, destinationOrderId, details = {}) {
        (connection_id, destination_order_id, destination_total, source_total,
         source_products_total, source_shipping_total, source_tax_total,
         customer_products_total, customer_shipping_total, customer_tax_total,
-        shipping_policy_snapshot, currency, line_count, source_fulfillment_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unfulfilled')
+        shipping_policy_snapshot, supplier_terms_snapshot, currency, line_count, source_fulfillment_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unfulfilled')
      ON DUPLICATE KEY UPDATE
        destination_total = VALUES(destination_total),
        source_total      = VALUES(source_total),
@@ -98,6 +99,7 @@ async function claim(connectionId, destinationOrderId, details = {}) {
        customer_shipping_total = VALUES(customer_shipping_total),
        customer_tax_total = VALUES(customer_tax_total),
        shipping_policy_snapshot = VALUES(shipping_policy_snapshot),
+       supplier_terms_snapshot = COALESCE(VALUES(supplier_terms_snapshot), supplier_terms_snapshot),
        currency          = VALUES(currency),
        line_count        = VALUES(line_count)`,
     [
@@ -112,6 +114,7 @@ async function claim(connectionId, destinationOrderId, details = {}) {
       details.customerShippingTotal ?? null,
       details.customerTaxTotal ?? null,
       toJsonColumn(details.shippingPolicySnapshot),
+      toJsonColumn(details.supplierTermsSnapshot),
       details.currency || null,
       Number(details.lineCount) || 0,
     ]
@@ -329,8 +332,8 @@ async function markUnfulfilled(id, { connection = null } = {}) {
  * Only the bookkeeping. Cancelling the destination's real order is queued
  * separately, so that a webhook or a screen never calls Shopify inline.
  */
-async function markCancelledBySource(id, reason) {
-  const [result] = await pool.query(
+async function markCancelledBySource(id, reason, { connection = null } = {}) {
+  const [result] = await (connection || pool).query(
     `UPDATE order_mappings
         SET source_fulfillment_status = 'cancelled',
             source_cancelled_at = NOW(),
@@ -349,8 +352,8 @@ async function markCancelledBySource(id, reason) {
  * irreversible, and a second attempt is at best noise and at worst a second
  * refund.
  */
-async function queueCancellation(id) {
-  const [result] = await pool.query(
+async function queueCancellation(id, { connection = null } = {}) {
+  const [result] = await (connection || pool).query(
     `UPDATE order_mappings
         SET cancel_status = 'pending'
       WHERE id = ? AND cancel_status = 'none'`,
@@ -359,12 +362,28 @@ async function queueCancellation(id) {
   return result.affectedRows;
 }
 
+async function cancelAndQueue(id, reason) {
+  return withTransaction(async (connection) => {
+    await lockForShipping(connection, id);
+    const mapping = await findById(id, { connection });
+    const standing = await require("./orderShipmentModel").listForMapping(id, { connection });
+    if (!mapping || mapping.source_fulfillment_status === "cancelled" ||
+        standing.some((shipment) => shipment.push_status !== "cancelled")) {
+      const error = new Error("This order is already cancelled or has shipments. Undo its shipments before cancelling.");
+      error.statusCode = 409;
+      throw error;
+    }
+    await markCancelledBySource(id, reason, { connection });
+    return queueCancellation(id, { connection });
+  });
+}
+
 /** Cancellations still to send, oldest first. */
 async function listPendingCancellations({ limit = 50, maxAttempts = 5 } = {}) {
   const rows = await query(
     `${SELECT_WITH_ORDER}
-      WHERE om.cancel_status IN ('pending', 'failed')
-        AND om.cancel_attempts < ?
+        WHERE ((om.cancel_status IN ('pending', 'failed') AND om.cancel_attempts < ?)
+               OR om.cancel_status = 'processing')
       ORDER BY om.id
       LIMIT ?`,
     [Number(maxAttempts), Number(limit)]
@@ -380,6 +399,17 @@ async function markCancelSent(id) {
     [id]
   );
   return result.affectedRows;
+}
+
+async function markCancelProcessing(id, jobId) {
+  await query(
+    "UPDATE order_mappings SET cancel_status = 'processing', cancel_job_id = ?, cancel_requested_at = NOW(), cancel_error = NULL WHERE id = ?",
+    [jobId, id]
+  );
+}
+
+async function markCancelReview(id, reason) {
+  await query("UPDATE order_mappings SET cancel_status = 'manual_review', cancel_error = ? WHERE id = ?", [String(reason).slice(0, 512), id]);
 }
 
 /**
@@ -415,7 +445,10 @@ module.exports = {
   markUnfulfilled,
   markCancelledBySource,
   queueCancellation,
+  cancelAndQueue,
   listPendingCancellations,
+  markCancelProcessing,
+  markCancelReview,
   markCancelSent,
   markCancelFailed,
 };

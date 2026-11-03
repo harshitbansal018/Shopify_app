@@ -218,6 +218,11 @@ function orderFulfilled(m, { shipped = true, owed = null, partial = false } = {}
 /** To the DESTINATION: the source cannot supply it. */
 function orderCancelled(m) {
   const reason = m.source_cancel_reason || m.cancel_reason || null;
+    const outcome = m.cancel_status === "cancelled"
+      ? "The order cancellation has been confirmed in Shopify."
+      : m.cancel_status === "manual_review"
+        ? "The full order has not been cancelled. Review and refund only this supplier's unshipped items in Shopify."
+        : "The cancellation request is awaiting confirmation. Check its status in the app before taking refund action in Shopify.";
   const rows = [
     ["Order", orderName(m)],
     ["Cancelled by", sourceName(m)],
@@ -225,22 +230,19 @@ function orderCancelled(m) {
   if (reason) rows.push(["Reason", reason]);
 
   return {
-    subject: `${orderName(m)} cancelled by ${sourceName(m)}`,
+      subject: `${sourceName(m)} cannot supply ${orderName(m)}`,
     html: layout({
-      heading: `${escapeHtml(orderName(m))} was cancelled`,
+        heading: `${escapeHtml(orderName(m))}: supplier cannot supply`,
       blocks: [
         para(
-          `${escapeHtml(sourceName(m))} cannot supply this order. SyncHub cancels ` +
-            `it in your store and refunds the shopper, so nobody is charged for ` +
-            `goods that are not coming.`
+            `${escapeHtml(sourceName(m))} cannot supply its items. ${escapeHtml(outcome)}`
         ),
         facts(rows),
       ],
     }),
     text:
-      `${orderName(m)} was cancelled\n\n` +
-      `${sourceName(m)} cannot supply this order. SyncHub cancels it in your ` +
-      `store and refunds the shopper.\n\n${textFacts(rows)}\n`,
+        `${sourceName(m)} cannot supply ${orderName(m)}\n\n` +
+        `${outcome}\n\n${textFacts(rows)}\n`,
   };
 }
 
