@@ -30,6 +30,11 @@
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
+    <% if (typeof sourceLocationNotice !== "undefined" && sourceLocationNotice) { %>
+      <p class="notice notice--warn"><%= sourceLocationNotice %>
+        <a href="/api/auth/install?shop=<%= encodeURIComponent(shop) %>" target="_top">Reconnect store</a>
+      </p>
+    <% } %>
 
     <!-- <% if (!isShared) { %>
       <p class="notice notice--warn">
@@ -63,6 +68,22 @@
           var inlineInventoryEnabled = inlineDestination
             ? inlineDestination.inventoryEnabled !== false
             : false;
+          function allocationMaximum(variant, connectionId, allocated, sold) {
+            var own = inventoryDestinations.find(function (destination) { return Number(destination.connection.id) === Number(connectionId); });
+            var ownAllocation = own && own.allocations.get(Number(variant.id));
+            var levels = variant.inventory_locations || [];
+            var selected = ownAllocation && ownAllocation.source_location_id || (levels.length === 1 ? levels[0].id : null);
+            var selectedLevel = levels.find(function (level) { return level.id === selected; });
+            var other = inventoryDestinations.reduce(function (sum, destination) {
+              if (Number(destination.connection.id) === Number(connectionId)) return sum;
+              var row = destination.allocations.get(Number(variant.id));
+              return sum + (row && row.resume_quantity == null && (!row.source_location_id || row.source_location_id === selected)
+                ? Number(row.remaining_quantity || 0) : 0);
+            }, 0);
+            var available = Math.max(Number(selectedLevel ? selectedLevel.available : (levels.length ? 0 : variant.inventory_quantity || 0)) - other, 0);
+            // Keep an existing limit editable when physical stock drops.
+            return Math.max(Number(allocated), Number(sold) + available);
+          }
         %>
 
         <%# The table keeps its columns when it is empty and says so in a row
@@ -75,6 +96,7 @@
               <th>Price</th>
               <th>Source stock</th>
               <% if (inlineDestination) { %>
+                <th class="allocation-location-column">Source location</th>
                 <th class="allocation-column">
                   Allocate
                   <span class="allocation-store"><%= inlineDestinationName %></span>
@@ -86,7 +108,7 @@
           <tbody>
             <% if (!shared.length) { %>
               <tr class="row--empty">
-                <td class="table__empty" colspan="<%= inlineDestination ? 6 : 5 %>">
+                <td class="table__empty" colspan="<%= inlineDestination ? 7 : 5 %>">
                   <strong>No records found</strong>
                 </td>
               </tr>
@@ -110,8 +132,9 @@
                 ? Number(inlineAllocation.remaining_quantity || 0)
                 : 0;
               var sourceAvailable = Number(variant.inventory_quantity);
-              var inlineMax = inlineAllocated +
-                (Number.isFinite(sourceAvailable) ? Math.max(sourceAvailable, 0) : 0);
+              var inlineMax = inlineDestination
+                ? allocationMaximum(variant, inlineDestination.connection.id, inlineAllocated, inlineSold)
+                : 0;
             %>
               <tr>
                 <td>
@@ -137,6 +160,10 @@
                       ? "—" : variant.inventory_quantity %>
                 </td>
                 <% if (inlineDestination) { %>
+                  <td class="allocation-location-column">
+                    <%- include("partials/inventoryLocation", { variant: variant, allocation: inlineAllocation,
+                      connectionId: inlineDestination.connection.id, enabled: inlineInventoryEnabled }) %>
+                  </td>
                   <td class="allocation-column">
                     <div class="quantity-stepper">
                       <button
@@ -169,7 +196,7 @@
                     <span class="allocation-limit">
                       Remaining <%= inlineRemaining %> &middot; Max <%= inlineMax %>
                       <% if (inlineAllocation && inlineAllocation.resume_quantity != null) { %>
-                        &middot; <%= inlineDesired %> will be reserved again on Sync
+                        &middot; <%= inlineDesired %> will be allocated again on Sync
                       <% } %>
                       <% if (variant.inventory_tracked === 0) { %>
                         &middot; Track quantity is off in source Shopify
@@ -231,8 +258,8 @@
               <div>
                 <h2 class="panel__title" id="allocation-heading">Inventory allocation</h2>
                 <p class="panel__copy">
-                  Reserve stock for each destination. Reserved units are removed from
-                  this source store now, so the same unit cannot sell in two stores.
+                  Set a selling limit for each destination. Source stock stays unchanged
+                  until a destination order is placed. Unsync never adds source stock.
                 </p>
               </div>
             </div>
@@ -252,7 +279,7 @@
               <form class="allocation-form" data-connection="<%= connection.id %>">
                 <div class="allocation-form__title">
                   <strong><%= destinationName %></strong>
-                  <span class="muted">Total reserved includes units already sold.</span>
+                  <span class="muted">Total allocation includes units already sold.</span>
                 </div>
                 <% if (!inventoryEnabled) { %>
                   <p class="notice notice--warn">
@@ -268,7 +295,8 @@
                       <th>Available at source</th>
                       <th>Sold</th>
                       <th>Remaining there</th>
-                      <th>Reserved total</th>
+                      <th class="allocation-location-column">Source location</th>
+                      <th>Allocated total</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -281,8 +309,7 @@
                       var sold = allocation ? allocation.sold_quantity : 0;
                       var remaining = allocation ? allocation.remaining_quantity : 0;
                       var available = Number(variant.inventory_quantity);
-                      var maximum = Number(allocated) +
-                        (Number.isFinite(available) ? Math.max(available, 0) : 0);
+                      var maximum = allocationMaximum(variant, connection.id, allocated, sold);
                       var variantName = [variant.option1, variant.option2, variant.option3]
                         .filter(Boolean).join(" / ") || variant.title;
                     %>
@@ -291,6 +318,10 @@
                         <td><%= variant.inventory_quantity == null ? "—" : variant.inventory_quantity %></td>
                         <td><%= sold %></td>
                         <td><%= remaining %></td>
+                        <td class="allocation-location-column">
+                          <%- include("partials/inventoryLocation", { variant: variant, allocation: allocation,
+                            connectionId: connection.id, enabled: inventoryEnabled }) %>
+                        </td>
                         <td>
                           <div class="quantity-stepper">
                             <button class="quantity-stepper__button allocation-step" type="button" data-step="-1" <%= inventoryEnabled ? "" : "disabled" %>>&minus;</button>
@@ -307,13 +338,13 @@
                               data-current="<%= allocated %>"
                               data-tracked="<%= variant.inventory_tracked === 0 ? 0 : 1 %>"
                               <%= inventoryEnabled ? "" : "disabled" %>
-                              aria-label="Reserved total for <%= variantName %> at <%= destinationName %>">
+                              aria-label="Allocated total for <%= variantName %> at <%= destinationName %>">
                             <button class="quantity-stepper__button allocation-step" type="button" data-step="1" <%= inventoryEnabled ? "" : "disabled" %>>+</button>
                           </div>
                           <span class="allocation-limit">
                             Remaining <%= remaining %> &middot; Max <%= maximum %>
                             <% if (allocation && allocation.resume_quantity != null) { %>
-                              &middot; <%= desired %> will be reserved again on Sync
+                              &middot; <%= desired %> will be allocated again on Sync
                             <% } %>
                             <% if (variant.inventory_tracked === 0) { %>
                               &middot; Track quantity is off in source Shopify
@@ -345,6 +376,12 @@
     (function () {
       var pageError = document.getElementById("page-error");
       var productId = <%- json(String(product.id)) %>;
+      var sourceAllocationData = <%- json(inventoryDestinations.flatMap(function (destination) {
+        return Array.from(destination.allocations.values()).map(function (allocation) {
+          return { connection: destination.connection.id, variant: allocation.source_variant_mapping_id,
+            location: allocation.source_location_id || null, remaining: allocation.resume_quantity == null ? allocation.remaining_quantity : 0 };
+        });
+      })) %>;
 
       function fail(message) {
         pageError.textContent = message;
@@ -426,6 +463,30 @@
       var allAllocationInputs = Array.prototype.slice.call(
         document.querySelectorAll(".allocation-input")
       );
+      var locationInputs = Array.prototype.slice.call(document.querySelectorAll(".allocation-location"));
+      function sourceLocationFor(input) {
+        return locationInputs.find(function (select) {
+          return select.dataset.connection === input.dataset.connection && select.dataset.variant === input.dataset.variant;
+        });
+      }
+      locationInputs.forEach(function (select) {
+        var original = select.value;
+        select.addEventListener("change", function () {
+          var input = allAllocationInputs.find(function (candidate) {
+            return candidate.dataset.connection === select.dataset.connection && candidate.dataset.variant === select.dataset.variant;
+          });
+          if (!input) return;
+          var available = Number(select.options[select.selectedIndex].dataset.available || 0);
+          var other = sourceAllocationData.reduce(function (sum, row) {
+            return sum + (Number(row.variant) === Number(select.dataset.variant) &&
+              Number(row.connection) !== Number(select.dataset.connection) && (!row.location || row.location === select.value)
+              ? Number(row.remaining || 0) : 0);
+          }, 0);
+          input.max = Math.max(Number(input.min), Number(input.min) + available - other,
+            select.value === original ? Number(input.dataset.current) : 0);
+          input.value = clampAllocation(input, Number(input.value));
+        });
+      });
 
       allAllocationInputs.forEach(function (input) {
         input.title = "Click the field, then scroll to increase or decrease";
@@ -461,6 +522,12 @@
               var quantity = Number(input.value);
               var maximum = Number(input.max);
               var minimum = Number(input.min);
+              var locationSelect = sourceLocationFor(input);
+              if (quantity > 0 && (!locationSelect || !locationSelect.value || locationSelect.options[locationSelect.selectedIndex].disabled)) {
+                fail("Select a source inventory location for each allocated variant.");
+                if (locationSelect) locationSelect.focus();
+                return;
+              }
 
               if (!Number.isInteger(quantity) || quantity < minimum || quantity > maximum) {
                 fail(
@@ -499,6 +566,7 @@
                     allocations: inputs.map(function (input) {
                       return {
                         variant_id: Number(input.dataset.variant),
+                        source_location_id: sourceLocationFor(input).value || null,
                         quantity: Number(input.value)
                       };
                     })
@@ -514,6 +582,7 @@
                   allocations: inputs.map(function (input) {
                     return {
                       variant_id: Number(input.dataset.variant),
+                      source_location_id: sourceLocationFor(input).value || null,
                       quantity: Number(input.value)
                     };
                   })
@@ -532,6 +601,7 @@
                 message = "Inventory saved";
               }
               if (data.queued) message += ". Destination sync is queued";
+              if (data.inventoryWarning) message += ". " + data.inventoryWarning;
               window.appToast(message);
               window.appNavigate("/products/" + productId);
             } catch (err) {

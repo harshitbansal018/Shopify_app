@@ -448,6 +448,10 @@ async function refreshInventoryProduct(req, res, kind) {
     );
 
     if (!result) return; // inventory item is not from a staged product
+    await require("../services/inventoryLocations").refreshSource(store.shop_domain,
+      await require("../models/sourceVariantModel").listForProduct(result.sourceProductId));
+    await require("../services/sourceInventory").queueProduct(result.sourceProductId);
+    await require("../services/sourceInventory").flushPools(store.id);
 
     console.log(
       `${kind} ${shop} #${inventoryItemId}: ` +
@@ -568,6 +572,7 @@ exports.ordersCreate = async (req, res) => {
     }
 
     const queued = await orderSync.queueForSources(store.id, order);
+    await require("../services/sourceInventory").reconcileOrder(order.id);
 
     console.log(
       `orders/create ${shop} ${order.name || `#${order.id}`}: ` +
@@ -618,6 +623,7 @@ exports.ordersUpdated = async (req, res) => {
     // the source has since done with it -- claim() refreshes the totals but
     // never the fulfilment state.
     await orderSync.queueForSources(store.id, order);
+    await require("../services/sourceInventory").reconcileOrder(order.id);
   } catch (err) {
     console.error("orders/updated processing failed:", err.message);
     if (req.webhookQueued) throw err;

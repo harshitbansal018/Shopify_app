@@ -832,7 +832,7 @@ const STORE_ROW = {
       all.includes('post("/products/unshare"') &&
         all.includes("await refreshProductsLive(true)") &&
         all.includes("destination copies will become Draft") &&
-        all.includes("Unsold reserved inventory will return to the source"));
+        all.includes("Destination inventory will be zeroed. Source stock stays unchanged"));
 
     const SECOND_CONN = {
       ...CONN,
@@ -1316,12 +1316,12 @@ const STORE_ROW = {
       synced.includes('"/products/decline"'));
     check("and explains the reversible Draft lifecycle",
       synced.includes("They will become Draft in Shopify") &&
-        synced.includes("unsold reserved inventory will return to the source") &&
+        synced.includes("destination inventory will be zeroed. Source stock stays unchanged") &&
         synced.includes("make them Active") &&
         synced.includes("They are not deleted"),
       "the merchant should know exactly what Unsync and a later Sync do");
-    check("Unsync reports inventory returned to the source",
-      synced.includes('data.returned + " unsold unit(s) to the source"'));
+    check("Unsync reports inventory cleared from the destination",
+      synced.includes('data.returned + " unit(s) from the destination allocation"'));
     check("then refreshes the current tab without navigation",
       synced.includes("await refreshProductsLive(true)"));
 
@@ -1474,7 +1474,12 @@ const STORE_ROW = {
       ...BASE,
       store: { ...STORE_ROW, store_type: "source" },
       product: PRODUCT,
-      shared: VARIANTS,
+      shared: VARIANTS.map(function (variant) { return {
+        ...variant, inventory_locations: [
+          { id: "gid://shopify/Location/101", name: "Warehouse A", available: 50, isActive: true },
+          { id: "gid://shopify/Location/102", name: "Warehouse B", available: 4, isActive: true },
+        ],
+      }; }),
       totalVariants: 2,
       isShared: true,
       allocationDestinations: [{
@@ -1484,6 +1489,8 @@ const STORE_ROW = {
         },
         mapping: { allowed_variant_ids: null },
         allocations: new Map([[101, {
+          source_variant_mapping_id: 101,
+          source_location_id: "gid://shopify/Location/102",
           allocated_quantity: 25,
           sold_quantity: 5,
           remaining_quantity: 20,
@@ -1500,15 +1507,21 @@ const STORE_ROW = {
         allocated.includes("Retail shop") &&
         allocated.includes('value="25"') &&
         allocated.includes('data-variant="101"'));
+    check("allocation selects the saved source warehouse and shows its stock",
+      allocated.includes("Source inventory location") && allocated.includes("Warehouse A — 50 available") &&
+        allocated.includes("Warehouse B — 4 available") &&
+        /value="gid:\/\/shopify\/Location\/102" data-available="4"\s+selected/.test(allocated));
+    check("the selected warehouse is posted with both share and save requests",
+      (allocated.match(/source_location_id: sourceLocationFor\(input\).value/g) || []).length === 2);
     check("the allocation screen separates sold and remaining stock",
       allocated.includes("Remaining 20") &&
         !allocated.includes("Return unsold"));
     check("a released allocation shows what re-sync will reserve again",
-      allocated.includes("7 will be reserved again on Sync") &&
+      allocated.includes("7 will be allocated again on Sync") &&
         allocated.includes('value="7"'));
     check("inline inventory cannot exceed its current maximum",
-      allocated.includes('max="29"') &&
-        allocated.includes("Max 29") &&
+      allocated.includes('max="25"') &&
+        allocated.includes("Max 25") &&
         allocated.includes('class="quantity-stepper__button allocation-step"'));
     check("allocation quantity supports focused mouse-wheel changes",
       allocated.includes('addEventListener("wheel"') &&
@@ -2188,6 +2201,9 @@ const STORE_ROW = {
     check("each line has a Ship now quantity, defaulting to what is left",
       /class="[^"]*ship-qty"[^>]*max="2"[^>]*value="2"/.test(toShip),
       "the plain case -- send everything -- must need no typing");
+    check("multiple remaining units allow editing and partial fulfillment",
+      !/<input[^>]*ship-qty[^>]*readonly/.test(toShip) &&
+        !/<button[^>]*id="fulfil-partial"[^>]*disabled/.test(toShip));
     check("and shows what has shipped so far", toShip.includes("0 / 2"));
     check("source order detail shows its included tax amount",
       toShip.includes("Included tax") && toShip.includes("USD 3.60"));
@@ -2205,6 +2221,20 @@ const STORE_ROW = {
     check("it says how much is still to send", halfway.includes("1 unit is still to"));
     check("the line shows its progress", halfway.includes("1 / 2") &&
       /class="[^"]*ship-qty"[^>]*max="1"/.test(halfway));
+    check("the last remaining unit is read-only and cannot be partially fulfilled",
+      /<input[^>]*ship-qty[^>]*min="1"[^>]*max="1"[^>]*readonly/.test(halfway) &&
+        /<button[^>]*id="fulfil-partial"[^>]*disabled/.test(halfway));
+    const singleUnit = await sourceDetail(ROW, [{ ...LINE, quantity: 1, remaining: 1 }]);
+    check("a one-unit order locks its quantity and disables partial fulfillment",
+      /<input[^>]*ship-qty[^>]*value="1"[^>]*readonly/.test(singleUnit) &&
+        /<button[^>]*id="fulfil-partial"[^>]*disabled/.test(singleUnit));
+    const separateUnits = await sourceDetail(ROW, [
+      { ...LINE, quantity: 1, remaining: 1 },
+      { ...LINE, line_id: 2, quantity: 1, remaining: 1 },
+    ]);
+    check("separate one-unit lines remain editable so one item can be shipped at a time",
+      !/<input[^>]*ship-qty[^>]*readonly/.test(separateUnits) &&
+        !/<button[^>]*id="fulfil-partial"[^>]*disabled/.test(separateUnits));
     check("and lists the shipment so far",
       halfway.includes("PART-1") && halfway.includes("Shipments"));
 
@@ -2236,7 +2266,20 @@ const STORE_ROW = {
       toShip.includes("Use Fulfilled") && toShip.includes("sending >= left"),
       "that is not a partial shipment, and the other button already does it");
     check("Fulfilled sends no lines, so the server ships the remainder as it counts it",
-      /post\(fulfil, "fulfil", \{ tracking: tracking\(\) \}/.test(toShip));
+      /post\(fulfil, "fulfil", \{ tracking: parcels \}/.test(toShip));
+    check("shipping fields have explicit length limits and shared validation",
+      /id="carrier"[^>]*maxlength="128"/.test(toShip) &&
+      /id="tracking-number"[^>]*maxlength="128"/.test(toShip) &&
+      /id="tracking-url"[^>]*maxlength="512"/.test(toShip) &&
+      toShip.includes('/javascript/shippingValidation.js') && toShip.includes("window.shippingValidation.errorsFor"));
+    const badTracking = await sourceDetail({ ...ROW, source_fulfillment_status: "fulfilled" },
+      [{ ...LINE, shipped: 2, remaining: 0 }], [{
+        id: 1, push_status: "failed", push_error: "Variable $fulfillment has an invalid URL (missing scheme)",
+        lines: [{ line_id: 1, quantity: 2 }], tracking: [{ company: "DHL", number: "TRACK-1", url: "bad-link" }],
+      }]);
+    check("invalid saved tracking explains correction instead of exposing the Shopify payload error",
+      badTracking.includes("needs correction") && badTracking.includes("Tracking link must start with http:// or https://.") &&
+      badTracking.includes("Use Unfulfilled to undo the shipments") && !badTracking.includes("Variable $fulfillment"));
 
     const emptyDetail = await render("source/orderDetail", {
       ...BASE,

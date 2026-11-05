@@ -344,6 +344,10 @@ console.log("\nProductSetInput");
     allocatedStock.variants[0].inventoryQuantities[0].quantity === 10);
   check("allocation mode never falls back to full source stock",
     allocatedStock.variants[1].inventoryQuantities[0].quantity === 0);
+  check("managed destination inventory denies backorders",
+    allocatedStock.variants.every((variant) => variant.inventoryPolicy === "DENY"));
+  check("managed destination inventory always tracks quantity",
+    allocatedStock.variants.every((variant) => variant.inventoryItem.tracked === true));
 
   // A product with no options must not send an empty array.
   const plain = productSync.buildProductInput(

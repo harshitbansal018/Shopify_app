@@ -65,6 +65,9 @@
   margin-top: 10px;
 }
 .allocation-column { width: 168px; min-width: 148px; }
+.allocation-location-column { width: 230px; min-width: 210px; }
+.allocation-location-label { display: block; font-size: 12px; color: var(--muted, #667085); }
+.allocation-location { display: block; width: 100%; min-width: 190px; }
 .allocation-store {
   display: block;
   max-width: 160px;
@@ -342,6 +345,13 @@ body {
 /* ---------------- shipping progress ---------------- */
 
 /* "2 / 5" on an order line: green once the line is done, amber part way. */
+.ship-qty[readonly] { background: var(--bg); color: var(--muted); cursor: default; }
+.ship-qty[aria-invalid="true"] { border-color: var(--danger); }
+.table.shipments { table-layout: fixed; }
+.table.shipments th:first-child { width: 7%; }
+.table.shipments th:nth-child(2) { width: 13%; }
+.table.shipments td { white-space: normal; overflow-wrap: anywhere; }
+#carrier[aria-invalid="true"], #tracking-number[aria-invalid="true"], #tracking-url[aria-invalid="true"] { border-color: var(--danger); }
 .ship-done {
   color: var(--ok);
   font-weight: 600;
@@ -3489,6 +3499,38 @@ s-modal:not(:defined)[open] s-button {
    left; this puts the icon and message back in the middle. */
 .table td.table__empty {
   text-align: center;
+}
+
+/* Keep unbroken tracking text and Shopify errors inside order-page columns. */
+.order-detail .panel,
+.order-detail .shell__header > div,
+.order-detail .facts__row > *,
+.order-detail .shipment-line,
+.order-detail .toggles .field {
+  min-width: 0;
+}
+.order-detail .notice,
+.order-detail .facts dd,
+.order-detail .shipment-line,
+.order-detail .shell__header h1,
+.order-detail .shell__sub,
+.order-detail .table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.order-detail .field__input {
+  min-width: 0;
+  max-width: 100%;
+}
+.order-detail .table.shipments {
+  display: table;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.order-detail .table.shipments th {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------- back button on detail pages ---------------- */

@@ -16,8 +16,9 @@ const STATE_TTL_SECONDS = 600;
 // step. Changing this forces every merchant to reinstall, so add a scope only
 // when the feature that needs it is actually being built.
 const SCOPES =
-  process.env.SHOPIFY_SCOPES ||
-  "read_products,write_products,read_inventory,write_inventory,read_shipping,write_shipping";
+  [...new Set(((process.env.SHOPIFY_SCOPES ||
+    "read_products,write_products,read_inventory,write_inventory,read_shipping,write_shipping") +
+    ",read_locations").split(",").map((scope) => scope.trim()).filter(Boolean))].join(",");
 const REST_API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-01";
 
 function appHost() {

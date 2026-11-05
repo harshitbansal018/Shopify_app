@@ -903,7 +903,7 @@
         if (!(await window.appConfirm(
           "Stop syncing " + count + " product(s)?\n\n" +
           "They will become Draft in Shopify and stop receiving updates. " +
-          "Their unsold reserved inventory will return to the source. " +
+          "Their destination inventory will be zeroed. Source stock stays unchanged. " +
           "They are not deleted.\n\n" +
           "Sync them again from the Unsynced tab to make them Active and " +
           "resume updates.",
@@ -921,7 +921,7 @@
 
         var unsyncMessage = "Unsynced " + data.declined + " product(s)";
         if (data.returned) {
-          unsyncMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
+          unsyncMessage += ". Cleared " + data.returned + " unit(s) from the destination allocation";
         }
         window.appToast(unsyncMessage);
         clearDestSelection();
@@ -932,7 +932,7 @@
         if (!(await window.appConfirm(
           "Stop receiving " + chosenBySyncState(false).length + " product(s)?\n\n" +
           "Any existing Shopify copy will become Draft and stop receiving updates. " +
-          "Unsold reserved inventory will return to the source.",
+          "Destination inventory will be zeroed. Source stock stays unchanged.",
           { confirmLabel: "Decline" }
         ))) return;
 
@@ -947,7 +947,7 @@
 
         var declineMessage = "Declined " + data.declined + " product(s)";
         if (data.returned) {
-          declineMessage += ". Returned " + data.returned + " unsold unit(s) to the source";
+          declineMessage += ". Cleared " + data.returned + " unit(s) from the destination allocation";
         }
         window.appToast(declineMessage);
         clearDestSelection();

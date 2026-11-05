@@ -55,7 +55,7 @@ check("a reduction returns stock to its original location",
 check("the unsold location reservation remains balanced",
   reduced.kept.reduce((sum, row) => sum + row.quantity, 0) === 18);
 
-check("orders consume the destination pool without touching source again",
+check("remaining allocation excludes destination units already sold",
   allocation.remaining(25, 8) === 17);
 check("remaining stock can never become negative",
   allocation.remaining(5, 8) === 0);
