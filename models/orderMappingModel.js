@@ -52,6 +52,8 @@ const SELECT_WITH_ORDER = `
          o.fulfillment_status,
          o.cancelled_at,
          o.test,
+         (SELECT MAX(il.error) FROM source_inventory_ledger il
+           WHERE il.order_id = o.id AND il.source_store_id = c.source_store_id) AS inventory_error,
          COALESCE(o.placed_at, o.created_at) AS placed_at,
          o.customer_shopify_id,
          -- Where the goods actually go. The source is the one that ships, so

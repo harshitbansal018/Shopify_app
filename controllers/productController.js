@@ -151,32 +151,25 @@ exports.getProducts = async (req, res) => {
       // One batched query for the whole page, not one per product -- and now
       // for fifteen rows rather than the whole catalogue.
       const mappingIds = offered.map((product) => product.mapping_id);
-      const [variants, allocations] = await Promise.all([
-        mappingVariantProductModel.mapForMappings(mappingIds),
-        inventoryAllocationModel.mapForMappings(mappingIds),
-      ]);
+      const variants = await mappingVariantProductModel.mapForMappings(mappingIds);
 
+      const sellable = new Map(await Promise.all(offered.map(async (product) => [
+        product.mapping_id,
+        await inventoryAllocationModel.sellableMap(product.connection_id, product.source_product_id),
+      ])));
       const withVariants = (product) => {
-        const reserved = allocations.get(product.mapping_id) || [];
-        const byVariant = new Map(reserved.map((allocation) => [
-          Number(allocation.source_variant_mapping_id), allocation,
-        ]));
         const productVariants = (variants.get(product.mapping_id) || [])
           .map((variant) => {
-            const allocation = byVariant.get(Number(variant.source_variant_mapping_id));
-            return allocation
-              ? { ...variant, inventory_quantity: allocation.remaining_quantity }
-              : (reserved.length ? { ...variant, inventory_quantity: 0 } : variant);
+            return { ...variant, inventory_quantity:
+              sellable.get(product.mapping_id)?.get(Number(variant.source_variant_mapping_id)) || 0 };
           });
 
         return {
           ...product,
           // Once allocation is configured, this destination's pool is the
           // only honest stock number -- never the source store's remainder.
-          inventory: reserved.length
-            ? reserved.reduce((sum, allocation) =>
-                sum + allocation.remaining_quantity, 0)
-            : product.inventory,
+          inventory: [...(sellable.get(product.mapping_id)?.values() || [])]
+            .reduce((sum, quantity) => sum + quantity, 0),
           variants: productVariants,
         };
       };
@@ -574,6 +567,7 @@ exports.getProduct = async (req, res) => {
       const allocationByVariant = new Map(allocations.map((allocation) => [
         Number(allocation.source_variant_mapping_id), allocation,
       ]));
+      const sellable = await inventoryAllocationModel.sellableMap(offered.connection_id, offered.source_product_id);
       let shared = mappedVariants.get(offered.mapping_id) || [];
 
       // Before acceptance there are no destination variant-link rows yet.
@@ -604,18 +598,16 @@ exports.getProduct = async (req, res) => {
         return allocation
           ? {
               ...variant,
-              inventory_quantity: allocation.remaining_quantity,
+              inventory_quantity: sellable.get(Number(variant.source_variant_mapping_id)) || 0,
               allocated_quantity: allocation.allocated_quantity,
               sold_quantity: allocation.sold_quantity,
             }
-          : (allocations.length
-              ? {
+          : ({
                   ...variant,
                   inventory_quantity: 0,
                   allocated_quantity: 0,
                   sold_quantity: 0,
-                }
-              : variant);
+                });
       });
 
       return res.render("destination/productDetail", {
@@ -640,6 +632,29 @@ exports.getProduct = async (req, res) => {
     }
 
     const variants = await sourceVariantModel.listForProduct(product.id);
+    let sourceLocationNotice = "";
+    const locationsService = require("../services/inventoryLocations");
+    const locationReads = await Promise.allSettled([
+      locationsService.refreshSource(req.store.shop_domain, variants),
+      locationsService.sourceLocations(req.store.shop_domain),
+    ]);
+    if (locationReads[0].status === "rejected") {
+      sourceLocationNotice = "Could not refresh source location stock. Saving checks current Shopify stock before allocating.";
+    }
+    const locationNames = new Map(locationReads[1].status === "fulfilled"
+      ? locationReads[1].value.map((location) => [location.id, location]) : []);
+    if (locationReads[1].status === "rejected") {
+      sourceLocationNotice += " Reconnect this store to allow location names to be read. Location IDs are shown until then.";
+    }
+    const sourceLevels = variants.length ? await require("../config/db").query(
+      "SELECT * FROM source_inventory_levels WHERE source_variant_id IN (?)", [variants.map((variant) => variant.id)]
+    ) : [];
+    for (const variant of variants) {
+      variant.inventory_locations = sourceLevels.filter((level) => Number(level.source_variant_id) === Number(variant.id))
+        .map((level) => ({ id: level.location_id, available: level.available,
+          name: locationNames.get(level.location_id)?.name || `Location ${level.location_id.split("/").pop()}`,
+          isActive: locationNames.get(level.location_id)?.isActive !== false }));
+    }
     const mappings = await productMappingModel.listForSourceProduct(product.id, {
       includeRevoked: false,
     });
@@ -702,6 +717,7 @@ exports.getProduct = async (req, res) => {
       totalVariants: variants.length,
       isShared: mappings.length > 0,
       allocationDestinations,
+      sourceLocationNotice,
     });
   } catch (err) {
     console.error("Product page failed:", err.message);
@@ -873,14 +889,6 @@ exports.postInventoryAllocation = async (req, res) => {
       });
     }
 
-    const beforeRows = await inventoryAllocationModel.listForConnectionProduct(
-      connection.id,
-      product.id
-    );
-    const beforeByVariant = new Map(beforeRows.map((allocation) => [
-      Number(allocation.source_variant_mapping_id),
-      allocation.allocated_quantity,
-    ]));
     const allocations = await inventoryAllocation.setForProduct({
       store: req.store,
       connection,
@@ -889,6 +897,7 @@ exports.postInventoryAllocation = async (req, res) => {
     });
 
     let destinationSynced = false;
+    let inventoryWarning = null;
     try {
       const pushed = await inventoryAllocation.syncDestination(
         connection,
@@ -897,19 +906,10 @@ exports.postInventoryAllocation = async (req, res) => {
       );
       destinationSynced = pushed.synced;
     } catch (syncError) {
-      // Source stock has already moved. Restore the exact prior reservation
-      // before reporting failure, so a destination that rejected the update
-      // can never keep units that are also sellable at the source.
-      await inventoryAllocation.setForProduct({
-        store: req.store,
-        connection,
-        product,
-        targets: targets.map((target) => ({
-          variant_id: target.variant_id,
-          quantity: beforeByVariant.get(Number(target.variant_id)) || 0,
-        })),
-      });
-      throw syncError;
+      // The desired limit is already durable and no source stock moved.
+      // Keep the queued update for retry instead of losing the merchant's edit.
+      console.warn("Destination inventory update queued:", syncError.message);
+      inventoryWarning = syncError.message;
     }
 
     return res.json({
@@ -917,6 +917,7 @@ exports.postInventoryAllocation = async (req, res) => {
       allocations,
       queued: !destinationSynced,
       destinationSynced,
+      inventoryWarning,
     });
   } catch (err) {
     console.error("Saving inventory allocation failed:", err.message);
@@ -1110,7 +1111,7 @@ exports.postAllow = async (req, res) => {
 
 /**
  * Source-side withdrawal: keep the staged product and destination copy, but
- * make that copy Draft, stop future pushes, and return its unsold allocation.
+ * make that copy Draft, stop future pushes, and suspend its selling limit.
  */
 exports.postUnshare = async (req, res) => {
   if (!sourceOnly(req, res)) return;
@@ -1440,10 +1441,8 @@ exports.postDecline = async (req, res) => {
 
     let returned = 0;
 
-    // Draft and zero every existing Shopify copy before returning its unsold
-    // reservation to the source. Only after all remote writes succeed do we
-    // clear accepted_at locally. This ordering prevents the same unit becoming
-    // sellable in both stores, even temporarily.
+    // Draft and zero every Shopify copy before suspending its selling limit.
+    // Source stock is unchanged by this lifecycle action.
     for (const mapping of mappings) {
       const connection = connectionById.get(Number(mapping.connection_id));
       if (!connection) continue;

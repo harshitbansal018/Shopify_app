@@ -282,7 +282,7 @@ exports.postFulfil = async (req, res) => {
     // One order can go out in several parcels, so tracking is a list. An empty
     // list is allowed: plenty of merchants ship without a trackable service,
     // and refusing would leave them unable to mark anything done.
-    const parcels = Array.isArray(req.body.tracking) ? req.body.tracking : [];
+    const parcels = req.body.tracking === undefined ? [] : req.body.tracking;
 
     // Which lines, and how many of each, are going out now. Absent means
     // "everything still unshipped" -- the plain Mark fulfilled. Present, it

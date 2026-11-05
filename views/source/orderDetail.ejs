@@ -3,6 +3,7 @@
 
 <head>
   <%- include("../partials/head") %>
+  <script src="/javascript/shippingValidation.js"></script>
   <title><%= order.destination_order_name || "Order" %></title>
   <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -15,7 +16,8 @@
     var status = order.source_fulfillment_status;
     var buyer = order.destination_store_name || order.destination_shop_domain;
     var open = status === "unfulfilled" || status === "partial";
-    var remaining = lines.reduce(function (sum, line) { return sum + line.remaining; }, 0);
+    var remaining = lines.reduce(function (sum, line) { return sum + Number(line.remaining); }, 0);
+    var shippableLines = lines.filter(function (line) { return Number(line.remaining) > 0; }).length;
     var pillClass = status === "fulfilled" ? "synced"
       : status === "cancelled" ? "failed"
       : status === "partial" ? "paused" : "pending";
@@ -23,7 +25,7 @@
       : status === "partial" ? "partially fulfilled" : status;
   %>
 
-  <main class="shell">
+  <main class="shell order-detail">
 
     <header class="shell__header">
       <div>
@@ -47,6 +49,9 @@
     </header>
 
     <p class="notice notice--error" id="page-error" hidden></p>
+    <% if (order.inventory_error) { %>
+      <p class="notice notice--error">Source inventory update pending: <%= order.inventory_error %></p>
+    <% } %>
 
     <section class="panel">
       <h2 class="panel__title">What was bought</h2>
@@ -57,7 +62,9 @@
             business. Only this store's own money is shown. %>
         You are owed your own price for each line, whatever the destination
         store sold it for.
-        <% if (open) { %>
+        <% if (open && remaining === 1) { %>
+          One unit remains. Use Fulfilled to ship it.
+        <% } else if (open) { %>
           Enter how many of each you are sending now, or leave the numbers as
           they are to send everything that is left.
         <% } %>
@@ -121,12 +128,14 @@
                     <input
                       class="field__input field__input--qty ship-qty"
                       type="number"
-                      min="0"
+                      min="<%= shippableLines === 1 ? 1 : 0 %>"
                       max="<%= line.remaining %>"
                       step="1"
                       value="<%= line.remaining %>"
                       data-line="<%= line.line_id %>"
                       data-remaining="<%= line.remaining %>"
+                      inputmode="numeric"
+                      <%= remaining === 1 ? "readonly" : "" %>
                       aria-label="Quantity of <%= line.source_product_title || line.title %> to ship now">
                   <% } else { %>
                     <span class="muted">done</span>
@@ -276,8 +285,14 @@
                   <% if (shipment.push_status === "sent") { %>
                     <span class="pill pill--synced">told</span>
                   <% } else if (shipment.push_status === "failed") { %>
-                    <span class="pill pill--failed">not yet</span>
-                    <span class="muted"><%= shipment.push_error %> &mdash; retrying</span>
+                    <% var trackingError = shipment.tracking_error ||
+                      (/missing scheme/i.test(shipment.push_error || "") ? "Tracking link must start with http:// or https://." : null); %>
+                    <span class="pill pill--failed"><%= trackingError ? "needs correction" : "not yet" %></span>
+                    <span class="muted"><%= trackingError || shipment.push_error %>
+                      <% if (trackingError) { %>
+                        Use Unfulfilled to undo the shipments, then enter valid tracking details and fulfill again.
+                      <% } else { %> &mdash; retrying <% } %>
+                    </span>
                   <% } else if (shipment.push_status === "cancelled") { %>
                     <span class="muted">withdrawn</span>
                   <% } else { %>
@@ -321,17 +336,17 @@
             <label class="field">
               <span class="field__label">Carrier</span>
               <input class="field__input" type="text" id="carrier"
-                     placeholder="DHL" autocomplete="off">
+                     placeholder="DHL" autocomplete="off" maxlength="128">
             </label>
             <label class="field">
               <span class="field__label">Tracking number</span>
               <input class="field__input" type="text" id="tracking-number"
-                     placeholder="Optional" autocomplete="off">
+                     placeholder="Optional" autocomplete="off" maxlength="128">
             </label>
             <label class="field">
               <span class="field__label">Tracking link</span>
               <input class="field__input" type="url" id="tracking-url"
-                     placeholder="Optional" autocomplete="off">
+                     placeholder="https://carrier.com/track/123" autocomplete="off" maxlength="512">
             </label>
           </div>
         <% } %>
@@ -345,7 +360,9 @@
             <button class="btn btn--primary" type="button" id="fulfil">
               Fulfilled
             </button>
-            <button class="btn" type="button" id="fulfil-partial">
+            <button class="btn" type="button" id="fulfil-partial"
+              <%= remaining <= 1 ? "disabled" : "" %>
+              title="<%= remaining <= 1 ? 'At least two remaining units are needed for partial fulfillment.' : 'Ship some of the remaining units.' %>">
               Partially fulfilled
             </button>
           <% } %>
@@ -409,29 +426,74 @@
 
       /* ---------------- what is going out ---------------- */
 
+      var trackingFields = {
+        company: document.getElementById("carrier"),
+        number: document.getElementById("tracking-number"),
+        url: document.getElementById("tracking-url")
+      };
+      function trackingErrors() {
+        var parcel = {};
+        Object.keys(trackingFields).forEach(function (field) { parcel[field] = trackingFields[field].value; });
+        var errors = window.shippingValidation.errorsFor(parcel);
+        Object.keys(trackingFields).forEach(function (field) {
+          trackingFields[field].setCustomValidity(errors[field] || "");
+          trackingFields[field].setAttribute("aria-invalid", errors[field] ? "true" : "false");
+        });
+        return { parcel: parcel, errors: errors };
+      }
+      Object.keys(trackingFields).forEach(function (field) {
+        var input = trackingFields[field];
+        if (!input) return;
+        input.addEventListener("input", trackingErrors);
+        input.addEventListener("blur", function () {
+          var errors = trackingErrors().errors;
+          if (errors[field]) input.reportValidity();
+        });
+      });
       function tracking() {
-        var number = document.getElementById("tracking-number").value.trim();
-
-        // No number means nothing to track, which is allowed: plenty of
-        // shipping has no tracking, and refusing would leave the merchant
-        // unable to mark anything done.
-        return number
-          ? [{
-              number: number,
-              company: document.getElementById("carrier").value.trim() || null,
-              url: document.getElementById("tracking-url").value.trim() || null
-            }]
-          : [];
+        var result = trackingErrors();
+        var field = Object.keys(result.errors)[0];
+        if (field) {
+          fail(result.errors[field]);
+          trackingFields[field].focus();
+          trackingFields[field].reportValidity();
+          return null;
+        }
+        return window.shippingValidation.cleanTracking([result.parcel]);
       }
 
       // The Ship now column, as [{ line_id, quantity }], with what is left on
       // each line beside it so the buttons can tell "all of it" from "some".
+      var quantityInputs = Array.prototype.slice.call(document.querySelectorAll(".ship-qty"));
+      function validateQuantity(input) {
+        var quantity = Number(input.value);
+        var minimum = Number(input.min);
+        var maximum = Number(input.dataset.remaining);
+        var valid = /^\d+$/.test(input.value) && Number.isSafeInteger(quantity) &&
+          quantity >= minimum && quantity <= maximum;
+        input.setCustomValidity(valid ? "" : "Enter a whole number between " + minimum + " and " + maximum + ".");
+        input.setAttribute("aria-invalid", valid ? "false" : "true");
+        return valid;
+      }
+      quantityInputs.forEach(function (input) {
+        input.addEventListener("input", function () { validateQuantity(input); });
+        input.addEventListener("blur", function () {
+          if (!validateQuantity(input)) input.reportValidity();
+        });
+      });
       function shipNow() {
-        return Array.prototype.slice.call(document.querySelectorAll(".ship-qty"))
+        var invalid = quantityInputs.find(function (input) { return !validateQuantity(input); });
+        if (invalid) {
+          fail(invalid.validationMessage);
+          invalid.focus();
+          invalid.reportValidity();
+          return null;
+        }
+        return quantityInputs
           .map(function (input) {
             return {
               line_id: Number(input.dataset.line),
-              quantity: Number(input.value) || 0,
+              quantity: Number(input.value),
               remaining: Number(input.dataset.remaining)
             };
           });
@@ -441,10 +503,13 @@
 
       if (fulfil) {
         fulfil.addEventListener("click", async function () {
+          if (!shipNow()) return;
+          var parcels = tracking();
+          if (!parcels) return;
           // Everything that is left, whatever the column says: this button
           // means the order is done. Sent without `lines` so the server ships
           // the remainder as it counts it, not as the page last showed it.
-          var data = await post(fulfil, "fulfil", { tracking: tracking() }, "Saving…");
+          var data = await post(fulfil, "fulfil", { tracking: parcels }, "Saving…");
 
           if (!data) return;
 
@@ -462,8 +527,10 @@
       if (partial) {
         partial.addEventListener("click", async function () {
           var lines = shipNow();
+          if (!lines) return;
           var sending = lines.reduce(function (sum, l) { return sum + l.quantity; }, 0);
           var left = lines.reduce(function (sum, l) { return sum + l.remaining; }, 0);
+          if (left <= 1) return fail("Use Fulfilled to ship the last remaining unit.");
 
           if (!sending) {
             return fail("Enter how many of each line you are sending now.");
@@ -478,8 +545,10 @@
             );
           }
 
+          var parcels = tracking();
+          if (!parcels) return;
           var data = await post(partial, "fulfil", {
-            tracking: tracking(),
+            tracking: parcels,
             lines: lines.map(function (l) { return { line_id: l.line_id, quantity: l.quantity }; })
           }, "Saving…");
 

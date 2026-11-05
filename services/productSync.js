@@ -685,19 +685,6 @@ async function setDestinationProductStatus(
   return result.product;
 }
 
-const INVENTORY_ITEM_LOCATIONS_QUERY = `
-  query InventoryItemLocationsForSync($ids: [ID!]!) {
-    nodes(ids: $ids) {
-      ... on InventoryItem {
-        id
-        inventoryLevels(first: 1) {
-          nodes { location { id } }
-        }
-      }
-    }
-  }
-`;
-
 const METAFIELD_DEFINITIONS_QUERY = `
   query MetafieldDefinitionsForSync {
     products: metafieldDefinitions(first: 250, ownerType: PRODUCT) {
@@ -1277,7 +1264,14 @@ function buildProductInput(
             : 0)
         : variant.inventory_quantity;
 
-      if (on("inventory") && inventoryLocationId && variant.inventory_tracked !== 0 &&
+      // Managed destination pools must stop at zero, even when the source
+      // allows backorders. Shopify already decrements these at checkout.
+      if (hasAllocatedInventory) {
+        out.inventoryPolicy = "DENY";
+        out.inventoryItem = { ...(out.inventoryItem || {}), tracked: true };
+      }
+
+      if (on("inventory") && inventoryLocationId && (hasAllocatedInventory || variant.inventory_tracked !== 0) &&
           inventoryQuantity !== null && inventoryQuantity !== undefined) {
         out.inventoryQuantities = [
           {
@@ -1357,39 +1351,8 @@ function buildProductInput(
  */
 async function destinationInventoryLocations(shop, productMappingId) {
   const links = await mappingVariantProductModel.listForMapping(productMappingId);
-  const withItems = links.filter((link) => link.destination_inventory_item_id);
-  const locations = new Map();
-
-  if (!withItems.length) return locations;
-
-  try {
-    const data = await shopify.forShop(shop, {
-      query: INVENTORY_ITEM_LOCATIONS_QUERY,
-      variables: {
-        ids: withItems.map((link) =>
-          `gid://shopify/InventoryItem/${link.destination_inventory_item_id}`
-        ),
-      },
-    });
-    const locationByItem = new Map();
-
-    for (const item of data.nodes || []) {
-      const locationId = item?.inventoryLevels?.nodes?.[0]?.location?.id;
-      if (item?.id && locationId) locationByItem.set(numericId(item.id), locationId);
-    }
-
-    for (const link of withItems) {
-      const locationId = locationByItem.get(String(link.destination_inventory_item_id));
-      if (locationId) locations.set(String(link.source_shopify_variant_id), locationId);
-    }
-  } catch (error) {
-    // Inventory is only one independently controlled product field. If its
-    // location cannot be read, omit quantities and still sync tax, shipping,
-    // price and the remaining enabled fields.
-    console.warn(`Could not resolve inventory locations for ${shop}: ${error.message}`);
-  }
-
-  return locations;
+  const locationId = await require("./inventoryLocations").defaultDestination(shop, productMappingId);
+  return new Map(links.map((link) => [String(link.source_shopify_variant_id), locationId]));
 }
 
 /**
@@ -1446,7 +1409,9 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
       currency: connection.destination.currency,
     }),
   ]);
-  const allocatedInventory = await inventoryAllocationModel.remainingMap(
+  await require("./sourceInventory").convertLegacySource(connection.source_store_id);
+  await require("./inventoryLocations").refreshSource(connection.source.shop_domain, all);
+  const allocatedInventory = await inventoryAllocationModel.sellableMap(
     connection.id,
     product.id
   );
@@ -1459,7 +1424,7 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
     : null;
 
   const locationId = settings.inventory
-    ? await destinationLocationId(connection.destination.shop_domain)
+    ? await destinationLocationId(connection.destination.shop_domain, mapping.id)
     : null;
   const inventoryLocationIds = settings.inventory && mapping.destination_shopify_product_id
     ? await destinationInventoryLocations(
@@ -1516,6 +1481,11 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
       forceActive,
     }
   );
+
+  // Existing stock is reconciled in one location-aware mutation after productSet.
+  if (mapping.destination_shopify_product_id) {
+    for (const variant of input.variants || []) delete variant.inventoryQuantities;
+  }
 
   // Values alone create unstructured metafields, which do not appear as a
   // normal named field in the destination Admin. Mirror the readable source
@@ -1581,6 +1551,7 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
   await productMappingModel.markSynced(mapping.id, {
     destinationProductId: destinationId,
     sourceUpdatedAt: product.shopify_updated_at,
+    publicationPending: isNewDestinationProduct,
   });
 
   if (settings.variants) {
@@ -1592,6 +1563,11 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
     );
   }
 
+  if (settings.inventory) {
+    await require("./inventoryAllocation").syncDestination(connection,
+      { ...mapping, destination_shopify_product_id: destinationId }, product.id);
+  }
+
   // A configured source shipping policy owns these variants at checkout.
   // Associating them with its app profile removes them from general shipping,
   // preventing the destination from charging its rate on the same item.
@@ -1600,15 +1576,18 @@ async function pushOne(connection, mapping, { forceActive = false } = {}) {
     destinationProduct.variants?.nodes || []
   );
 
-  // First time this product has landed over there. productSet attaches it to
-  // no sales channel, so without this it exists in the admin and nowhere on
-  // the storefront. An update is left alone: the destination may have
-  // unpublished it on purpose.
-  if (isNewDestinationProduct) {
-    await publishToOnlineStore(
+  // Creation and its first publication can span worker rounds. Remember the
+  // publication until it succeeds even if inventory/shipping failed after
+  // saving the product id. Later merchant unpublishing remains untouched.
+  if (isNewDestinationProduct || Number(mapping.online_store_publish_pending)) {
+    const publication = await publishToOnlineStore(
       connection.destination.shop_domain,
       destinationProduct.id
     );
+    if (!publication.published && publication.reason !== "no online store") {
+      throw new Error(`Online Store publication pending: ${publication.reason}`);
+    }
+    await productMappingModel.markPublicationComplete(mapping.id);
   }
 
   return { ok: true, destinationProductId: destinationId };
@@ -1749,31 +1728,9 @@ async function pushPending(
 /* Removing a product from the destinations                            */
 /* ------------------------------------------------------------------ */
 
-/**
- * The destination's first location, needed to set stock anywhere.
- *
- * Cached per shop for the life of the process: it is a fixed fact about the
- * store, and looking it up per product would cost one API call per push.
- */
-const LOCATION_CACHE = new Map();
-
-async function destinationLocationId(shop) {
-  if (LOCATION_CACHE.has(shop)) return LOCATION_CACHE.get(shop);
-
-  try {
-    const data = await shopify.forShop(shop, {
-      query: "{ locations(first: 1) { nodes { id } } }",
-    });
-
-    const id = data.locations?.nodes?.[0]?.id || null;
-    LOCATION_CACHE.set(shop, id);
-    return id;
-  } catch (err) {
-    // Not fatal: without a location, stock is skipped and everything else on
-    // the product still syncs.
-    console.warn(`Could not read a location for ${shop}:`, err.message);
-    return null;
-  }
+/** Resolve and save Shopify's actual default location for this product. */
+async function destinationLocationId(shop, mappingId) {
+  return require("./inventoryLocations").defaultDestination(shop, mappingId);
 }
 
 /**
@@ -1810,10 +1767,8 @@ async function onlineStorePublicationId(shop) {
 
     return id;
   } catch (err) {
-    // Not fatal. The product is already in the store; it is simply not on the
-    // storefront, and the merchant can publish it by hand.
     console.warn(`Could not read publications for ${shop}:`, err.message);
-    return null;
+    throw err;
   }
 }
 
@@ -1832,25 +1787,22 @@ const PUBLISH_MUTATION = `
  * ACTIVE product with stock still does not appear in the online store. This is
  * the step that makes it visible.
  *
- * Called only on CREATE. Running it on every update would undo a destination
- * merchant deliberately unpublishing a product -- their store, their decision.
- *
- * Never throws: the product itself synced fine, and failing the whole push
- * because a sales channel could not be reached would be worse than a product
- * that has to be published by hand.
+ * Called for creation and retries of the first publication only. Ordinary
+ * updates preserve a destination merchant's deliberate unpublishing.
  */
 async function publishToOnlineStore(shop, productGid) {
-  const publicationId = await onlineStorePublicationId(shop);
-
-  if (!publicationId) return { published: false, reason: "no online store" };
-
   try {
+    const publicationId = await onlineStorePublicationId(shop);
+    if (!publicationId) return { published: false, reason: "no online store" };
     const data = await shopify.forShop(shop, {
       query: PUBLISH_MUTATION,
       variables: { id: productGid, input: [{ publicationId }] },
     });
 
     const userErrors = data.publishablePublish?.userErrors || [];
+    if (!data.publishablePublish || !Array.isArray(data.publishablePublish.userErrors)) {
+      return { published: false, reason: "Shopify did not confirm Online Store publication." };
+    }
 
     if (userErrors.length) {
       const reason = userErrors.map((e) => e.message).join("; ");

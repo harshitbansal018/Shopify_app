@@ -1,0 +1,24 @@
+<%
+  var locationOptions = variant.inventory_locations || [];
+  var selectedLocation = allocation && allocation.source_location_id
+    ? allocation.source_location_id
+    : (locationOptions.length === 1 ? locationOptions[0].id : "");
+%>
+<div class="allocation-location-label">
+  <select class="field__input allocation-location"
+    data-connection="<%= connectionId %>" data-variant="<%= variant.id %>"
+    aria-label="Source inventory location for <%= variant.title || variant.sku %>"
+    <%= enabled ? "" : "disabled" %>>
+    <option value="">Select source location</option>
+    <% if (selectedLocation && !locationOptions.some(function (location) { return location.id === selectedLocation; })) { %>
+      <option value="<%= selectedLocation %>" selected disabled>Saved location unavailable</option>
+    <% } %>
+    <% locationOptions.forEach(function (location) { %>
+      <option value="<%= location.id %>" data-available="<%= location.available %>"
+        <%= selectedLocation === location.id ? "selected" : "" %>
+        <%= location.isActive === false ? "disabled" : "" %>>
+        <%= location.name %> — <%= location.available %> available
+      </option>
+    <% }); %>
+  </select>
+</div>

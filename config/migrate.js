@@ -207,6 +207,7 @@ const CREATE_PRODUCT_MAPPINGS = `
     -- Denormalised so the hot lookup (connection + shopify id) needs no join.
     source_shopify_product_id      BIGINT UNSIGNED NOT NULL,
     destination_shopify_product_id BIGINT UNSIGNED DEFAULT NULL,
+    online_store_publish_pending TINYINT(1) NOT NULL DEFAULT 0,
 
     sync_status ENUM('pending','synced','failed','skipped','deleted')
                 NOT NULL DEFAULT 'pending',
@@ -315,18 +316,18 @@ const CREATE_INVENTORY_ALLOCATIONS = `
     connection_id             INT NOT NULL,
     source_variant_mapping_id INT NOT NULL,
 
-    -- Total units reserved for this destination. Units sold are derived from
+    -- Total selling limit for this destination. Units sold are derived from
     -- order lines, making a redelivered webhook unable to decrement twice.
     allocated_quantity INT NOT NULL DEFAULT 0,
 
-    -- [{ locationId, quantity }]. Source stock may live at several Shopify
-    -- locations; remembering the split lets a reduction return every unit to
-    -- the exact location from which it was reserved.
+    -- Legacy physical reservations only. Virtual allocations store [].
     location_allocations JSON NOT NULL,
 
     -- Allocation to restore when an unsynced product is accepted again.
     -- NULL means there is no released reservation waiting to be restored.
     resume_quantity INT DEFAULT NULL,
+    legacy_reserved TINYINT(1) NOT NULL DEFAULT 0,
+    legacy_operation JSON DEFAULT NULL,
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1324,6 +1325,8 @@ async function runMigrations() {
   await query(CREATE_SOURCE_PRODUCTS);
   await addSelectedVariants();
   await query(CREATE_PRODUCT_MAPPINGS);
+  await safeAlter("product_mappings.online_store_publish_pending",
+    "ALTER TABLE product_mappings ADD COLUMN online_store_publish_pending TINYINT(1) NOT NULL DEFAULT 0");
   await addAllowedVariants();
   await addDestinationAcceptance();
   await addSourceRevokedAt();
@@ -1386,6 +1389,11 @@ async function runMigrations() {
   await backfillProductActivityLogs();
   await query(CREATE_WEBHOOK_INBOX);
   await safeAlter("webhook_inbox.idx_webhook_shop_status", "ALTER TABLE webhook_inbox ADD INDEX idx_webhook_shop_status (shop_domain, status, id)");
+  await safeAlter("inventory_allocations.legacy_reserved",
+    "ALTER TABLE inventory_allocations ADD COLUMN legacy_reserved TINYINT(1) NOT NULL DEFAULT 1");
+  await safeAlter("inventory_allocations.legacy_operation",
+    "ALTER TABLE inventory_allocations ADD COLUMN legacy_operation JSON DEFAULT NULL");
+  await require("./inventoryMigration").migrateInventory();
 }
 
 const CREATE_WEBHOOK_INBOX = `

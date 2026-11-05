@@ -5,8 +5,9 @@
 // ones the shopper paid.
 //
 // The job lives in this app, not in the source's Shopify admin. Nothing is
-// written to that store: no order, no stock movement, no picking paperwork it
-// did not ask for. The source works the sale on its Orders screen here.
+// order is written to that store. Physical source stock is adjusted separately
+// by sourceInventory when real destination orders consume or restock units.
+// The source works the sale on its Orders screen here.
 //
 // What the source decides DOES reach the buyer's store, because that is where
 // the shopper is waiting:
@@ -106,9 +107,9 @@ function supplierTaxForSettings(settings, productTotal) {
  * webhook that calls out is what makes Shopify time the request out, retry it,
  * and eventually unsubscribe the topic.
  *
- * A test order is recorded like any other. Nothing is placed in anybody's
- * store any more, so a test checkout can no longer cause real work anywhere --
- * which is what the guard here used to be protecting against.
+ * Test orders are recorded like real orders. sourceInventory also adjusts
+ * physical source stock for them so test checkouts exercise the full flow.
+ * No additional Shopify order is created in the source store.
  */
 async function queueForSources(destinationStoreId, order) {
   const lines = await orderLineItemModel.sourceLinesForOrder(order.id);
@@ -310,7 +311,7 @@ function fulfilmentLinesFor(fulfillmentOrders, wanted) {
 
 /** Every parcel's number, url and carrier, in the shape the input wants. */
 function trackingInput(parcels) {
-  const list = (parcels || []).filter((parcel) => parcel && parcel.number);
+  const list = orderShipmentModel.cleanTracking(parcels);
 
   if (!list.length) return null;
 
@@ -543,15 +544,21 @@ async function recordShipmentLocked(conn, mappingId, { lines, tracking }) {
       .map((line) => ({ line_id: line.line_id, quantity: line.remaining }));
   } else {
     shipping = [];
+    const seen = new Set();
 
     for (const line of lines || []) {
-      const id = Number(line.line_id);
-      const quantity = Number(line.quantity);
+      const id = Number(line?.line_id);
+      const rawQuantity = line?.quantity;
+      const quantity = Number(rawQuantity);
 
       if (!remainingById.has(id)) {
         throw invalid(`Line ${id} is not on this sale.`);
       }
-      if (!Number.isInteger(quantity) || quantity < 0) {
+      if (seen.has(id)) throw invalid("Each order line can only be included once in a shipment.");
+      seen.add(id);
+      if ((typeof rawQuantity !== "number" &&
+           (typeof rawQuantity !== "string" || !/^\d+$/.test(rawQuantity))) ||
+          !Number.isSafeInteger(quantity) || quantity < 0) {
         throw invalid("Quantities must be whole numbers.");
       }
       if (quantity > remainingById.get(id)) {
@@ -724,6 +731,13 @@ async function cancelOne(mapping) {
     const order = current.order;
     if (!order) throw new Error("The destination order could not be found.");
     if (order.cancelledAt) {
+      // Shopify confirmed cancellation/restocking. Persist it before recalculating
+      // pools, even if orders/updated is delayed or never arrives.
+      await require("../config/db").query(
+        "UPDATE orders SET cancelled_at = COALESCE(cancelled_at, ?), inventory_restock = 1 WHERE id = ?",
+        [new Date(order.cancelledAt), mapping.destination_order_id]
+      );
+      await require("./sourceInventory").reconcileOrder(mapping.destination_order_id);
       await orderMappingModel.markCancelSent(mapping.id);
       return { ok: true };
     }
@@ -824,6 +838,12 @@ async function runOrderSync() {
   const totals = { fulfilled: 0, cancelled: 0, failed: 0 };
 
   try {
+    await require("./sourceInventory").run();
+  } catch (err) {
+    console.warn("Source inventory round failed:", err.message);
+  }
+
+  try {
     // Fulfilments first: they are the common case, and a stuck cancellation
     // must not hold up telling shoppers their parcels are on the way.
     const shipped = await pushFulfilments();
@@ -900,13 +920,34 @@ function stopOrderSync() {
  * what the caller does next, not how the order is stored.
  */
 async function cacheOrder(storeId, payload) {
+  const db = await require("../config/db").pool.getConnection();
+  const lockName = `order-cache:${storeId}:${payload.id}`;
+  try {
+    const [rows] = await db.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
+    if (!Number(rows[0]?.acquired)) throw new Error("Order cache is busy. Please retry.");
+    const existing = await orderModel.findByShopifyId(storeId, payload.id);
+    const incomingTime = Date.parse(payload.updated_at || payload.created_at);
+    if (existing?.inventory_updated_at != null && Number.isFinite(incomingTime) &&
+        incomingTime < Number(existing.inventory_updated_at)) return existing;
+    const order = await cacheCurrentOrder(storeId, payload);
+    if (order && payload.cancelled_at && payload.restock === true) {
+      await db.query("UPDATE orders SET inventory_restock = 1 WHERE id = ?", [order.id]);
+    }
+    if (order && Number.isFinite(incomingTime)) {
+      await db.query("UPDATE orders SET inventory_updated_at = ? WHERE id = ?", [incomingTime, order.id]);
+    }
+    return order;
+  } finally {
+    try { await db.query("SELECT RELEASE_LOCK(?)", [lockName]); } finally { db.release(); }
+  }
+}
+
+async function cacheCurrentOrder(storeId, payload) {
   await orderModel.upsert(storeId, payload);
 
   const order = await orderModel.findByShopifyId(storeId, payload.id);
 
   if (!order) return null;
-
-  await orderLineItemModel.syncForOrder(order.id, payload.line_items || []);
 
   // The order row keeps only customer_shopify_id; the identity behind it lives
   // in `customers`. Storing it is what lets the source store be shown who to

@@ -1,6 +1,6 @@
-// Reserved source inventory, split by destination and source variant.
+// Virtual selling limits, split by destination and source variant.
 //
-// `allocated_quantity` is the size of the destination's reserved pool. Sales
+// `allocated_quantity` is the size of the destination's selling limit. Sales
 // are deliberately not written back into this row: remaining stock is derived
 // from the current, non-cancelled destination order lines. That makes Shopify
 // webhook retries and order edits idempotent by construction.
@@ -36,8 +36,7 @@ const WITH_SALES = `
              JOIN product_mappings pm ON pm.id = mvp.product_mapping_id
             WHERE pm.connection_id = ia.connection_id
               AND mvp.source_variant_mapping_id = ia.source_variant_mapping_id
-              AND o.cancelled_at IS NULL
-              AND o.test = 0
+              AND (o.cancelled_at IS NULL OR o.inventory_restock = 0)
          ), 0) AS sold_quantity
     FROM inventory_allocations ia
 `;
@@ -108,6 +107,37 @@ async function remainingMap(connectionId, sourceProductId) {
   );
 }
 
+/** Divide physical availability across destination limits in stable id order.
+ * This never changes a saved limit: replenishment makes it available again.
+ */
+async function sellableMap(connectionId, sourceProductId) {
+  const [variants, rows] = await Promise.all([
+    query("SELECT id, inventory_quantity FROM source_variant_mappings WHERE source_product_id = ?", [sourceProductId]),
+    listForProduct(sourceProductId),
+  ]);
+  const result = new Map();
+  for (const variant of variants) {
+    const levels = await query("SELECT location_id, available FROM source_inventory_levels WHERE source_variant_id = ?", [variant.id]);
+    const capacity = new Map();
+    for (const level of levels) {
+      const pending = await require("../services/sourceInventory").pendingUnits(pool, variant.id, level.location_id);
+      capacity.set(level.location_id, Math.max(Number(level.available) - pending, 0));
+    }
+    const pools = rows.filter((row) => Number(row.source_variant_mapping_id) === Number(variant.id))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+    result.set(Number(variant.id), 0);
+    if (pools.some((row) => Number(row.legacy_reserved))) continue;
+    for (const row of pools) {
+      const location = row.source_location_id || (levels.length === 1 ? levels[0].location_id : null);
+      const available = capacity.get(location) || 0;
+      const quantity = row.resume_quantity == null ? Math.min(row.remaining_quantity, available) : 0;
+      capacity.set(location, available - quantity);
+      if (Number(row.connection_id) === Number(connectionId)) result.set(Number(variant.id), quantity);
+    }
+  }
+  return result;
+}
+
 /** Allocations for a destination products page, grouped in one query. */
 async function mapForMappings(productMappingIds) {
   const ids = [...new Set((productMappingIds || []).map(Number).filter(Boolean))];
@@ -126,8 +156,7 @@ async function mapForMappings(productMappingIds) {
                   ON sold_pm.id = sold_mvp.product_mapping_id
                WHERE sold_pm.connection_id = ia.connection_id
                  AND sold_mvp.source_variant_mapping_id = ia.source_variant_mapping_id
-                 AND o.cancelled_at IS NULL
-                 AND o.test = 0
+                 AND (o.cancelled_at IS NULL OR o.inventory_restock = 0)
             ), 0) AS sold_quantity
        FROM product_mappings pm
        JOIN inventory_allocations ia ON ia.connection_id = pm.connection_id
@@ -159,17 +188,21 @@ async function upsertMany(
     allocation.sourceVariantId,
     allocation.quantity,
     toJsonColumn(allocation.locations || []),
+    0,
+    allocation.sourceLocationId || null,
   ]);
 
   const [result] = await executor.query(
     `INSERT INTO inventory_allocations
        (connection_id, source_variant_mapping_id, allocated_quantity,
-        location_allocations)
+        location_allocations, legacy_reserved, source_location_id)
      VALUES ?
      ON DUPLICATE KEY UPDATE
        ${preserveResume
          ? "resume_quantity = COALESCE(resume_quantity, allocated_quantity),"
          : "resume_quantity = NULL,"}
+       source_location_id = COALESCE(VALUES(source_location_id), source_location_id),
+       legacy_reserved = 0,
        allocated_quantity = VALUES(allocated_quantity),
        location_allocations = VALUES(location_allocations),
        updated_at = CURRENT_TIMESTAMP`,
@@ -206,8 +239,7 @@ async function lockedForVariants(executor, connectionId, variantIds) {
                 JOIN product_mappings pm ON pm.id = mvp.product_mapping_id
                WHERE pm.connection_id = ia.connection_id
                  AND mvp.source_variant_mapping_id = ia.source_variant_mapping_id
-                 AND o.cancelled_at IS NULL
-                 AND o.test = 0
+                 AND (o.cancelled_at IS NULL OR o.inventory_restock = 0)
             ), 0) AS sold_quantity
        FROM inventory_allocations ia
       WHERE ia.connection_id = ? AND ia.source_variant_mapping_id IN (?)
@@ -225,6 +257,7 @@ module.exports = {
   mapAllocatedForProducts,
   listForConnection,
   remainingMap,
+  sellableMap,
   mapForMappings,
   upsertMany,
   listToResume,

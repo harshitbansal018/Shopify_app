@@ -533,7 +533,7 @@
           if (!(await window.appConfirm(
             "Make " + productIds.length + " product(s) not shared?\n\n" +
             "Their destination copies will become Draft and stop receiving updates. " +
-            "Unsold reserved inventory will return to the source. You can share them again later.",
+            "Destination inventory will be zeroed. Source stock stays unchanged. You can share them again later.",
             { confirmLabel: "Make not shared" }
           ))) return;
 
@@ -546,7 +546,7 @@
             clearSelection();
             window.appToast(
               data.revoked + " share(s) made inactive; " +
-              data.returned + " unit(s) returned"
+              data.returned + " unit(s) of allocation cleared"
             );
             await refreshProductsLive(true);
           } catch (err) {

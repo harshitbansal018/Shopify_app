@@ -28,24 +28,22 @@ async function rowsVia(connection, sql, params = []) {
 /** JSON columns come back from MariaDB as strings. */
 function hydrate(row) {
   if (!row) return null;
+  const tracking = parseJson(row.tracking, []) || [];
+  let trackingError = null;
+  try { cleanTracking(tracking); } catch (error) { trackingError = error.message; }
   return {
     ...row,
     // The column is shipped_lines (LINES is reserved in MariaDB); the app
     // calls it lines.
     lines: parseJson(row.shipped_lines, []) || [],
-    tracking: parseJson(row.tracking, []) || [],
+    tracking,
+    tracking_error: trackingError,
   };
 }
 
 /** Tracking as it is stored: only parcels with a number, trimmed to size. */
 function cleanTracking(tracking) {
-  return (tracking || [])
-    .filter((parcel) => parcel && parcel.number)
-    .map((parcel) => ({
-      number: String(parcel.number).slice(0, 128),
-      company: parcel.company ? String(parcel.company).slice(0, 128) : null,
-      url: parcel.url ? String(parcel.url).slice(0, 512) : null,
-    }));
+  return require("../public/javascript/shippingValidation").cleanTracking(tracking);
 }
 
 /**

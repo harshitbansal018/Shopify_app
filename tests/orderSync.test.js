@@ -291,7 +291,7 @@ function shopifyOrder(overrides = {}) {
       await orderMappingModel.markFulfilled(queued.id, [
         { number: "TRACK-1", company: "DHL", url: "https://dhl.test/1" },
         { number: "TRACK-2", company: "DHL" },
-        { number: "", company: "Ignored" }, // no number, so no parcel
+        { number: "", company: "" }, // entirely blank tracking is optional
       ]);
 
       const shipped = await orderMappingModel.findById(queued.id);
@@ -696,6 +696,44 @@ function shopifyOrder(overrides = {}) {
       check("shipping more than is left is refused, not trimmed",
         tooMany && tooMany.statusCode === 400 && /Only 1 left/.test(tooMany.message),
         tooMany && tooMany.message);
+      const shipmentCountBeforeValidation = (await orderShipmentModel.listForMapping(queued.id)).length;
+      for (const quantity of [-1, 0.5, "", null, true, "1e0"]) {
+        let rejected = null;
+        try {
+          await orderSync.recordShipment(queued.id, { lines: [{ line_id: shirt.line_id, quantity }] });
+        } catch (err) { rejected = err; }
+        check(`invalid shipment quantity ${JSON.stringify(quantity)} is refused`,
+          rejected && rejected.statusCode === 400 && /whole numbers/.test(rejected.message));
+      }
+      let duplicateLine = null;
+      try {
+        await orderSync.recordShipment(queued.id, { lines: [
+          { line_id: shirt.line_id, quantity: 1 },
+          { line_id: shirt.line_id, quantity: 1 },
+        ] });
+      } catch (err) { duplicateLine = err; }
+      check("duplicate shipment lines cannot bypass the remaining-quantity limit",
+        duplicateLine && duplicateLine.statusCode === 400 && /only be included once/.test(duplicateLine.message));
+      check("invalid quantities do not create shipments",
+        (await orderShipmentModel.listForMapping(queued.id)).length === shipmentCountBeforeValidation);
+      for (const tracking of [
+        [{ number: "PART-3", company: "DHL", url: "carrier.com/track/123" }],
+        [{ number: "PART-3", company: "DHL", url: "javascript:alert(1)" }],
+        [{ number: "BAD`=NUMBER", company: "DHL" }],
+        [{ number: "PART-3", company: "<carrier>" }],
+        [{ number: "", company: "DHL" }],
+        { number: "PART-3" },
+      ]) {
+        let rejected = null;
+        try {
+          await orderSync.recordShipment(queued.id, { lines: [{ line_id: shirt.line_id, quantity: 1 }], tracking });
+        } catch (err) { rejected = err; }
+        check(`invalid tracking ${JSON.stringify(tracking)} is refused before saving`,
+          rejected && rejected.statusCode === 400);
+      }
+      check("invalid tracking does not record a shipment or change fulfillment status",
+        (await orderShipmentModel.listForMapping(queued.id)).length === shipmentCountBeforeValidation &&
+        (await orderMappingModel.findById(queued.id)).source_fulfillment_status === "partial");
 
       // Nothing.
       let nothing = null;

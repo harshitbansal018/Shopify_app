@@ -1,0 +1,9 @@
+<section class="panel">
+  <h2 class="panel__title">Store permissions</h2>
+  <p class="panel__copy">
+    Reconnect <strong><%= store.store_name || shop %></strong> to approve updated
+    Shopify permissions, including inventory location access.
+    Your store connections and saved settings are kept.
+  </p>
+  <a class="btn" href="/api/auth/install?shop=<%= encodeURIComponent(shop) %>" target="_top">Reconnect store</a>
+</section>

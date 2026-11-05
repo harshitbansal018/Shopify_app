@@ -520,17 +520,22 @@ async function setAllowedVariants(id, ids) {
 }
 
 /** A successful create or update on the destination. */
-async function markSynced(id, { destinationProductId, sourceUpdatedAt }) {
+async function markSynced(id, { destinationProductId, sourceUpdatedAt, publicationPending = false }) {
   await query(
     `UPDATE product_mappings
         SET destination_shopify_product_id = COALESCE(?, destination_shopify_product_id),
+            online_store_publish_pending = IF(?, 1, online_store_publish_pending),
             sync_status = 'synced',
             source_updated_at = COALESCE(?, source_updated_at),
             last_synced_at = NOW(),
             error_message = NULL
       WHERE id = ?`,
-    [toShopifyId(destinationProductId), toDate(sourceUpdatedAt), id]
+    [toShopifyId(destinationProductId), publicationPending ? 1 : 0, toDate(sourceUpdatedAt), id]
   );
+}
+
+async function markPublicationComplete(id) {
+  await query("UPDATE product_mappings SET online_store_publish_pending = 0 WHERE id = ?", [id]);
 }
 
 /**
@@ -647,6 +652,7 @@ module.exports = {
   acceptForDestination,
   declineForDestination,
   markSynced,
+  markPublicationComplete,
   markFailed,
   markSkipped,
   expectDestinationStatus,

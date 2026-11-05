@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS `product_mappings` (
   `error_message` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `destination_inventory_location_id` varchar(80) DEFAULT NULL,
+  `online_store_publish_pending` tinyint(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_mapping` (`connection_id`,`source_shopify_product_id`),
   KEY `idx_mapping_source_product` (`source_product_id`),
@@ -148,6 +150,10 @@ CREATE TABLE IF NOT EXISTS `inventory_allocations` (
   `connection_id` int(11) NOT NULL,
   `source_variant_mapping_id` int(11) NOT NULL,
   `allocated_quantity` int(11) NOT NULL DEFAULT 0,
+  `resume_quantity` int(11) DEFAULT NULL,
+  `legacy_reserved` tinyint(1) NOT NULL DEFAULT 0,
+  `source_location_id` varchar(80) DEFAULT NULL,
+  `legacy_operation` longtext DEFAULT NULL CHECK (json_valid(`legacy_operation`)),
   `location_allocations` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`location_allocations`)),
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -167,6 +173,7 @@ CREATE TABLE IF NOT EXISTS `mapping_variant_products` (
   `destination_inventory_item_id` bigint(20) unsigned DEFAULT NULL,
   `sku` varchar(255) DEFAULT NULL,
   `last_synced_at` datetime DEFAULT NULL,
+  `managed_inventory_locations` JSON DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_mapping_variant` (`product_mapping_id`,`source_shopify_variant_id`),
   KEY `idx_mvp_source_variant` (`source_variant_mapping_id`),
@@ -199,6 +206,8 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `shipping_country_code` varchar(2) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `inventory_updated_at` bigint DEFAULT NULL,
+  `inventory_restock` tinyint(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_store_order` (`store_id`,`shopify_order_id`),
   KEY `idx_orders_financial` (`store_id`,`financial_status`),
@@ -319,4 +328,44 @@ CREATE TABLE IF NOT EXISTS `product_activity_logs` (
   KEY `idx_product_activity_conn` (`connection_id`, `created_at`),
   CONSTRAINT `fk_product_activity_conn` FOREIGN KEY (`connection_id`) REFERENCES `store_connections` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_product_activity_source_prod` FOREIGN KEY (`source_product_id`) REFERENCES `source_products` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Virtual inventory pools: source quantity changes on sales/restocks only.
+CREATE TABLE IF NOT EXISTS source_inventory_ledger (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id INT NOT NULL,
+  source_variant_id INT NOT NULL,
+  source_store_id INT NOT NULL,
+  inventory_item_id VARCHAR(64) NOT NULL,
+  source_location_id VARCHAR(80) DEFAULT NULL,
+  destination_variants JSON DEFAULT NULL,
+  applied_quantity INT NOT NULL DEFAULT 0,
+  baseline_quantity INT NOT NULL DEFAULT 0,
+  locations JSON NOT NULL,
+  pending_operation JSON DEFAULT NULL,
+  error VARCHAR(512) DEFAULT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_source_inventory_order (order_id, source_variant_id),
+  KEY idx_source_inventory_store (source_store_id),
+  CONSTRAINT fk_inventory_ledger_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  CONSTRAINT fk_inventory_ledger_store FOREIGN KEY (source_store_id) REFERENCES stores(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS inventory_cutover (
+  id INT PRIMARY KEY, completed_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS inventory_pool_queue (
+  source_product_id INT PRIMARY KEY,
+  revision BIGINT NOT NULL DEFAULT 0,
+  error VARCHAR(512) DEFAULT NULL,
+  CONSTRAINT fk_inventory_pool_product FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS source_inventory_levels (
+  source_variant_id INT NOT NULL,
+  location_id VARCHAR(80) NOT NULL,
+  available INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (source_variant_id, location_id),
+  CONSTRAINT fk_source_level_variant FOREIGN KEY (source_variant_id)
+    REFERENCES source_variant_mappings(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -2,6 +2,62 @@
 
 Shopify app for synchronizing products and orders between source and destination stores.
 
+## Inventory
+
+Allocations are destination selling limits, including units already sold.
+On the source product page, choose a **Source inventory location** for each
+variant and destination. The selector shows that location's available stock.
+Only that source location funds new orders; another warehouse's stock is never
+used as a fallback. Each order saves its source location, so cancellation and
+quantity reductions return units to their original location even if the next
+allocation uses a different warehouse.
+Allocating 30 from a source with 100 available units leaves source stock at
+100. A destination sale of 5 leaves 95 at the source and 25 at the destination.
+Shopify decrements destination inventory at checkout; the app adjusts source
+inventory using a durable, idempotent order ledger. Test orders follow the same
+inventory deduction, allocation and confirmed-restock flow as real orders, so
+test checkouts also change source Shopify stock. Revenue reports continue to
+exclude test orders. Quantity edits apply only the difference.
+
+Unsync zeros destination availability and remembers its allocation for a later
+Sync. It never adds source stock. A supplier cancellation restores both stores
+only after Shopify confirms cancellation; an unconfirmed request never
+restocks. External cancellation without an explicit restock signal does not
+add source stock. Orders with other suppliers' goods or existing shipments
+still require the existing manual cancellation review.
+
+Destination availability is capped across allocations using the same source
+location, in allocation creation order. Replenishment restores availability
+within the saved limits. Missing allocations mean zero stock; managed variants
+deny backorders. Inventory updates also run for manual catalogue connections.
+Cross-store stock updates depend on webhooks and cannot make concurrent
+checkouts across independent Shopify stores atomic.
+
+Startup migrations preserve historical sales and mark old physical reservations
+for one-time conversion. The inventory worker returns only their unsold units
+to the original source locations, then switches them to virtual allocations.
+Pending adjustments survive restarts and reuse their original Shopify key;
+uncertain requests older than 23 hours stop for manual review. Inventory errors
+appear on the source order detail page. Restart the app after deploying these
+files so migrations run before the workers start. The source must grant
+`read_inventory`, `write_inventory`, and `read_locations` and enable quantity
+tracking. Reconnect existing installations to grant the new location permission;
+the source page shows a reconnect link when location names cannot be read.
+
+Destination inventory is written to Shopify's actual default location and its
+ID is saved on the product mapping. Sync, cancellation updates, and Unsync reuse
+that ID. If a variant is not stocked there yet, the app activates it there with
+zero stock before applying its allocation. Previously this app always wrote the
+first inventory level: on upgrading, that legacy level is recorded as app-owned
+and zeroed if different from the default. Other locations are left untouched.
+The default location must be active and fulfill online orders. A missing or
+unavailable location fails the update instead of silently selecting another.
+Existing multi-location source allocations need an explicit selection; they
+advertise zero until the source location is known. Single-location allocations
+remain compatible and bind to their sole source location on the next save/order.
+Stop all old app workers before the first upgrade; old and new inventory
+implementations must not run together during the cutover.
+
 ## Source shipping policies
 
 Phase-one shipping is configured by the source under **Shipping**, once per
